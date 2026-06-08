@@ -40,14 +40,21 @@ deploy/helm/ferrumgate/
 ```bash
 cd deploy/helm/ferrumgate
 
-# Validate chart syntax
-helm lint .
+# Validate chart syntax. Defaults are fail-closed, so pass a non-production token
+# for local rendering.
+helm lint . --set secrets.bearerToken=local-dry-run-token-not-for-production
 
 # Render templates to stdout (no cluster required)
-helm template ferrumgate . --namespace ferrumgate --create-namespace
+helm template ferrumgate . \
+  --namespace ferrumgate \
+  --create-namespace \
+  --set secrets.bearerToken=local-dry-run-token-not-for-production
 
 # Dry-run against a cluster (requires kubectl context)
-helm install --dry-run --debug ferrumgate . --namespace ferrumgate --create-namespace
+helm install --dry-run --debug ferrumgate . \
+  --namespace ferrumgate \
+  --create-namespace \
+  --set secrets.bearerToken=local-dry-run-token-not-for-production
 ```
 
 ## Local cluster smoke test (kind)
@@ -56,10 +63,12 @@ helm install --dry-run --debug ferrumgate . --namespace ferrumgate --create-name
 # Create a local cluster
 kind create cluster --name ferrumgate-test
 
-# Install the chart with default demo values (SQLite in-memory, auth disabled)
+# Install the chart with default single-replica values (file-backed SQLite + PVC,
+# bearer auth). Replace the token for anything beyond a local smoke test.
 helm install ferrumgate ./deploy/helm/ferrumgate \
   --namespace ferrumgate \
-  --create-namespace
+  --create-namespace \
+  --set secrets.bearerToken=local-kind-token-not-for-production
 
 # Wait for pod readiness
 kubectl wait --namespace ferrumgate \
@@ -99,6 +108,15 @@ Install with overrides:
 helm install ferrumgate ./deploy/helm/ferrumgate -f my-values.yaml
 ```
 
+To use an externally managed Kubernetes Secret instead of inline values:
+
+```yaml
+secrets:
+  existingSecret: "ferrumgate-bearer-token"
+  existingSecretKey: "bearer-token"
+  bearerToken: ""
+```
+
 ### Values reference
 
 | Key | Default | Description |
@@ -109,17 +127,23 @@ helm install ferrumgate ./deploy/helm/ferrumgate -f my-values.yaml
 | `service.type` | `ClusterIP` | Kubernetes service type. |
 | `service.port` | `8080` | Service port. |
 | `config.bindAddr` | `0.0.0.0:8080` | ferrumd bind address. |
-| `config.storeDsn` | `sqlite::memory:` | Database DSN. In-memory = data lost on restart. |
-| `config.authMode` | `disabled` | `disabled` or `bearer`. |
+| `config.storeDsn` | `sqlite:///var/lib/ferrumgate/ferrumgate.db` | Database DSN. SQLite is single-replica only. |
+| `config.authMode` | `bearer` | `disabled`, `bearer`, `scoped`, or `oidc`. |
 | `config.logFilter` | `info` | Log level. |
-| `secrets.bearerToken` | `CHANGE_ME_TO_A_SECURE_TOKEN` | Placeholder only. |
+| `config.gitRepoRoots` | `""` | Empty disables Git mutation adapter. |
+| `config.sqliteDbRoots` | `""` | Empty disables SQLite mutation adapter. |
+| `persistence.enabled` | `true` | Creates or uses a PVC for `/var/lib/ferrumgate`. |
+| `persistence.existingClaim` | `""` | Existing PVC name. Empty creates one. |
+| `secrets.existingSecret` | `""` | Existing Secret name for bearer auth. |
+| `secrets.existingSecretKey` | `bearer-token` | Secret key containing the token. |
+| `secrets.bearerToken` | `CHANGE_ME_TO_A_SECURE_TOKEN` | Placeholder. Chart rendering fails in bearer mode until replaced or existingSecret is set. |
 | `ingress.enabled` | `false` | Enable Ingress. Requires real domain + TLS. |
-| `autoscaling.enabled` | `false` | HPA. Not validated. |
+| `autoscaling.enabled` | `false` | HPA. Requires PostgreSQL; chart rejects SQLite multi-replica rendering. |
 
 ## Notes
 
 - **Local evaluation only**: This chart packages ferrumd for K8s local testing.
-- **Single replica by default**: no StatefulSet or leader election.
+- **Single replica by default**: SQLite rendering is rejected for multi-replica or autoscaling.
 - **Single-tenant configuration**.
 - For shared deployments, use External Secrets Operator, Vault, or cloud provider secret stores instead of inline `values.yaml` secrets.
 - **NOT validated on all K8s distributions**: Tested only with `kind` locally.

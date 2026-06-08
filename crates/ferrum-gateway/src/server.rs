@@ -763,6 +763,7 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
     if config.auth_mode == AuthMode::Bearer
         || config.auth_mode == AuthMode::Scoped
         || config.auth_mode == AuthMode::Oidc
+        || config.auth_mode == AuthMode::Agent
     {
         let auth_layer = ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
@@ -1083,12 +1084,9 @@ async fn auth_middleware(
     let path = request.uri().path().to_string();
     let method = request.method().as_str().to_string();
 
-    // Skip auth for health and metrics endpoints
-    if path == "/v1/healthz"
-        || path == "/v1/readyz"
-        || path == "/v1/readyz/deep"
-        || path == "/v1/metrics"
-    {
+    // Keep only shallow health/readiness public. Deep readiness and metrics expose
+    // operational detail and require auth whenever auth is enabled.
+    if path == "/v1/healthz" || path == "/v1/readyz" {
         return next.run(request).await;
     }
 
@@ -1495,7 +1493,7 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
             Some("execution:verify")
         }
         ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/commit") => {
-            Some("execution:execute")
+            Some("execution:commit")
         }
         ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/compensate") => {
             Some("execution:compensate")
@@ -1508,9 +1506,9 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         }
         ("GET", p) if p.starts_with("/v1/executions/") => Some("provenance:read"),
         // Approvals
-        ("GET", "/v1/approvals") => Some("approval:resolve"),
+        ("GET", "/v1/approvals") => Some("approval:read"),
         ("GET", p) if p.starts_with("/v1/approvals/") && !p.ends_with("/resolve") => {
-            Some("approval:resolve")
+            Some("approval:read")
         }
         ("POST", p) if p.starts_with("/v1/approvals/") && p.ends_with("/resolve") => {
             Some("approval:resolve")
@@ -1539,7 +1537,7 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/v1/provenance/query") => Some("provenance:read"),
         ("POST", "/v1/provenance/lineage") => Some("provenance:read"),
         ("GET", p) if p.starts_with("/v1/provenance/lineage/") => Some("provenance:read"),
-        ("POST", "/v1/provenance/ingest") => Some("provenance:read"),
+        ("POST", "/v1/provenance/ingest") => Some("provenance:write"),
         // Bridge
         ("GET", "/v1/bridges") => Some("provenance:read"),
         ("GET", p) if p.starts_with("/v1/bridges/") && p.ends_with("/tools") => {
@@ -1556,6 +1554,17 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/v1/admin/agents") => Some("admin:agents"),
         ("GET", "/v1/admin/agents") => Some("admin:agents"),
         ("DELETE", p) if p.starts_with("/v1/admin/agents/") => Some("admin:agents"),
+        // Lifecycle outbox operator workflow
+        ("GET", "/v1/admin/lifecycle-outbox") => Some("admin:lifecycle-outbox:read"),
+        ("GET", p) if p.starts_with("/v1/admin/lifecycle-outbox/") => {
+            Some("admin:lifecycle-outbox:read")
+        }
+        ("POST", p)
+            if p.starts_with("/v1/admin/lifecycle-outbox/")
+                && (p.ends_with("/retry") || p.ends_with("/resolve")) =>
+        {
+            Some("admin:lifecycle-outbox:write")
+        }
         // Audit logs
         ("GET", "/v1/admin/audit-logs") => Some("admin:audit"),
         ("GET", "/v1/admin/audit-logs/export") => Some("admin:audit"),
@@ -2185,7 +2194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_readyz_deep_is_public_under_bearer_auth() {
+    async fn test_readyz_deep_requires_auth_under_bearer_auth() {
         let runtime = test_runtime().await;
         let config = ServerConfig {
             auth_mode: AuthMode::Bearer,
@@ -2203,8 +2212,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Should be 200 OK since store is healthy
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -3894,7 +3902,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_metrics_endpoint_is_public_under_bearer_auth() {
+    async fn test_metrics_endpoint_requires_auth_under_bearer_auth() {
         let runtime = test_runtime().await;
         let config = ServerConfig {
             auth_mode: AuthMode::Bearer,
@@ -3912,7 +3920,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -7037,7 +7045,7 @@ rules:
             "agent_1",
             &pk_b64,
             &fingerprint,
-            vec!["approval:resolve".to_string()],
+            vec!["approval:read".to_string()],
         )
         .await;
 
@@ -7117,7 +7125,7 @@ rules:
             "agent_1",
             &pk_b64,
             &fingerprint,
-            vec!["approval:resolve".to_string()],
+            vec!["approval:read".to_string()],
         )
         .await;
 
@@ -7165,7 +7173,7 @@ rules:
             "agent_1",
             &pk_b64,
             &fingerprint,
-            vec!["approval:resolve".to_string()],
+            vec!["approval:read".to_string()],
         )
         .await;
 

@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use ferrum_proto::{ActionType, JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTarget};
 use ferrum_rollback::{
-    AdapterError, AdapterRegistry, ExecuteReceipt, PrepareReceipt, RecoveryReceipt,
-    RollbackAdapter, VerifyReceipt,
+    AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
+use std::path::PathBuf;
 use std::process::Command;
 use thiserror::Error;
 
@@ -45,11 +45,84 @@ impl From<GitAdapterError> for AdapterError {
 /// - `compensate`: alias for rollback in this slice
 /// - `execute`: captures `after_ref` when repo state has changed, returns error for
 ///   unsupported payloads
-pub struct GitRollbackAdapter;
+pub struct GitRollbackAdapter {
+    allowed_repo_roots: Vec<PathBuf>,
+}
 
 impl GitRollbackAdapter {
-    pub fn new() -> Self {
-        Self
+    pub fn new(allowed_repo_roots: Vec<PathBuf>) -> Result<Self, AdapterError> {
+        let allowed_repo_roots = Self::canonicalize_repo_roots(allowed_repo_roots)?;
+        Ok(Self { allowed_repo_roots })
+    }
+
+    #[cfg(any(test, feature = "unsafe-unbounded-adapters"))]
+    pub fn new_unbounded() -> Self {
+        Self {
+            allowed_repo_roots: Vec::new(),
+        }
+    }
+
+    fn canonicalize_repo_roots(roots: Vec<PathBuf>) -> Result<Vec<PathBuf>, AdapterError> {
+        if roots.is_empty() {
+            return Err(AdapterError::Validation(
+                "git adapter requires at least one allowed repository root".to_string(),
+            ));
+        }
+        let mut canonical = Vec::with_capacity(roots.len());
+        for root in roots {
+            if !root.is_absolute() {
+                return Err(AdapterError::Validation(format!(
+                    "git repository root must be absolute: {}",
+                    root.display()
+                )));
+            }
+            let resolved = std::fs::canonicalize(&root).map_err(|e| {
+                AdapterError::Validation(format!(
+                    "failed to canonicalize git repository root {}: {}",
+                    root.display(),
+                    e
+                ))
+            })?;
+            if !resolved.is_dir() {
+                return Err(AdapterError::Validation(format!(
+                    "git repository root is not a directory: {}",
+                    resolved.display()
+                )));
+            }
+            canonical.push(resolved);
+        }
+        Ok(canonical)
+    }
+
+    fn canonical_repo_path_allowed(&self, repo_path: &str) -> Result<PathBuf, AdapterError> {
+        let resolved = std::fs::canonicalize(repo_path).map_err(|e| {
+            AdapterError::Validation(format!(
+                "failed to canonicalize git repository path {}: {}",
+                repo_path, e
+            ))
+        })?;
+        if self.allowed_repo_roots.is_empty()
+            || self
+                .allowed_repo_roots
+                .iter()
+                .any(|root| resolved.starts_with(root))
+        {
+            return Ok(resolved);
+        }
+        Err(AdapterError::Validation(format!(
+            "git repository path {} is outside configured repository roots",
+            resolved.display()
+        )))
+    }
+
+    fn canonical_repo_path_string(&self, repo_path: &str) -> Result<String, AdapterError> {
+        let resolved = self.canonical_repo_path_allowed(repo_path)?;
+        resolved
+            .to_str()
+            .map(|path| path.to_string())
+            .ok_or_else(|| {
+                AdapterError::Validation("git repository path is not valid UTF-8".into())
+            })
     }
 
     /// Run a git command and return stdout on success.
@@ -430,9 +503,10 @@ impl GitRollbackAdapter {
     }
 }
 
+#[cfg(any(test, feature = "unsafe-unbounded-adapters"))]
 impl Default for GitRollbackAdapter {
     fn default() -> Self {
-        Self::new()
+        Self::new_unbounded()
     }
 }
 
@@ -448,6 +522,7 @@ impl RollbackAdapter for GitRollbackAdapter {
     ) -> Result<PrepareReceipt, AdapterError> {
         let (repo_path, before_ref, _after_ref) =
             Self::extract_git_target(&request.target).map_err(AdapterError::from)?;
+        let repo_path = self.canonical_repo_path_string(&repo_path)?;
 
         // Validate the repo exists and is a valid git work tree
         Self::validate_repo(&repo_path).map_err(AdapterError::from)?;
@@ -841,6 +916,7 @@ impl RollbackAdapter for GitRollbackAdapter {
     ) -> Result<ExecuteReceipt, AdapterError> {
         let (repo_path, _, _) =
             Self::extract_git_target(&contract.target).map_err(AdapterError::from)?;
+        let repo_path = self.canonical_repo_path_string(&repo_path)?;
 
         // Validate repo exists
         Self::validate_repo(&repo_path).map_err(AdapterError::from)?;
@@ -1217,6 +1293,7 @@ impl RollbackAdapter for GitRollbackAdapter {
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError> {
         let (repo_path, before_ref, after_ref) =
             Self::extract_git_target(&contract.target).map_err(AdapterError::from)?;
+        let repo_path = self.canonical_repo_path_string(&repo_path)?;
 
         Self::validate_repo(&repo_path).map_err(AdapterError::from)?;
 
@@ -1665,6 +1742,7 @@ impl RollbackAdapter for GitRollbackAdapter {
     async fn rollback(&self, contract: &RollbackContract) -> Result<RecoveryReceipt, AdapterError> {
         let (repo_path, before_ref, _) =
             Self::extract_git_target(&contract.target).map_err(AdapterError::from)?;
+        let repo_path = self.canonical_repo_path_string(&repo_path)?;
 
         Self::validate_repo(&repo_path).map_err(AdapterError::from)?;
 
@@ -2184,9 +2262,10 @@ impl RollbackAdapter for GitRollbackAdapter {
     }
 }
 
-/// Register this adapter with a registry.
-pub fn register_git_adapter(registry: &mut AdapterRegistry) {
-    registry.register(std::sync::Arc::new(GitRollbackAdapter::new()));
+/// Register an unbounded adapter with a registry for tests or explicit unsafe builds.
+#[cfg(any(test, feature = "unsafe-unbounded-adapters"))]
+pub fn register_git_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
+    registry.register(std::sync::Arc::new(GitRollbackAdapter::new_unbounded()));
 }
 
 #[cfg(test)]
@@ -2344,7 +2423,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_captures_before_ref() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
         let request = make_prepare_request(make_git_ref_target(&repo_path));
 
         let receipt = adapter.prepare(&request).await.unwrap();
@@ -2361,7 +2440,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_restores_head() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with before_ref captured
         let request = make_prepare_request(make_git_ref_target(&repo_path));
@@ -2416,7 +2495,7 @@ mod tests {
     #[tokio::test]
     async fn test_verify_returns_true_when_head_matches() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let head_sha = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
 
@@ -2445,7 +2524,7 @@ mod tests {
     #[tokio::test]
     async fn test_verify_returns_false_when_head_differs() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get current HEAD
         let original_head = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -2479,7 +2558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_rejects_invalid_repo_path() {
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
         let request = make_prepare_request(make_git_ref_target("/nonexistent/path"));
 
         let err = adapter.prepare(&request).await.unwrap_err();
@@ -2497,7 +2576,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_captures_after_ref_from_payload() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let contract = make_contract(
             RollbackTarget::GitRef {
@@ -2519,7 +2598,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_rejects_unsupported_payload() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let contract = make_contract(
             RollbackTarget::GitRef {
@@ -2541,7 +2620,7 @@ mod tests {
     #[tokio::test]
     async fn test_compensate_same_as_rollback() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare
         let request = make_prepare_request(make_git_ref_target(&repo_path));
@@ -2586,7 +2665,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_rejects_dirty_worktree() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare to capture before_ref
         let request = make_prepare_request(make_git_ref_target(&repo_path));
@@ -2648,7 +2727,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_idempotent_when_already_at_target() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get current HEAD (already at the target we want to roll back to)
         let current_head = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -2687,7 +2766,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_creates_branch() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let contract = make_contract(
             RollbackTarget::GitRef {
@@ -2723,7 +2802,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_rejects_existing_branch() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch first
         Command::new("git")
@@ -2766,7 +2845,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_deletes_created_branch() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let contract = make_contract(
             RollbackTarget::GitRef {
@@ -2828,7 +2907,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_fails_when_on_created_branch() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new commit to have something to checkout
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -2898,7 +2977,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_idempotent_when_branch_already_deleted() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create then manually delete a branch (so it's already gone)
         Command::new("git")
@@ -2943,7 +3022,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_requires_branch_name_for_git_branch_create() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare without branch_name should fail for GitBranchCreate
         let request = make_git_branch_create_prepare_request(
@@ -2971,7 +3050,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_stores_branch_name_in_contract_metadata() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let request = make_git_branch_create_prepare_request(
             make_git_ref_target(&repo_path),
@@ -2995,7 +3074,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_uses_branch_name_from_contract_metadata() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Use contract with branch_name in metadata (as if prepare was called)
         let contract = make_git_branch_create_contract(
@@ -3021,7 +3100,7 @@ mod tests {
     #[tokio::test]
     async fn test_verify_git_branch_create_checks_branch_exists() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch first
         Command::new("git")
@@ -3051,7 +3130,7 @@ mod tests {
     #[tokio::test]
     async fn test_verify_git_branch_create_fails_when_branch_missing() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let contract = make_git_branch_create_contract(
             make_git_ref_target(&repo_path),
@@ -3075,7 +3154,7 @@ mod tests {
     async fn test_full_git_branch_create_contract_path() {
         // Integration test: prepare -> execute -> verify -> rollback via contract metadata
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Step 1: Prepare with branch_name in metadata
         let request = make_git_branch_create_prepare_request(
@@ -3139,7 +3218,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_rejects_invalid_base_ref() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with an invalid/unresolvable base_ref
         let request = make_git_branch_create_prepare_request(
@@ -3167,7 +3246,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_resolves_base_ref_to_sha_and_persists() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get the current HEAD SHA to verify resolution
         let head_sha = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -3207,7 +3286,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_creates_branch_at_resolved_base_ref_sha() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get the current HEAD SHA
         let head_sha = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -3268,7 +3347,7 @@ mod tests {
     #[tokio::test]
     async fn test_verify_detects_branch_tip_divergence_from_prepared_base_ref() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get the initial HEAD SHA (captured for documentation purposes)
         let _initial_head = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -3346,7 +3425,7 @@ mod tests {
     async fn test_prepare_with_branch_name_resolves_symbolic_ref() {
         // Tests that symbolic refs like HEAD, main, etc. are properly resolved to commit SHAs
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get current HEAD
         let head_sha = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -3374,7 +3453,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_fails_closed_on_unresolvable_base_ref_in_fallback() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a contract WITHOUT base_ref_sha (simulating old contract or missing prepare)
         // and try to execute with an unresolvable base_ref in payload
@@ -3421,7 +3500,7 @@ mod tests {
     async fn test_verify_fails_when_on_created_branch() {
         // Verify fail-closes when on the created branch because rollback would be blocked.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new commit so there's something to checkout
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -3495,7 +3574,7 @@ mod tests {
     async fn test_verify_passes_after_switching_away() {
         // Verify passes after switching away from the created branch.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new commit so there's something to checkout
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -3594,7 +3673,7 @@ mod tests {
     async fn test_verify_still_passes_when_not_on_branch_and_base_ref_matches() {
         // Verify passes when not on the created branch and base_ref matches.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch and prepare contract
         let request = make_git_branch_create_prepare_request(
@@ -3652,7 +3731,7 @@ mod tests {
         // Detached HEAD is a rollback-safety blocking state because branch deletion
         // is unsafe without a stable branch reference.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new commit so there's a valid HEAD to checkout
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -3728,7 +3807,7 @@ mod tests {
         // Rollback fail-closes when in detached HEAD state for GitBranchCreate.
         // Cannot safely delete branches in detached HEAD state.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new commit so there's a valid HEAD to checkout
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -3805,7 +3884,7 @@ mod tests {
         // and safe deletion policy would reject deletion. Instead of falling back
         // to force-delete (-D), we fail-closed to prevent data loss.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch first
         Command::new("git")
@@ -3892,7 +3971,7 @@ mod tests {
         // 2. Has not diverged (branch tip still at prepared base_ref)
         // This preserves the existing success path.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with branch_name in metadata
         let request = make_git_branch_create_prepare_request(
@@ -4032,7 +4111,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_rejects_invalid_branch_name() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with invalid branch name (space in name)
         let request = make_git_branch_create_prepare_request(
@@ -4060,7 +4139,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_rejects_branch_name_with_lock_suffix() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with .lock suffix
         let request = make_git_branch_create_prepare_request(
@@ -4085,7 +4164,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_rejects_branch_name_with_leading_dash() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with leading dash
         let request = make_git_branch_create_prepare_request(
@@ -4110,7 +4189,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_accepts_valid_branch_name() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with valid branch name (slash is allowed)
         let request = make_git_branch_create_prepare_request(
@@ -4135,7 +4214,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_rejects_branch_name_with_parent_traversal() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with parent directory traversal
         let request = make_git_branch_create_prepare_request(
@@ -4167,7 +4246,7 @@ mod tests {
         // Fail-closed: prepare rejects when branch already exists locally.
         // This moves the existence check from execute to prepare for earlier rejection.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch first
         Command::new("git")
@@ -4205,7 +4284,7 @@ mod tests {
         // Creating a branch in detached HEAD state is ambiguous because there's no stable
         // symbolic ref tracking what commit the branch was created from.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a commit and enter detached HEAD state
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -4262,7 +4341,7 @@ mod tests {
         // Prepare succeeds in detached HEAD state when explicit base_ref is provided.
         // The explicit base_ref provides clarity on what commit to branch from.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a commit and enter detached HEAD state
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -4316,7 +4395,7 @@ mod tests {
         // Prepare succeeds on normal (non-detached) HEAD with implicit base_ref.
         // This is the normal case where HEAD is on a branch and can be used as implicit base.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Should be on a branch (not detached)
         assert!(
@@ -4351,7 +4430,7 @@ mod tests {
         // Prepare persists resolved base_ref_sha and implicit_base_ref marker
         // when using implicit HEAD on a normal branch.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get the current HEAD SHA for comparison
         let head_sha = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
@@ -4403,7 +4482,7 @@ mod tests {
     async fn test_execute_uses_implicit_base_ref_sha_from_prepare() {
         // Execute uses the resolved base_ref_sha from prepare when implicit HEAD was used.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let head_sha = GitRollbackAdapter::get_head_sha(&repo_path).unwrap();
 
@@ -4466,7 +4545,7 @@ mod tests {
     async fn test_verify_audit_metadata_on_success() {
         // Verify emits correct audit metadata when verification succeeds.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with implicit HEAD (will persist base_ref_sha)
         let request = make_git_branch_create_prepare_request(
@@ -4541,7 +4620,7 @@ mod tests {
     async fn test_verify_audit_metadata_on_branch_tip_mismatch() {
         // Verify emits correct audit metadata when branch tip diverges from expected SHA.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with implicit HEAD
         let request = make_git_branch_create_prepare_request(
@@ -4639,7 +4718,7 @@ mod tests {
     async fn test_verify_audit_metadata_on_branch_missing() {
         // Verify emits correct audit metadata when branch is missing.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare with implicit HEAD
         let request = make_git_branch_create_prepare_request(
@@ -4703,7 +4782,7 @@ mod tests {
     async fn test_verify_audit_metadata_on_detached_head() {
         // Verify emits correct audit metadata when in detached HEAD state.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a commit and enter detached HEAD state
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -4776,7 +4855,7 @@ mod tests {
     async fn test_verify_audit_metadata_on_created_branch() {
         // Verify emits correct audit metadata when on the created branch.
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new commit so there's something to checkout
         fs::write(format!("{}/file.txt", repo_path), "content").unwrap();
@@ -4850,7 +4929,7 @@ mod tests {
         // Verify emits correct audit metadata when no base_ref is available and
         // only branch existence is verified (backward compatibility path).
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch directly (bypass prepare to simulate old contract without base_ref)
         Command::new("git")
@@ -4912,7 +4991,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_create_happy_path() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert("tag_name".to_string(), serde_json::json!("v1.0.0"));
@@ -4984,7 +5063,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_create_reject_existing_tag() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Pre-create the tag
         Command::new("git")
@@ -5018,7 +5097,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_create_reject_invalid_tag_name() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert(
@@ -5048,7 +5127,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_create_missing_tag_name() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let request = RollbackPrepareRequest {
             intent_id: ferrum_proto::IntentId::new(),
@@ -5072,7 +5151,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_create_rollback_idempotent() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert("tag_name".to_string(), serde_json::json!("idempotent-tag"));
@@ -5104,7 +5183,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_create_compensate_aliases_rollback() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert("tag_name".to_string(), serde_json::json!("compensate-tag"));
@@ -5140,7 +5219,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_delete_happy_path() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a tag to delete
         Command::new("git")
@@ -5213,7 +5292,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_delete_reject_nonexistent_tag() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert("tag_name".to_string(), serde_json::json!("does-not-exist"));
@@ -5240,7 +5319,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_delete_missing_tag_name() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let request = RollbackPrepareRequest {
             intent_id: ferrum_proto::IntentId::new(),
@@ -5264,7 +5343,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_delete_rollback_requires_tag_sha() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert("tag_name".to_string(), serde_json::json!("some-tag"));
@@ -5296,7 +5375,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_tag_delete_compensate_aliases_rollback() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create tag first
         Command::new("git")
@@ -5378,7 +5457,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_prepare_rejects_nonexistent_branch() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let request = make_git_branch_delete_prepare_request(
             make_git_ref_target(&repo_path),
@@ -5398,7 +5477,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_prepare_rejects_empty_name() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let mut meta = JsonMap::new();
         meta.insert("branch_name".to_string(), serde_json::json!(""));
@@ -5425,7 +5504,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_prepare_rejects_current_branch() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a new branch and check it out
         Command::new("git")
@@ -5452,7 +5531,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_happy_path() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch to delete (not checked out)
         Command::new("git")
@@ -5510,7 +5589,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_execute_idempotent() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch to delete (not checked out)
         Command::new("git")
@@ -5562,7 +5641,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_rollback_requires_branch_tip_sha() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch
         Command::new("git")
@@ -5604,7 +5683,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_branch_delete_compensate_aliases_rollback() {
         let (_tmp, repo_path) = create_test_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Create a branch
         Command::new("git")
@@ -5795,7 +5874,7 @@ mod tests {
     async fn test_git_push_sends_commits_to_remote() {
         // Set up local and remote repos
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get the current branch name
         let branch_name = get_current_branch_name(&local_path);
@@ -5856,7 +5935,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_push_prepare_captures_local_and_remote_ref() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -5893,7 +5972,7 @@ mod tests {
     #[tokio::test]
     async fn test_git_push_rollback_resets_remote_ref() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -6059,7 +6138,7 @@ exit 0
             .output()
             .unwrap();
 
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare and execute push
         let request = make_git_push_prepare_request(
@@ -6125,7 +6204,7 @@ exit 0
     #[tokio::test]
     async fn test_git_push_reject_detached_head() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -6156,7 +6235,7 @@ exit 0
     #[tokio::test]
     async fn test_git_pull_fetches_remote_changes() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -6231,7 +6310,7 @@ exit 0
     #[tokio::test]
     async fn test_git_pull_prepare_captures_current_head() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -6277,7 +6356,7 @@ exit 0
     #[tokio::test]
     async fn test_git_pull_rollback_resets_to_original_head() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -6357,7 +6436,7 @@ exit 0
     #[tokio::test]
     async fn test_git_pull_reject_dirty_worktree() {
         let (_remote_tmp, _local_tmp, _remote_path, local_path) = create_local_remote_repo();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         let branch_name = get_current_branch_name(&local_path);
 
@@ -6499,7 +6578,7 @@ exit 0
         // hasn't changed, and also demonstrates the restore semantics if local ref was modified.
         let (_remote_tmp, _local_tmp, _remote_path, local_path, branch_name) =
             create_local_remote_repo_with_branch();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Get original local ref SHA before fetch
         let original_ref_sha = GitRollbackAdapter::git_command(
@@ -6662,7 +6741,7 @@ exit 0
 
         let (_remote_tmp, _local_tmp, _remote_path, local_path, branch_name) =
             create_local_remote_repo_with_branch();
-        let adapter = GitRollbackAdapter;
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare fetch
         let request = make_git_fetch_prepare_request(
@@ -6786,7 +6865,7 @@ exit 0
             .output()
             .unwrap();
 
-        let adapter = GitRollbackAdapter::new();
+        let adapter = GitRollbackAdapter::new_unbounded();
 
         // Prepare the push
         let request = make_git_push_prepare_request(

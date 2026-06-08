@@ -13,6 +13,10 @@ jobs:
         run: find . -maxdepth 3 | sort
       - name: Local validation
         run: make validate
+      - name: Route scope documentation contract
+        run: python3 scripts/validate_route_scope_docs.py
+      - name: Documentation TOML snippets contract
+        run: python3 scripts/validate_docs_toml_snippets.py
       - name: Monitoring metric contract
         run: python3 scripts/validate_monitoring_metrics.py
       - name: Prometheus rule validation
@@ -22,6 +26,14 @@ jobs:
           --volume "$PWD/configs/monitoring:/rules:ro"
           prom/prometheus:v2.53.5
           check rules /rules/ferrumgate-alerts.yaml
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+      - name: Helm chart lint and render
+        run: |
+          helm lint deploy/helm/ferrumgate \
+            --set secrets.bearerToken=ci-placeholder-token-not-for-production
+          helm template ferrumgate deploy/helm/ferrumgate \
+            --set secrets.bearerToken=ci-placeholder-token-not-for-production >/tmp/ferrumgate-rendered.yaml
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cargo fmt check
@@ -40,6 +52,38 @@ jobs:
         run: cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
       - name: Cargo clippy (postgres feature)
         run: cargo clippy -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres -- -D warnings
+      - name: Release profile smoke
+        run: bash scripts/validate_release_feature_profile.sh
+      - name: ferrum-stress machine-readable smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -q -p ferrum-stress -- \
+            --scenario health \
+            --duration 1 \
+            --concurrency 1 \
+            --output-format json >/tmp/ferrum-stress.json
+          python3 - <<'PY'
+          import json
+
+          with open("/tmp/ferrum-stress.json", encoding="utf-8") as fh:
+              summary = json.load(fh)
+          assert summary["scenarios"][0]["scenario"] == "health"
+          assert summary["scenarios"][0]["total_requests"] > 0
+          PY
+
+          cargo run -q -p ferrum-stress -- \
+            --scenario health \
+            --duration 1 \
+            --concurrency 1 \
+            --output-format junit >/tmp/ferrum-stress.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("/tmp/ferrum-stress.xml").getroot()
+          assert root.tag == "testsuite"
+          assert root.attrib["name"] == "ferrum-stress"
+          PY
 
   postgres-live-tests:
     runs-on: ubuntu-latest

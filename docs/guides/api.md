@@ -22,14 +22,14 @@ Two auth modes are supported:
 | Mode | Behavior | Use case |
 |------|----------|----------|
 | `Disabled` | No auth required on any endpoint | Local development only |
-| `Bearer` | `Authorization: Bearer <token>` required on all endpoints except health/metrics | Bearer-auth deployments |
+| `Bearer` | `Authorization: Bearer <token>` required on all endpoints except `/v1/healthz` and `/v1/readyz` | Bearer-auth deployments |
 
-### Health and metrics endpoints (always unauthenticated)
+### Monitoring endpoints
 
-- `GET /v1/healthz`
-- `GET /v1/readyz`
-- `GET /v1/readyz/deep`
-- `GET /v1/metrics`
+- `GET /v1/healthz` - always unauthenticated
+- `GET /v1/readyz` - always unauthenticated
+- `GET /v1/readyz/deep` - requires auth when auth is enabled
+- `GET /v1/metrics` - requires auth when auth is enabled
 
 ### Bearer token format
 
@@ -57,8 +57,8 @@ Set via config or env var `FERRUMD_BEARER_TOKEN`. Tokens are compared with const
 |----------|--------|------|-------------|
 | `/v1/healthz` | `GET` | none | Liveness probe |
 | `/v1/readyz` | `GET` | none | Readiness probe |
-| `/v1/readyz/deep` | `GET` | none | Deep readiness (store health, queue depth, pool saturation) |
-| `/v1/metrics` | `GET` | none | Prometheus-compatible metrics |
+| `/v1/readyz/deep` | `GET` | required when auth is enabled | Deep readiness (store health, queue depth, pool saturation) |
+| `/v1/metrics` | `GET` | required when auth is enabled | Prometheus-compatible metrics |
 
 ### Intent and policy
 
@@ -227,7 +227,7 @@ rate_limit_per_second = 2
 rate_limit_burst = 50
 ```
 
-When rate limited, the API returns HTTP 429. Health and metrics endpoints are not rate limited.
+When rate limited, workload routes return HTTP 429. Monitoring endpoints are not rate limited.
 
 ## Related docs
 

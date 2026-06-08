@@ -53,7 +53,10 @@ impl TokenRole {
         match self {
             TokenRole::Admin => vec!["*".to_string()],
             TokenRole::Operator => vec![
+                "approval:read".to_string(),
                 "approval:resolve".to_string(),
+                "admin:lifecycle-outbox:read".to_string(),
+                "admin:lifecycle-outbox:write".to_string(),
                 "provenance:read".to_string(),
                 "provenance:write".to_string(),
                 "policy:read".to_string(),

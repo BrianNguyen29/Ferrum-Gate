@@ -6,7 +6,7 @@
 use axum::Router;
 use axum::body::Body;
 use ferrum_adapter_fs::PlannableFsAdapter;
-use ferrum_adapter_git::{PlannableGitAdapter, register_git_adapter};
+use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_maildraft::PlannableMailDraftAdapter;
 use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
@@ -1745,10 +1745,34 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
     let pdp = Arc::new(StaticPdpEngine);
     let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
 
+    // Create temp SQLite DB for SqliteAdapter before constructing bounded adapter roots.
+    let temp_dir = std::env::temp_dir().join(format!(
+        "ferrum-lineage-sqlite-root-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp sqlite root");
+    let test_db_path = temp_dir.join(format!("ferrum-lineage-sqlite-{}.db", uuid::Uuid::new_v4()));
+    let db_path_str = test_db_path.to_string_lossy().to_string();
+
+    // Pre-create the database with a table.
+    {
+        let conn = rusqlite::Connection::open(&test_db_path).expect("open temp db");
+        conn.execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            [],
+        )
+        .expect("create table");
+        conn.execute("INSERT INTO items (name) VALUES ('test_item')", [])
+            .expect("insert test row");
+    }
+
     // Register SqliteAdapter + PlannableSqliteAdapter so prepare selects sqlite path
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    registry.register(Arc::new(SqliteAdapter::new("sqlite")));
+    registry.register(Arc::new(
+        SqliteAdapter::new("sqlite", vec![temp_dir.clone()])
+            .expect("create bounded sqlite adapter"),
+    ));
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableSqliteAdapter));
     let rollback = Arc::new(rollback_service);
@@ -1762,23 +1786,6 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
         .apply_embedded_migrations()
         .await
         .expect("apply migrations");
-
-    // Create temp SQLite DB for SqliteAdapter
-    let temp_dir = std::env::temp_dir();
-    let test_db_path = temp_dir.join(format!("ferrum-lineage-sqlite-{}.db", uuid::Uuid::new_v4()));
-    let db_path_str = test_db_path.to_string_lossy().to_string();
-
-    // Pre-create the database with a table
-    {
-        let conn = rusqlite::Connection::open(&test_db_path).expect("open temp db");
-        conn.execute(
-            "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
-            [],
-        )
-        .expect("create table");
-        conn.execute("INSERT INTO items (name) VALUES ('test_item')", [])
-            .expect("insert test row");
-    }
 
     // Pre-insert intent to satisfy FK constraint
     let intent_id = ferrum_proto::IntentId::new();
@@ -2507,10 +2514,19 @@ async fn test_lineage_chain_git_adapter_compensate() {
     let pdp = Arc::new(StaticPdpEngine);
     let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
 
+    // Create temp git repo path before constructing bounded adapter roots.
+    let temp_dir =
+        std::env::temp_dir().join(format!("ferrum-lineage-git-root-{}", uuid::Uuid::new_v4()));
+    let test_repo_path = temp_dir.join(format!("ferrum-lineage-git-{}", uuid::Uuid::new_v4()));
+    let repo_path_str = test_repo_path.to_string_lossy().to_string();
+    std::fs::create_dir_all(&test_repo_path).expect("create temp dir");
+
     // Register GitAdapter + PlannableGitAdapter so prepare selects git path
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    register_git_adapter(&mut registry);
+    registry.register(Arc::new(
+        GitRollbackAdapter::new(vec![temp_dir.clone()]).expect("create bounded git adapter"),
+    ));
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableGitAdapter));
     let rollback = Arc::new(rollback_service);
@@ -2525,13 +2541,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
         .await
         .expect("apply migrations");
 
-    // Create temp git repo for GitAdapter
-    let temp_dir = std::env::temp_dir();
-    let test_repo_path = temp_dir.join(format!("ferrum-lineage-git-{}", uuid::Uuid::new_v4()));
-    let repo_path_str = test_repo_path.to_string_lossy().to_string();
-
     // Initialize the temp git repo
-    std::fs::create_dir_all(&test_repo_path).expect("create temp dir");
     let git_init = std::process::Command::new("git")
         .current_dir(&test_repo_path)
         .args(["init"])

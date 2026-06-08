@@ -31,6 +31,12 @@ bearer_token = ""  # Set via FERRUMD_BEARER_TOKEN env var
 # In non-prod with auth enabled, this can remain false.
 allow_insecure_nonlocal_bind = false
 
+# Adapter filesystem boundaries. Git/SQLite mutation adapters remain disabled
+# when their corresponding allowlist is empty.
+fs_workdir = "/var/lib/ferrumgate/workdir"
+git_repo_roots = ["/var/lib/ferrumgate/repos"]
+sqlite_db_roots = ["/var/lib/ferrumgate"]
+
 # Log filter (info, debug, warn, error)
 log_filter = "info"
 

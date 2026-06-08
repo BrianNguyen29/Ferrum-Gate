@@ -70,13 +70,19 @@ The following scopes are currently enforced by `required_scope_for_path()` for H
 | `execution:prepare` | `POST /v1/executions/{id}/prepare` | Prepare side effects. |
 | `execution:execute` | `POST /v1/executions/{id}/execute`, cancel | Execute/cancel actions. |
 | `execution:verify` | `POST /v1/executions/{id}/verify`, evaluate outcome | Verify/evaluate outcomes. |
+| `execution:commit` | `POST /v1/executions/{id}/commit` | Commit verified side effects. |
 | `execution:compensate` | `POST /v1/executions/{id}/compensate` | Run compensation/rollback flow. |
-| `approval:resolve` | Approval list/get/resolve routes | Inspect and resolve approvals. |
+| `approval:read` | Approval list/get routes | Inspect pending approvals without resolving them. |
+| `approval:resolve` | Approval resolve route | Approve or deny pending approvals. |
 | `policy:read` | Policy bundle read/simulate/diff/version routes | Read policy state and simulations. |
 | `policy:write` | Policy bundle create/update/delete/activate/rollback | Mutate policy state. |
 | `provenance:read` | Provenance, lineage, bridges, execution detail | Read provenance and lineage. |
+| `provenance:write` | `POST /v1/provenance/ingest` | Ingest trusted external provenance events. |
 | `admin:tokens` | Admin token lifecycle routes | Create/list/revoke/rotate scoped tokens. |
-| `admin:audit` | Admin audit-log routes | Read audit logs. |
+| `admin:agents` | Admin agent registry routes | Create/list/revoke agent identities. |
+| `admin:lifecycle-outbox:read` | Lifecycle outbox list/get routes | Inspect reconciliation records. |
+| `admin:lifecycle-outbox:write` | Lifecycle outbox retry/resolve routes | Retry reconciliation or mark operator review resolved. |
+| `admin:audit` | Admin audit-log routes | Read audit logs and audit checkpoints. |
 | `*` | Admin wildcard | Matches any required scope. |
 
 ### Reserved scopes
@@ -90,7 +96,7 @@ These names must not be presented as active route-enforced controls until corres
 
 When `AuthMode::Scoped` is enabled, the request flow is:
 
-1. Exact public whitelist check for health/readiness/metrics endpoints.
+1. Exact public whitelist check for liveness and shallow readiness endpoints.
 2. Bearer token extraction from the request.
 3. Lookup-hash computation and token lookup.
 4. Salted hash verification.
@@ -102,7 +108,7 @@ When `AuthMode::Scoped` is enabled, the request flow is:
 
 ## 7. Deny-by-Default Behavior
 
-Only exact health/readiness/metrics routes are public. Workload/admin routes require scopes. Unknown or unmapped routes are not silently allowed: the fallback requires `admin:tokens`.
+Only exact liveness and shallow-readiness routes are public. Deep readiness, metrics, workload, and admin routes require auth/scopes when authentication is enabled. Unknown or unmapped routes are not silently allowed: the fallback requires `admin:tokens`.
 
 This can make a non-existent route return an auth error for non-admin scoped tokens before routing reaches a 404. That behavior is safe, though it should be documented for operators.
 

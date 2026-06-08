@@ -96,7 +96,8 @@ PostgreSQL is recommended for deployments requiring materially higher sustained 
 ## Authentication
 - **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
 - Tokens are validated with constant-time comparison (timing-attack resistant)
-- Health/readiness endpoints are always unauthenticated
+- `/v1/healthz` and `/v1/readyz` are always unauthenticated. `/v1/readyz/deep`
+  and `/v1/metrics` require auth when auth mode is enabled.
 
 ## Health and Readiness Endpoints
 
@@ -117,7 +118,7 @@ The `write_queue` component provides bounded backpressure detection only; it doe
 The `pool` component is emitted for all stores; SQLite/non-pool stores report `not applicable`.
 
 **Load balancer / Kubernetes guidance**:
-- Use **`/v1/readyz/deep`** for load balancer health checks and Kubernetes readiness probes.
+- Use **`/v1/readyz/deep`** for authenticated load balancer health checks and Kubernetes readiness probes.
   This endpoint returns HTTP 503 when the SQLite store is unreachable, unhealthy, or when the write queue depth exceeds 100,
   allowing load balancers to route traffic away from degraded instances.
 - **`/v1/healthz`** and **`/v1/readyz`** always return HTTP 200 — do NOT use these
@@ -128,7 +129,7 @@ The `pool` component is emitted for all stores; SQLite/non-pool stores report `n
   It does not cause 503 on store failure.
 
 **Metrics** (`/v1/metrics`) include **bounded latency histograms** (`ferrumgate_request_duration_seconds`)
-for public endpoints (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`) with labels
+for monitoring endpoints (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`) with labels
 `route`, `method`, `status`, `le` (bucket boundary), emitting `_bucket`, `_sum`, `_count` lines.
 For PostgreSQL stores, pool metrics (`ferrumgate_store_pg_pool_size`, `ferrumgate_store_pg_pool_idle`,
 `ferrumgate_store_pg_pool_max`) and acquire-timeout counters (`ferrumgate_store_pg_acquire_timeouts_total`)
@@ -176,6 +177,28 @@ FERRUMD_FS_WORKDIR=/var/lib/ferrumgate/workdir ferrumd --config /path/to/deploye
 ```
 
 The daemon creates the directory on startup when needed. Relative paths are rejected.
+
+Git and SQLite mutation adapters are disabled until explicit parent-root allowlists are configured:
+
+```toml
+[server]
+git_repo_roots = ["/var/lib/ferrumgate/repos"]
+sqlite_db_roots = ["/var/lib/ferrumgate/databases"]
+```
+
+Equivalent environment variables accept comma-separated absolute paths:
+
+```bash
+FERRUMD_GIT_REPO_ROOTS=/srv/repos,/var/lib/ferrumgate/repos
+FERRUMD_SQLITE_DB_ROOTS=/var/lib/ferrumgate/databases
+```
+
+Targets and roots are canonicalized at every lifecycle phase. Symlink escapes and sibling-prefix
+paths such as `/allowed2` when only `/allowed` is configured are rejected.
+
+The Helm chart leaves both mutation allowlists empty by default. Its default file-backed SQLite
+store uses a persistent volume and is restricted to one replica; configure PostgreSQL before
+enabling autoscaling or multiple replicas.
 
 ## Rate Limiting
 - Built-in via `tower_governor`: 2 req/s sustained, burst of 50

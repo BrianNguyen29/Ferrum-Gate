@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use ferrum_adapter_fs::{PlannableFsAdapter, register_fs_adapter};
-use ferrum_adapter_git::{PlannableGitAdapter, register_git_adapter};
+use ferrum_adapter_fs::{FsAdapter, FsBoundsConfig, PlannableFsAdapter};
+use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_http::{PlannableHttpAdapter, register_http_adapter};
 use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_adapter};
-use ferrum_adapter_sqlite::{PlannableSqliteAdapter, register_sqlite_adapter};
+use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::InMemoryCapabilityService;
 use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
@@ -115,8 +115,48 @@ struct Args {
     pg_idle_in_transaction_timeout_ms: Option<u64>,
 }
 
-fn get_env<T: std::str::FromStr>(key: &str) -> Option<T> {
-    std::env::var(key).ok().and_then(|v| v.parse().ok())
+fn get_env<T>(key: &str) -> Result<Option<T>>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match std::env::var(key) {
+        Ok(value) => value
+            .parse()
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("invalid {key}: {e}")),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(e) => Err(anyhow::anyhow!("failed to read {key}: {e}")),
+    }
+}
+
+fn get_env_path_list(key: &str) -> Result<Option<Vec<PathBuf>>> {
+    let value = match std::env::var(key) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(e) => return Err(anyhow::anyhow!("failed to read {key}: {e}")),
+    };
+    let paths = value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    Ok(Some(paths))
+}
+
+fn redact_dsn_for_log(dsn: &str) -> String {
+    let Some((scheme, rest)) = dsn.split_once("://") else {
+        return dsn.to_string();
+    };
+    let mut rest = rest.to_string();
+    if let Some(at) = rest.find('@') {
+        rest.replace_range(..at, "<redacted>");
+    }
+    if let Some(query) = rest.find('?') {
+        rest.replace_range(query + 1.., "<redacted>");
+    }
+    format!("{scheme}://{rest}")
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -163,6 +203,12 @@ struct ServerSection {
     pg_statement_timeout_ms: Option<u64>,
     #[serde(default)]
     pg_idle_in_transaction_timeout_ms: Option<u64>,
+    #[serde(default)]
+    fs_workdir: Option<PathBuf>,
+    #[serde(default)]
+    git_repo_roots: Vec<PathBuf>,
+    #[serde(default)]
+    sqlite_db_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -237,7 +283,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
     // Try to load config file if specified
     let file_config = if let Some(ref config_path) = args.config {
         Some(load_config_file(config_path)?)
-    } else if let Some(config_path) = get_env::<PathBuf>("FERRUMD_CONFIG") {
+    } else if let Some(config_path) = get_env::<PathBuf>("FERRUMD_CONFIG")? {
         Some(load_config_file(&config_path)?)
     } else {
         // Auto-load default config if present
@@ -255,48 +301,49 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
     let bind_addr = args
         .bind_addr
         .clone()
-        .or_else(|| get_env("FERRUMD_BIND_ADDR"))
+        .or(get_env("FERRUMD_BIND_ADDR")?)
         .or_else(|| server.as_ref().and_then(|s| s.bind_addr.clone()))
         .unwrap_or_else(|| DEFAULT_BIND_ADDR.to_string());
 
     let store_dsn = args
         .store_dsn
         .clone()
-        .or_else(|| get_env("FERRUMD_STORE_DSN"))
+        .or(get_env("FERRUMD_STORE_DSN")?)
         .or_else(|| server.as_ref().and_then(|s| s.store_dsn.clone()))
         .unwrap_or_else(|| DEFAULT_STORE_DSN.to_string());
 
     let auth_mode = args
         .auth_mode
         .clone()
-        .or_else(|| get_env("FERRUMD_AUTH_MODE"))
+        .or(get_env("FERRUMD_AUTH_MODE")?)
         .or_else(|| server.as_ref().and_then(|s| s.auth_mode.clone()))
         .unwrap_or_else(|| "disabled".to_string());
 
     let bearer_token = args
         .bearer_token
         .clone()
-        .or_else(|| get_env("FERRUMD_BEARER_TOKEN"))
+        .or(get_env("FERRUMD_BEARER_TOKEN")?)
         .or_else(|| server.as_ref().and_then(|s| s.bearer_token.clone()));
 
-    let allow_insecure_nonlocal_bind = args.allow_insecure_nonlocal_bind
-        || get_env::<bool>("FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND").unwrap_or(false)
-        || server
-            .as_ref()
-            .map(|s| s.allow_insecure_nonlocal_bind.unwrap_or(false))
-            .unwrap_or(false);
+    let allow_insecure_nonlocal_bind = if args.allow_insecure_nonlocal_bind {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND")?
+            .or_else(|| server.as_ref().and_then(|s| s.allow_insecure_nonlocal_bind))
+            .unwrap_or(false)
+    };
 
     let log_filter = args
         .log_filter
         .clone()
-        .or_else(|| get_env("FERRUMD_LOG_FILTER"))
+        .or(get_env("FERRUMD_LOG_FILTER")?)
         .or_else(|| server.as_ref().and_then(|s| s.log_filter.clone()))
         .unwrap_or_else(|| DEFAULT_LOG_FILTER.to_string());
 
     let log_format = args
         .log_format
         .clone()
-        .or_else(|| get_env("FERRUMD_LOG_FORMAT"))
+        .or(get_env("FERRUMD_LOG_FORMAT")?)
         .or_else(|| server.as_ref().and_then(|s| s.log_format.clone()))
         .unwrap_or_else(|| "text".to_string());
 
@@ -307,69 +354,74 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
     let store_synchronous = args
         .store_synchronous
         .clone()
-        .or_else(|| get_env("FERRUMD_STORE_SYNCHRONOUS"))
+        .or(get_env("FERRUMD_STORE_SYNCHRONOUS")?)
         .or_else(|| server.as_ref().and_then(|s| s.store_synchronous.clone()));
 
     let store_wal_autocheckpoint = args
         .store_wal_autocheckpoint
-        .or_else(|| {
-            get_env::<String>("FERRUMD_STORE_WAL_AUTOCHECKPOINT")?
-                .parse()
-                .ok()
-        })
+        .or(get_env("FERRUMD_STORE_WAL_AUTOCHECKPOINT")?)
         .or_else(|| server.as_ref().and_then(|s| s.store_wal_autocheckpoint));
 
     let rate_limit_per_second = args
         .rate_limit_per_second
-        .or_else(|| get_env("FERRUMD_RATE_LIMIT_PER_SECOND"))
+        .or(get_env("FERRUMD_RATE_LIMIT_PER_SECOND")?)
         .or_else(|| server.as_ref().and_then(|s| s.rate_limit_per_second))
         .unwrap_or(2);
 
     let rate_limit_burst = args
         .rate_limit_burst
-        .or_else(|| get_env("FERRUMD_RATE_LIMIT_BURST"))
+        .or(get_env("FERRUMD_RATE_LIMIT_BURST")?)
         .or_else(|| server.as_ref().and_then(|s| s.rate_limit_burst))
         .unwrap_or(50);
 
     let write_queue_threshold = args
         .write_queue_threshold
-        .or_else(|| get_env("FERRUMD_WRITE_QUEUE_THRESHOLD"))
+        .or(get_env("FERRUMD_WRITE_QUEUE_THRESHOLD")?)
         .or_else(|| server.as_ref().and_then(|s| s.write_queue_threshold))
         .unwrap_or(100);
 
     let pg_max_connections = args
         .pg_max_connections
-        .or_else(|| get_env("FERRUMD_PG_MAX_CONNECTIONS"))
+        .or(get_env("FERRUMD_PG_MAX_CONNECTIONS")?)
         .or_else(|| server.as_ref().and_then(|s| s.pg_max_connections))
         .unwrap_or(10);
 
     let pg_min_idle = args
         .pg_min_idle
-        .or_else(|| get_env("FERRUMD_PG_MIN_IDLE"))
+        .or(get_env("FERRUMD_PG_MIN_IDLE")?)
         .or_else(|| server.as_ref().and_then(|s| s.pg_min_idle))
         .unwrap_or(2);
 
     let pg_acquire_timeout_secs = args
         .pg_acquire_timeout_secs
-        .or_else(|| get_env("FERRUMD_PG_ACQUIRE_TIMEOUT_SECS"))
+        .or(get_env("FERRUMD_PG_ACQUIRE_TIMEOUT_SECS")?)
         .or_else(|| server.as_ref().and_then(|s| s.pg_acquire_timeout_secs))
         .unwrap_or(5);
 
     let pg_statement_timeout_ms = args
         .pg_statement_timeout_ms
-        .or_else(|| get_env("FERRUMD_PG_STATEMENT_TIMEOUT_MS"))
+        .or(get_env("FERRUMD_PG_STATEMENT_TIMEOUT_MS")?)
         .or_else(|| server.as_ref().and_then(|s| s.pg_statement_timeout_ms))
         .unwrap_or(5000);
 
     let pg_idle_in_transaction_timeout_ms = args
         .pg_idle_in_transaction_timeout_ms
-        .or_else(|| get_env("FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS"))
+        .or(get_env("FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS")?)
         .or_else(|| {
             server
                 .as_ref()
                 .and_then(|s| s.pg_idle_in_transaction_timeout_ms)
         })
         .unwrap_or(10000);
+
+    let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
+        .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
+    let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
+        .or_else(|| server.as_ref().map(|s| s.git_repo_roots.clone()))
+        .unwrap_or_default();
+    let sqlite_db_roots = get_env_path_list("FERRUMD_SQLITE_DB_ROOTS")?
+        .or_else(|| server.as_ref().map(|s| s.sqlite_db_roots.clone()))
+        .unwrap_or_default();
 
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
@@ -383,37 +435,37 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
     let oidc_config = if auth_mode_parsed == AuthMode::Oidc {
         let file_oidc = file_config.as_ref().and_then(|c| c.oidc.as_ref());
 
-        let issuer = get_env::<String>("FERRUMD_OIDC_ISSUER")
+        let issuer = get_env::<String>("FERRUMD_OIDC_ISSUER")?
             .or_else(|| file_oidc.map(|o| o.issuer.clone()))
             .unwrap_or_default();
 
-        let audiences_env = get_env::<String>("FERRUMD_OIDC_AUDIENCES");
+        let audiences_env = get_env::<String>("FERRUMD_OIDC_AUDIENCES")?;
         let audiences = if let Some(aud_str) = audiences_env {
             aud_str.split(',').map(|s| s.trim().to_string()).collect()
         } else {
             file_oidc.map(|o| o.audiences.clone()).unwrap_or_default()
         };
 
-        let jwks_url = get_env::<String>("FERRUMD_OIDC_JWKS_URL")
+        let jwks_url = get_env::<String>("FERRUMD_OIDC_JWKS_URL")?
             .or_else(|| file_oidc.and_then(|o| o.jwks_url.clone()));
 
-        let jwks_cache_ttl_secs = get_env::<u64>("FERRUMD_OIDC_JWKS_CACHE_TTL_SECS")
+        let jwks_cache_ttl_secs = get_env::<u64>("FERRUMD_OIDC_JWKS_CACHE_TTL_SECS")?
             .or_else(|| file_oidc.map(|o| o.jwks_cache_ttl_secs))
             .unwrap_or(300);
 
-        let actor_id_claim = get_env::<String>("FERRUMD_OIDC_ACTOR_ID_CLAIM")
+        let actor_id_claim = get_env::<String>("FERRUMD_OIDC_ACTOR_ID_CLAIM")?
             .or_else(|| file_oidc.map(|o| o.actor_id_claim.clone()))
             .unwrap_or_else(|| "sub".to_string());
 
-        let role_source_claim = get_env::<String>("FERRUMD_OIDC_ROLE_SOURCE_CLAIM")
+        let role_source_claim = get_env::<String>("FERRUMD_OIDC_ROLE_SOURCE_CLAIM")?
             .or_else(|| file_oidc.map(|o| o.role_source_claim.clone()))
             .unwrap_or_else(|| "groups".to_string());
 
-        let require_email_verified = get_env::<bool>("FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED")
+        let require_email_verified = get_env::<bool>("FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED")?
             .or_else(|| file_oidc.map(|o| o.require_email_verified))
             .unwrap_or(true);
 
-        let algorithms_env = get_env::<String>("FERRUMD_OIDC_ALLOWED_ALGORITHMS");
+        let algorithms_env = get_env::<String>("FERRUMD_OIDC_ALLOWED_ALGORITHMS")?;
         let allowed_algorithms: Vec<jsonwebtoken::Algorithm> = if let Some(alg_str) = algorithms_env
         {
             alg_str
@@ -449,11 +501,10 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
             ]
         };
 
-        let role_mappings_env = get_env::<String>("FERRUMD_OIDC_ROLE_MAPPINGS");
+        let role_mappings_env = get_env::<String>("FERRUMD_OIDC_ROLE_MAPPINGS")?;
         let role_mappings: std::collections::HashMap<String, ferrum_proto::TokenRole> =
             if let Some(rm_str) = role_mappings_env {
-                let mut map: std::collections::HashMap<String, ferrum_proto::TokenRole> =
-                    std::collections::HashMap::new();
+                let mut map = std::collections::HashMap::new();
                 for pair in rm_str.split(',') {
                     let pair = pair.trim();
                     if pair.is_empty() {
@@ -470,8 +521,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
                 }
                 map
             } else if let Some(oidc) = file_oidc {
-                let mut map: std::collections::HashMap<String, ferrum_proto::TokenRole> =
-                    std::collections::HashMap::new();
+                let mut map = std::collections::HashMap::new();
                 for (name, role_str) in &oidc.role_mappings {
                     let role = role_str
                         .parse::<ferrum_proto::TokenRole>()
@@ -564,6 +614,9 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         pg_acquire_timeout_secs,
         pg_statement_timeout_ms,
         pg_idle_in_transaction_timeout_ms,
+        fs_workdir,
+        git_repo_roots,
+        sqlite_db_roots,
         oidc_config,
         agent_clock_skew_secs: 30,
     };
@@ -604,7 +657,7 @@ async fn main() -> Result<()> {
         "starting ferrumd with config: auth_mode={}, bind_addr={}, store_dsn={}, log_format={}, rate_limit_per_second={}, rate_limit_burst={}",
         config.auth_mode,
         config.bind_addr,
-        config.store_dsn,
+        redact_dsn_for_log(&config.store_dsn),
         config.log_format,
         config.rate_limit_per_second,
         config.rate_limit_burst
@@ -615,16 +668,74 @@ async fn main() -> Result<()> {
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    register_git_adapter(&mut registry);
-    register_fs_adapter(&mut registry);
+    let git_enabled = !config.git_repo_roots.is_empty();
+    if git_enabled {
+        for root in &config.git_repo_roots {
+            std::fs::create_dir_all(root).with_context(|| {
+                format!(
+                    "failed to create configured Git repository root {}",
+                    root.display()
+                )
+            })?;
+        }
+        registry.register(Arc::new(GitRollbackAdapter::new(
+            config.git_repo_roots.clone(),
+        )?));
+    } else {
+        tracing::warn!(
+            "Git adapter not registered because git_repo_roots is empty; \
+             set FERRUMD_GIT_REPO_ROOTS or server.git_repo_roots to enable bounded Git mutations"
+        );
+    }
+    if let Some(workdir) = &config.fs_workdir {
+        std::fs::create_dir_all(workdir).with_context(|| {
+            format!(
+                "failed to create filesystem adapter workdir {}",
+                workdir.display()
+            )
+        })?;
+        registry.register(Arc::new(FsAdapter::new_with_workdir(
+            "fs",
+            FsBoundsConfig::default(),
+            workdir.clone(),
+        )));
+    } else {
+        tracing::warn!(
+            "filesystem adapter not registered because fs_workdir is not configured; \
+             set FERRUMD_FS_WORKDIR or server.fs_workdir to enable bounded filesystem mutations"
+        );
+    }
     register_http_adapter(&mut registry);
-    register_sqlite_adapter(&mut registry);
+    let sqlite_adapter_enabled = !config.sqlite_db_roots.is_empty();
+    if sqlite_adapter_enabled {
+        for root in &config.sqlite_db_roots {
+            std::fs::create_dir_all(root).with_context(|| {
+                format!(
+                    "failed to create configured SQLite database root {}",
+                    root.display()
+                )
+            })?;
+        }
+        registry.register(Arc::new(SqliteAdapter::new(
+            "sqlite",
+            config.sqlite_db_roots.clone(),
+        )?));
+    } else {
+        tracing::warn!(
+            "SQLite mutation adapter not registered because sqlite_db_roots is empty; \
+             set FERRUMD_SQLITE_DB_ROOTS or server.sqlite_db_roots to enable bounded SQLite mutations"
+        );
+    }
     register_maildraft_adapter(&mut registry);
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
-    rollback_service.register_planner(Arc::new(PlannableSqliteAdapter));
+    if sqlite_adapter_enabled {
+        rollback_service.register_planner(Arc::new(PlannableSqliteAdapter));
+    }
     rollback_service.register_planner(Arc::new(PlannableMailDraftAdapter));
-    rollback_service.register_planner(Arc::new(PlannableGitAdapter));
+    if git_enabled {
+        rollback_service.register_planner(Arc::new(PlannableGitAdapter));
+    }
     rollback_service.register_planner(Arc::new(PlannableHttpAdapter));
     let rollback = Arc::new(rollback_service);
 
@@ -672,9 +783,10 @@ async fn main() -> Result<()> {
         Arc::new(sqlite_store) as Arc<dyn StoreFacade>
     };
 
-    let _reconciliation_report = reconcile_lifecycle_outbox_before_startup(&store).await?;
+    let reconciliation_report = reconcile_lifecycle_outbox_before_startup(&store).await?;
 
-    let runtime = GatewayRuntime::new(pdp, cap, rollback, store, vec![]);
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, store, vec![])
+        .with_lifecycle_reconciliation_report(reconciliation_report);
     run_http_server(config, runtime).await
 }
 
@@ -708,6 +820,9 @@ mod tests {
             "FERRUMD_PG_ACQUIRE_TIMEOUT_SECS",
             "FERRUMD_PG_STATEMENT_TIMEOUT_MS",
             "FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS",
+            "FERRUMD_FS_WORKDIR",
+            "FERRUMD_GIT_REPO_ROOTS",
+            "FERRUMD_SQLITE_DB_ROOTS",
             "FERRUMD_OIDC_ISSUER",
             "FERRUMD_OIDC_AUDIENCES",
             "FERRUMD_OIDC_JWKS_URL",
@@ -760,6 +875,8 @@ bind_addr = "127.0.0.1:1111"
 store_dsn = "sqlite://from-file.db"
 auth_mode = "disabled"
 log_filter = "warn"
+git_repo_roots = ["/from/file/repos"]
+sqlite_db_roots = ["/from/file/databases"]
 "#,
         );
 
@@ -767,6 +884,11 @@ log_filter = "warn"
             std::env::set_var("FERRUMD_BIND_ADDR", "127.0.0.1:2222");
             std::env::set_var("FERRUMD_STORE_DSN", "sqlite://from-env.db");
             std::env::set_var("FERRUMD_LOG_FILTER", "debug");
+            std::env::set_var(
+                "FERRUMD_GIT_REPO_ROOTS",
+                "/from/env/repos,/from/env/repos-2",
+            );
+            std::env::set_var("FERRUMD_SQLITE_DB_ROOTS", "/from/env/databases");
         }
 
         let args = Args {
@@ -795,6 +917,31 @@ log_filter = "warn"
         assert_eq!(config.bind_addr, "127.0.0.1:3333".parse().unwrap());
         assert_eq!(config.store_dsn, "sqlite://from-env.db");
         assert_eq!(config.log_filter, "debug");
+        assert_eq!(
+            config.git_repo_roots,
+            vec![
+                PathBuf::from("/from/env/repos"),
+                PathBuf::from("/from/env/repos-2")
+            ]
+        );
+        assert_eq!(
+            config.sqlite_db_roots,
+            vec![PathBuf::from("/from/env/databases")]
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_GIT_REPO_ROOTS", "");
+            std::env::set_var("FERRUMD_SQLITE_DB_ROOTS", " , ");
+        }
+        let disabled = resolve_config(&args).unwrap();
+        assert!(
+            disabled.git_repo_roots.is_empty(),
+            "an explicitly empty env value must disable the Git adapter"
+        );
+        assert!(
+            disabled.sqlite_db_roots.is_empty(),
+            "an explicitly empty env value must disable the SQLite adapter"
+        );
 
         let _ = fs::remove_file(path);
         clear_test_env();

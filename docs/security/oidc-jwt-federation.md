@@ -111,7 +111,7 @@ role_source = "groups"
 
 When `AuthMode::Oidc` is enabled, the request authorization flow is:
 
-1. **Public whitelist check** — health/readiness/metrics endpoints bypass auth (same as `Scoped`).
+1. **Public whitelist check** — only `/v1/healthz` and `/v1/readyz` bypass auth.
 2. **Bearer token extraction** — `Authorization: Bearer <jwt>` header.
 3. **JWT structure validation** — three base64url segments, valid JSON header and payload.
 4. **Algorithm restriction** — reject `none` and any asymmetric algorithm not in an explicit allowlist (`RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `EdDSA`).

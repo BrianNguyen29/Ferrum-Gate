@@ -14,5 +14,8 @@ ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }
 chrono = { workspace = true }
 
+[features]
+unsafe-unbounded-adapters = []
+
 [dev-dependencies]
 tempfile = "3"

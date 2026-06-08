@@ -2,9 +2,10 @@ use ferrum_cap::CapabilityService;
 use ferrum_firewall::TaintScoringFirewall;
 use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
-use ferrum_store::StoreFacade;
+use ferrum_store::{LifecycleReconciliationReport, StoreFacade};
 use ferrum_sync::RuntimeBridge;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,7 @@ pub struct GatewayRuntime {
     pub store: Arc<dyn StoreFacade>,
     pub bridges: Vec<Arc<dyn RuntimeBridge>>,
     pub firewall: Arc<TaintScoringFirewall>,
+    pub lifecycle_reconciliation_report: Option<LifecycleReconciliationReport>,
 }
 
 impl GatewayRuntime {
@@ -39,7 +41,16 @@ impl GatewayRuntime {
             store,
             bridges,
             firewall: Arc::new(TaintScoringFirewall::new()),
+            lifecycle_reconciliation_report: None,
         }
+    }
+
+    pub fn with_lifecycle_reconciliation_report(
+        mut self,
+        report: LifecycleReconciliationReport,
+    ) -> Self {
+        self.lifecycle_reconciliation_report = Some(report);
+        self
     }
 }
 
@@ -366,6 +377,12 @@ pub struct ServerConfig {
     /// PostgreSQL session idle-in-transaction timeout in milliseconds (`0` disables).
     /// Conservative default: 10000.
     pub pg_idle_in_transaction_timeout_ms: u64,
+    /// Filesystem adapter workdir. Required for production-like non-loopback deployments.
+    pub fs_workdir: Option<PathBuf>,
+    /// Parent roots under which Git repositories may be mutated.
+    pub git_repo_roots: Vec<PathBuf>,
+    /// Parent roots under which SQLite database files may be mutated.
+    pub sqlite_db_roots: Vec<PathBuf>,
     /// OIDC configuration. Required when `auth_mode` is `Oidc`.
     pub oidc_config: Option<OidcConfig>,
     /// Clock skew tolerance for Agent auth timestamps in seconds.
@@ -393,6 +410,9 @@ impl Default for ServerConfig {
             pg_acquire_timeout_secs: 5,
             pg_statement_timeout_ms: 5000,
             pg_idle_in_transaction_timeout_ms: 10000,
+            fs_workdir: None,
+            git_repo_roots: Vec::new(),
+            sqlite_db_roots: Vec::new(),
             oidc_config: None,
             agent_clock_skew_secs: 30,
         }
@@ -407,6 +427,12 @@ impl ServerConfig {
             let token = self.bearer_token.as_deref().unwrap_or("");
             if token.is_empty() {
                 return Err("bearer token cannot be empty when auth mode is bearer".to_string());
+            }
+            if is_placeholder_bearer_token(token) {
+                return Err(
+                    "bearer token cannot use a documented placeholder value in bearer auth mode"
+                        .to_string(),
+                );
             }
         }
 
@@ -454,6 +480,36 @@ impl ServerConfig {
             );
         }
 
+        let production_like =
+            !self.bind_addr.ip().is_loopback() && self.auth_mode != AuthMode::Disabled;
+        if production_like
+            && self
+                .store_dsn
+                .trim()
+                .eq_ignore_ascii_case("sqlite::memory:")
+        {
+            return Err(
+                "sqlite::memory: is not allowed for production-like non-loopback deployments"
+                    .to_string(),
+            );
+        }
+        if production_like && self.fs_workdir.is_none() {
+            return Err(
+                "fs_workdir is required for production-like non-loopback deployments".to_string(),
+            );
+        }
+        if let Some(workdir) = &self.fs_workdir
+            && !workdir.is_absolute()
+        {
+            return Err("fs_workdir must be an absolute path".to_string());
+        }
+        if self.git_repo_roots.iter().any(|root| !root.is_absolute()) {
+            return Err("all git_repo_roots must be absolute paths".to_string());
+        }
+        if self.sqlite_db_roots.iter().any(|root| !root.is_absolute()) {
+            return Err("all sqlite_db_roots must be absolute paths".to_string());
+        }
+
         // Validate store DSN is SQLite (PostgreSQL and MySQL not implemented)
         validate_store_dsn(&self.store_dsn)?;
 
@@ -491,6 +547,23 @@ impl ServerConfig {
 
         Ok(())
     }
+}
+
+fn is_placeholder_bearer_token(token: &str) -> bool {
+    let normalized = token.trim().to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "change_me_to_a_secure_token"
+            | "change_me"
+            | "changeme"
+            | "replace_me"
+            | "replace-with-secure-token"
+            | "example"
+            | "example-token"
+            | "test"
+            | "token"
+    ) || normalized.contains("change_me")
+        || normalized.contains("changeme")
 }
 
 /// Validates the store DSN.
