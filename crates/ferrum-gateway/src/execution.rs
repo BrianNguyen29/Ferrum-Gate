@@ -22,9 +22,8 @@
 //!   before authorizing an execution.
 //!
 //! Scope (Stage 4 — low-risk HTTP handlers):
-//! - `cancel_execution` — terminal-state guard, audit + provenance emission
-//!   (rolls the execution back to Canceled without invoking the rollback
-//!   service).
+//! - `cancel_execution` — pre-side-effect guard, audit + provenance emission
+//!   (moves the execution to Canceled only before adapter side effects start).
 //! - `evaluate_outcome` — PDP outcome evaluation that returns the alignment
 //!   verdict (allowed/forbidden vs. actual effect).
 //!
@@ -195,6 +194,29 @@ fn lifecycle_event_metadata(
         serde_json::json!(outbox.idempotency_key.clone()),
     );
     metadata
+}
+
+fn execution_is_cancelable_pre_side_effect(state: &ExecutionState) -> bool {
+    matches!(
+        state,
+        ExecutionState::Proposed
+            | ExecutionState::Authorized
+            | ExecutionState::Prepared
+            | ExecutionState::AwaitingApproval
+    )
+}
+
+fn execution_is_terminal_for_commit(state: &ExecutionState) -> bool {
+    matches!(
+        state,
+        ExecutionState::Committed
+            | ExecutionState::Compensated
+            | ExecutionState::RolledBack
+            | ExecutionState::Denied
+            | ExecutionState::Quarantined
+            | ExecutionState::Failed
+            | ExecutionState::Canceled
+    )
 }
 
 async fn mark_lifecycle_obligation_written(
@@ -1193,7 +1215,7 @@ pub(crate) async fn validate_approval_binding_digest(
 
 /// `POST /v1/executions/{execution_id}/cancel`
 ///
-/// Cancels a non-terminal execution by transitioning it to `Canceled`,
+/// Cancels a pre-side-effect execution by transitioning it to `Canceled`,
 /// recording an audit entry, and emitting a `SideEffectRolledBack`
 /// provenance event so the lineage reflects the cancel as a rollback-like
 /// terminal effect.
@@ -1234,30 +1256,18 @@ pub(crate) async fn cancel_execution(
     let previous_state = execution.state.clone();
 
     // ------------------------------------------------------------------
-    // Cancel guard: only non-terminal states can be canceled.
-    // Terminal states: Verified, Committed, Compensated, RolledBack, Failed,
-    //   Expired, Denied, Quarantined
-    // Non-terminal states that can be canceled: Proposed, Authorized, Prepared,
-    //   Running, AwaitingApproval, AwaitingVerification
+    // Cancel guard: only pre-side-effect states can be canceled. Once the
+    // adapter call has started or awaits verification, callers must use the
+    // compensate/rollback path so recovery semantics are explicit.
     // ------------------------------------------------------------------
-    let is_cancelable = matches!(
-        previous_state,
-        ExecutionState::Proposed
-            | ExecutionState::Authorized
-            | ExecutionState::Prepared
-            | ExecutionState::Running
-            | ExecutionState::AwaitingApproval
-            | ExecutionState::AwaitingVerification
-    );
-
-    if !is_cancelable {
+    if !execution_is_cancelable_pre_side_effect(&previous_state) {
         return governance_err!(
             state,
             GovernanceRoute::ExecutionsCancel,
             ApiProblem::new(
                 StatusCode::CONFLICT,
                 ApiErrorCode::Conflict,
-                "cancel not allowed: execution is in terminal state",
+                "cancel not allowed: execution is not in a cancelable pre-side-effect state",
             )
         );
     }
@@ -1524,13 +1534,7 @@ pub(crate) async fn commit_execution(
     };
 
     // Reject if execution is already in a terminal state.
-    if matches!(
-        execution.state,
-        ExecutionState::Committed
-            | ExecutionState::Compensated
-            | ExecutionState::RolledBack
-            | ExecutionState::Failed
-    ) {
+    if execution_is_terminal_for_commit(&execution.state) {
         return governance_err!(
             state,
             GovernanceRoute::ExecutionsCommit,
@@ -2772,8 +2776,11 @@ pub(crate) async fn execute_execution(
     updated_contract
         .metadata
         .insert("execute_payload".to_string(), adapter_payload.clone());
-    // Update execution state to Running
-    let previous_execution = execution.clone();
+    // The execution was atomically claimed as Running before the adapter call.
+    // Finalize result metadata with a CAS from that claimed state so a stale
+    // completion cannot overwrite a concurrent lifecycle transition.
+    let mut previous_execution = execution.clone();
+    previous_execution.state = ferrum_proto::ExecutionState::Running;
     let mut updated_execution = execution;
     updated_execution.state = ferrum_proto::ExecutionState::Running;
     updated_execution.result_digest = receipt.result_digest.clone();
@@ -3499,6 +3506,70 @@ pub(crate) async fn authorize_execution(
 mod tests {
     use super::*;
     use ferrum_proto::{ResourceBinding, ResourceMode};
+
+    #[test]
+    fn cancel_only_allows_pre_side_effect_states() {
+        for state in [
+            ExecutionState::Proposed,
+            ExecutionState::Authorized,
+            ExecutionState::Prepared,
+            ExecutionState::AwaitingApproval,
+        ] {
+            assert!(
+                execution_is_cancelable_pre_side_effect(&state),
+                "{state:?} should be cancelable"
+            );
+        }
+
+        for state in [
+            ExecutionState::Running,
+            ExecutionState::AwaitingVerification,
+            ExecutionState::Committed,
+            ExecutionState::Compensated,
+            ExecutionState::RolledBack,
+            ExecutionState::Denied,
+            ExecutionState::Quarantined,
+            ExecutionState::Failed,
+            ExecutionState::Canceled,
+        ] {
+            assert!(
+                !execution_is_cancelable_pre_side_effect(&state),
+                "{state:?} should require terminal/recovery handling instead of cancel"
+            );
+        }
+    }
+
+    #[test]
+    fn commit_rejects_all_terminal_execution_states() {
+        for state in [
+            ExecutionState::Committed,
+            ExecutionState::Compensated,
+            ExecutionState::RolledBack,
+            ExecutionState::Denied,
+            ExecutionState::Quarantined,
+            ExecutionState::Failed,
+            ExecutionState::Canceled,
+        ] {
+            assert!(
+                execution_is_terminal_for_commit(&state),
+                "{state:?} should be terminal for commit"
+            );
+        }
+
+        for state in [
+            ExecutionState::Proposed,
+            ExecutionState::Authorized,
+            ExecutionState::Prepared,
+            ExecutionState::Running,
+            ExecutionState::AwaitingApproval,
+            ExecutionState::AwaitingVerification,
+        ] {
+            assert!(
+                !execution_is_terminal_for_commit(&state),
+                "{state:?} should pass terminal guard and be checked by later commit prerequisites"
+            );
+        }
+    }
 
     #[test]
     fn argument_constraints_accept_matching_payload() {
