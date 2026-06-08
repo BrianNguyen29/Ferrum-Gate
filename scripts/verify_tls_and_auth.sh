@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # verify_tls_and_auth.sh
 # B4/B5 — TLS and auth verifier for FerrumGate v1 target endpoints.
-# Tests public health/readiness endpoints and protected /v1/approvals behavior.
+# Tests public shallow health/readiness endpoints and protected endpoint behavior.
 # Does NOT require target host access by default; skips target checks if --base-url absent.
 # Never prints token values.
 # Does NOT claim G2/pilot/production-ready.
@@ -38,10 +38,11 @@ Description:
   Tests the following endpoint behaviors against a running ferrumd instance:
     - GET /v1/healthz       (public, expected 200)
     - GET /v1/readyz        (public, expected 200)
-    - GET /v1/readyz/deep   (public, expected 200 or 503)
+    - GET /v1/readyz/deep   (protected when auth is enabled)
+    - GET /v1/metrics       (protected when auth is enabled)
     - GET /v1/approvals     (protected)
         * No token          -> expected 401
-        * Correct token     -> expected 200 (only if token env is set)
+        * Correct token     -> expected 200, or 503 for deep readiness if the store is unhealthy
 
   The token value is NEVER printed or logged.
 
@@ -158,28 +159,35 @@ for path in "/v1/healthz" "/v1/readyz"; do
     fi
 done
 
-CODE=$(http_get "$BASE_URL/v1/readyz/deep")
-if [[ "$CODE" == "200" ]] || [[ "$CODE" == "503" ]]; then
-    log_pass "GET /v1/readyz/deep -> $CODE"
-else
-    log_fail "GET /v1/readyz/deep -> $CODE (expected 200 or 503)"
-fi
-
 echo ""
 echo "========================================"
-echo "CHECK: Protected endpoint (/v1/approvals)"
+echo "CHECK: Protected endpoints"
 echo "========================================"
 
-# No token -> 401
-CODE=$(http_get "$BASE_URL/v1/approvals")
-if [[ "$CODE" == "401" ]]; then
-    log_pass "GET /v1/approvals (no token) -> $CODE"
-else
-    log_fail "GET /v1/approvals (no token) -> $CODE (expected 401)"
-fi
+for path in "/v1/readyz/deep" "/v1/metrics" "/v1/approvals"; do
+    CODE=$(http_get "$BASE_URL$path")
+    if [[ "$CODE" == "401" ]]; then
+        log_pass "GET $path (no token) -> $CODE"
+    else
+        log_fail "GET $path (no token) -> $CODE (expected 401)"
+    fi
+done
 
-# Correct token -> 200 (only if token is available)
 if [[ -n "$TOKEN" ]]; then
+    CODE=$(http_get "$BASE_URL/v1/readyz/deep" "$TOKEN")
+    if [[ "$CODE" == "200" ]] || [[ "$CODE" == "503" ]]; then
+        log_pass "GET /v1/readyz/deep (with token) -> $CODE"
+    else
+        log_fail "GET /v1/readyz/deep (with token) -> $CODE (expected 200 or 503)"
+    fi
+
+    CODE=$(http_get "$BASE_URL/v1/metrics" "$TOKEN")
+    if [[ "$CODE" == "200" ]]; then
+        log_pass "GET /v1/metrics (with token) -> $CODE"
+    else
+        log_fail "GET /v1/metrics (with token) -> $CODE (expected 200)"
+    fi
+
     CODE=$(http_get "$BASE_URL/v1/approvals" "$TOKEN")
     if [[ "$CODE" == "200" ]]; then
         log_pass "GET /v1/approvals (with token) -> $CODE"
@@ -187,7 +195,7 @@ if [[ -n "$TOKEN" ]]; then
         log_fail "GET /v1/approvals (with token) -> $CODE (expected 200)"
     fi
 else
-    log_skip "GET /v1/approvals (with token) — no token available"
+    log_skip "Protected endpoint checks with token - no token available"
 fi
 
 # --- Summary ---

@@ -70,7 +70,8 @@ helm install ferrumgate ./deploy/helm/ferrumgate \
   --create-namespace \
   --set secrets.bearerToken=local-kind-token-not-for-production
 
-# Wait for pod readiness
+# Wait for pod readiness. The chart defaults to the shallow /v1/readyz probe
+# because /v1/readyz/deep is protected when bearer auth is enabled.
 kubectl wait --namespace ferrumgate \
   --for=condition=ready pod \
   --selector=app.kubernetes.io/name=ferrumgate \
@@ -134,6 +135,7 @@ secrets:
 | `config.sqliteDbRoots` | `""` | Empty disables SQLite mutation adapter. |
 | `persistence.enabled` | `true` | Creates or uses a PVC for `/var/lib/ferrumgate`. |
 | `persistence.existingClaim` | `""` | Existing PVC name. Empty creates one. |
+| `readinessProbe.httpGet.path` | `/v1/readyz` | Shallow readiness probe. Deep readiness requires bearer auth when auth is enabled. |
 | `secrets.existingSecret` | `""` | Existing Secret name for bearer auth. |
 | `secrets.existingSecretKey` | `bearer-token` | Secret key containing the token. |
 | `secrets.bearerToken` | `CHANGE_ME_TO_A_SECURE_TOKEN` | Placeholder. Chart rendering fails in bearer mode until replaced or existingSecret is set. |

@@ -318,35 +318,43 @@ else
             log_fail "GET /v1/readyz returned $HTTP_CODE (expected 200)"
         fi
 
-        # Check 2c: /v1/readyz/deep (functional probe)
-        HTTP_CODE=$(http_get "$BASE_URL/v1/readyz/deep")
-        if [[ "$HTTP_CODE" == "200" ]]; then
-            log_pass "GET /v1/readyz/deep returned $HTTP_CODE (store healthy)"
-        elif [[ "$HTTP_CODE" == "503" ]]; then
-            log_warn "GET /v1/readyz/deep returned 503 (store unhealthy or write queue high)"
+        # Check 2c: /v1/readyz/deep (protected when gateway auth is enabled)
+        if [[ -z "$BEARER_TOKEN" ]]; then
+            log_skip "Skipping /v1/readyz/deep; provide --bearer-token for protected deep readiness"
         else
-            log_fail "GET /v1/readyz/deep returned $HTTP_CODE (expected 200 or 503)"
+            HTTP_CODE=$(http_get "$BASE_URL/v1/readyz/deep" "$BEARER_TOKEN")
+            if [[ "$HTTP_CODE" == "200" ]]; then
+                log_pass "GET /v1/readyz/deep returned $HTTP_CODE (store healthy)"
+            elif [[ "$HTTP_CODE" == "503" ]]; then
+                log_warn "GET /v1/readyz/deep returned 503 (store unhealthy or write queue high)"
+            else
+                log_fail "GET /v1/readyz/deep returned $HTTP_CODE (expected 200 or 503)"
+            fi
         fi
 
-        # Check 2d: /v1/metrics (public, should be 200)
-        HTTP_CODE=$(http_get "$BASE_URL/v1/metrics")
-        if [[ "$HTTP_CODE" == "200" ]]; then
-            log_pass "GET /v1/metrics returned $HTTP_CODE (observability endpoint available)"
-
-            # Check for governance metrics presence
-            METRICS_BODY=$(http_get_body "$BASE_URL/v1/metrics")
-            if echo "$METRICS_BODY" | grep -q "ferrumgate_governance_errors_total"; then
-                log_pass "Governance error counters present in /v1/metrics"
-            else
-                log_warn "Governance error counters not found in /v1/metrics"
-            fi
-            if echo "$METRICS_BODY" | grep -q "ferrumgate_governance_success_total"; then
-                log_pass "Governance success counters present in /v1/metrics"
-            else
-                log_warn "Governance success counters not found in /v1/metrics"
-            fi
+        # Check 2d: /v1/metrics (protected when gateway auth is enabled)
+        if [[ -z "$BEARER_TOKEN" ]]; then
+            log_skip "Skipping /v1/metrics; provide --bearer-token for protected metrics"
         else
-            log_fail "GET /v1/metrics returned $HTTP_CODE (expected 200)"
+            HTTP_CODE=$(http_get "$BASE_URL/v1/metrics" "$BEARER_TOKEN")
+            if [[ "$HTTP_CODE" == "200" ]]; then
+                log_pass "GET /v1/metrics returned $HTTP_CODE (observability endpoint available)"
+
+                # Check for governance metrics presence
+                METRICS_BODY=$(http_get_body "$BASE_URL/v1/metrics" "$BEARER_TOKEN")
+                if echo "$METRICS_BODY" | grep -q "ferrumgate_governance_errors_total"; then
+                    log_pass "Governance error counters present in /v1/metrics"
+                else
+                    log_warn "Governance error counters not found in /v1/metrics"
+                fi
+                if echo "$METRICS_BODY" | grep -q "ferrumgate_governance_success_total"; then
+                    log_pass "Governance success counters present in /v1/metrics"
+                else
+                    log_warn "Governance success counters not found in /v1/metrics"
+                fi
+            else
+                log_fail "GET /v1/metrics returned $HTTP_CODE (expected 200)"
+            fi
         fi
     fi
 fi

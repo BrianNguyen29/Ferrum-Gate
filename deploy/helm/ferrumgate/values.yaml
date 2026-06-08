@@ -83,7 +83,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /v1/readyz/deep
+    path: /v1/readyz
     port: http
   initialDelaySeconds: 5
   periodSeconds: 5

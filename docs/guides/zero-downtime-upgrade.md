@@ -89,7 +89,8 @@ If running PostgreSQL and willing to accept a manual operator sequence:
 # 1. Backup (as above)
 
 # 2. Verify current readiness
-curl -s http://localhost:8080/v1/readyz/deep | jq .
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep | jq .
 # Confirm status is "ok"
 
 # 3. Stop
@@ -101,7 +102,7 @@ sudo systemctl stop ferrumgate
 sudo systemctl start ferrumgate
 
 # 6. Verify
-curl -s http://localhost:8080/v1/readyz/deep | jq .
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep | jq .
 ```
 
 ---
@@ -138,7 +139,7 @@ docker compose up -d ferrumd
 #   retries: 5
 
 # 6. Verify
-docker compose exec ferrumd curl -s http://localhost:8080/v1/readyz/deep | jq .
+docker compose exec ferrumd sh -lc 'curl -s -H "Authorization: Bearer $FERRUMD_BEARER_TOKEN" http://localhost:8080/v1/readyz/deep | jq .'
 ```
 
 > **Healthcheck gate**: The `healthcheck` in docker-compose.yml ensures the container is not marked healthy until `/v1/readyz` returns 200. Do not route traffic to this instance until the healthcheck passes.
@@ -288,11 +289,12 @@ curl -s http://localhost:8080/v1/readyz
 # Expected: {"status":"ready"} HTTP 200
 
 # 3. Deep readiness (store, write_queue, pool)
-curl -s http://localhost:8080/v1/readyz/deep
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep
 # Expected: HTTP 200, all checks "ok"
 
 # 4. If metrics are configured:
-curl -s http://localhost:8080/v1/metrics | grep -E "ferrumgate_store_health_up|ferrumgate_write_queue_depth"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep -E "ferrumgate_store_health_up|ferrumgate_write_queue_depth"
 # Expected: store_health_up=1, write_queue_depth within normal threshold
 
 # 5. For PostgreSQL:
@@ -319,7 +321,8 @@ sudo cp /opt/ferrumgate/ferrumd.old /opt/ferrumgate/ferrumd
 sudo systemctl start ferrumgate
 
 # 4. Verify
-curl -s http://localhost:8080/v1/readyz/deep | jq .
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep | jq .
 ```
 
 ### Config rollback
@@ -358,7 +361,8 @@ sudo -u postgres pg_restore -d ferrumgate /var/backups/ferrumgate-postgres/ferru
 sudo systemctl start ferrumgate
 
 # 4. Verify deep readiness
-curl -s http://localhost:8080/v1/readyz/deep | jq .
+TOKEN="${FERRUMD_BEARER_TOKEN:?set bearer token}"
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep | jq .
 
 # 5. For PostgreSQL: verify row counts match expected values
 ```
