@@ -28,7 +28,6 @@ pub(crate) fn sanitize_json(
 /// control characters, then returns an `(StatusCode, Json(sanitized))` axum
 /// response. This is the canonical success-path helper for governance
 /// handlers; use [`sanitized_api_error_response`] for error envelopes.
-#[allow(dead_code)]
 pub(crate) fn sanitized_response<T: Serialize>(
     fw: &TaintScoringFirewall,
     status: StatusCode,
@@ -47,7 +46,6 @@ pub(crate) fn sanitized_response<T: Serialize>(
 /// Wraps [`sanitized_response`] for the error case. The sanitizer strips
 /// control characters from `message` and `details` to prevent log
 /// injection and downstream display corruption.
-#[allow(dead_code)]
 pub(crate) fn sanitized_api_error_response(
     fw: &TaintScoringFirewall,
     status: StatusCode,

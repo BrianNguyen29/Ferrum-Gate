@@ -44,7 +44,6 @@ use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) runtime: GatewayRuntime,
-    #[allow(dead_code)]
     pub(crate) server_config: ServerConfig,
     pub(crate) metrics: Arc<Metrics>,
     pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
@@ -549,7 +548,7 @@ impl Metrics {
 /// Each variant corresponds to a route path template with {param} placeholders normalized to fixed strings.
 /// Variants are split by method to avoid counter collisions for same-path-different-method routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code, clippy::enum_variant_names)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum GovernanceRoute {
     IntentsCompile,
     IntentsList,
