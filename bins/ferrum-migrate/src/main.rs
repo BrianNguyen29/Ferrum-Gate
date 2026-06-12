@@ -29,6 +29,23 @@ fn parse_chunk_size(s: &str) -> Result<usize, String> {
     Ok(val)
 }
 
+#[cfg(any(feature = "postgres", test))]
+fn redact_dsn_for_log(dsn: &str) -> String {
+    let Some((scheme, rest)) = dsn.split_once("://") else {
+        return dsn.to_string();
+    };
+
+    let mut rest = rest.to_string();
+    if let Some(at) = rest.find('@') {
+        rest.replace_range(..at, "<redacted>");
+    }
+    if let Some(query) = rest.find('?') {
+        rest.replace_range(query + 1.., "<redacted>");
+    }
+
+    format!("{}://{}", scheme, rest)
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "ferrum-migrate")]
 #[command(about = "FerrumGate core-only SQLite to PostgreSQL migration tool (P5e.4 streaming)")]
@@ -202,7 +219,12 @@ async fn connect_sqlite(dsn: &str) -> Result<SqlitePool> {
         .max_connections(1)
         .connect(dsn)
         .await
-        .with_context(|| format!("failed to connect to SQLite source: {}", dsn))?;
+        .with_context(|| {
+            format!(
+                "failed to connect to SQLite source: {}",
+                redact_dsn_for_log(dsn)
+            )
+        })?;
     Ok(pool)
 }
 
@@ -212,7 +234,12 @@ async fn connect_postgres(dsn: &str) -> Result<PgPool> {
         .max_connections(5)
         .connect(dsn)
         .await
-        .with_context(|| format!("failed to connect to PostgreSQL target: {}", dsn))?;
+        .with_context(|| {
+            format!(
+                "failed to connect to PostgreSQL target: {}",
+                redact_dsn_for_log(dsn)
+            )
+        })?;
     Ok(pool)
 }
 
@@ -926,6 +953,26 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_redact_dsn_for_log_redacts_userinfo_and_query() {
+        let redacted =
+            redact_dsn_for_log("postgres://user:password@db.example/ferrum?sslmode=require");
+        assert_eq!(
+            redacted,
+            "postgres://<redacted>@db.example/ferrum?<redacted>"
+        );
+        assert!(!redacted.contains("password"));
+        assert!(!redacted.contains("sslmode=require"));
+    }
+
+    #[test]
+    fn test_redact_dsn_for_log_keeps_sqlite_path_without_query() {
+        assert_eq!(
+            redact_dsn_for_log("sqlite:///var/lib/ferrumgate/main.db"),
+            "sqlite:///var/lib/ferrumgate/main.db"
+        );
+    }
 
     #[test]
     fn test_cli_parsing_defaults() {

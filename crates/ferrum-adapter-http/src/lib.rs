@@ -31,8 +31,10 @@ use ferrum_proto::{
 use ferrum_rollback::{
     AdapterError, ExecuteReceipt, PrepareReceipt, RecoveryReceipt, RollbackAdapter, VerifyReceipt,
 };
+use reqwest::Url;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
+use std::net::IpAddr;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -237,6 +239,7 @@ impl From<HttpAdapterError> for AdapterError {
 /// rollback/compensate unsupported.
 pub struct HttpAdapter {
     key: &'static str,
+    allow_private_networks: bool,
 }
 
 /// Parsed and validated replay contract for the narrow http.replay_v1 slice.
@@ -256,7 +259,18 @@ struct ReplayContract {
 impl HttpAdapter {
     /// Creates a new HttpAdapter with the given key.
     pub fn new(key: &'static str) -> Self {
-        Self { key }
+        Self {
+            key,
+            allow_private_networks: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_allow_private_networks_for_tests(key: &'static str) -> Self {
+        Self {
+            key,
+            allow_private_networks: true,
+        }
     }
 
     /// Computes exponential backoff delay with jitter cap.
@@ -320,6 +334,8 @@ impl HttpAdapter {
                 &url_owned,
                 body.clone(),
                 idempotency_key_owned.as_deref(),
+                false,
+                PHASE_EXECUTE,
             )
             .await;
 
@@ -400,7 +416,6 @@ impl HttpAdapter {
 
     /// Validates URL shape - must be http or https and parseable.
     fn validate_url_shape(url: &str) -> Result<(), AdapterError> {
-        // Must start with http:// or https://
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(HttpAdapterError::MalformedUrl(format!(
                 "URL must start with http:// or https://, got: {}",
@@ -408,11 +423,145 @@ impl HttpAdapter {
             ))
             .into());
         }
-        // Try to parse as a URI to validate basic shape
-        let _: http::Uri = url
-            .parse()
-            .map_err(|_| HttpAdapterError::MalformedUrl(format!("failed to parse URL: {}", url)))?;
+        let parsed = Self::parse_url(url)?;
+        match parsed.scheme() {
+            "http" | "https" => {}
+            scheme => {
+                return Err(HttpAdapterError::MalformedUrl(format!(
+                    "URL must use http:// or https://, got scheme: {}",
+                    scheme
+                ))
+                .into());
+            }
+        }
+        if parsed.host_str().is_none() {
+            return Err(HttpAdapterError::MalformedUrl(format!("URL has no host: {}", url)).into());
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(HttpAdapterError::MalformedUrl(
+                "URL credentials are not allowed in adapter targets".to_string(),
+            )
+            .into());
+        }
         Ok(())
+    }
+
+    fn parse_url(url: &str) -> Result<Url, AdapterError> {
+        Url::parse(url).map_err(|_| {
+            HttpAdapterError::MalformedUrl(format!("failed to parse URL: {}", url)).into()
+        })
+    }
+
+    fn is_forbidden_destination_ip(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(addr) => {
+                addr.is_loopback()
+                    || addr.is_private()
+                    || addr.is_link_local()
+                    || addr.is_broadcast()
+                    || addr.is_documentation()
+                    || addr.is_unspecified()
+                    || addr.is_multicast()
+            }
+            IpAddr::V6(addr) => {
+                addr.is_loopback()
+                    || addr.is_unspecified()
+                    || addr.is_multicast()
+                    || addr.is_unique_local()
+                    || addr.is_unicast_link_local()
+            }
+        }
+    }
+
+    async fn validate_outbound_destination(
+        url: &str,
+        allow_private_networks: bool,
+        phase: &'static str,
+    ) -> Result<Url, AdapterError> {
+        let parsed = Self::parse_url(url)?;
+        Self::validate_url_shape(url)?;
+
+        if allow_private_networks {
+            return Ok(parsed);
+        }
+
+        let host = parsed.host_str().ok_or_else(|| {
+            Self::phase_wrap_validation(phase, format!("URL has no host: {}", url))
+        })?;
+        let lower_host = host.trim_end_matches('.').to_ascii_lowercase();
+        if lower_host == "localhost"
+            || lower_host == "localhost.localdomain"
+            || lower_host == "metadata.google.internal"
+        {
+            return Err(Self::phase_wrap_validation(
+                phase,
+                format!("forbidden private HTTP destination host: {}", host),
+            ));
+        }
+
+        if let Ok(ip) = lower_host.parse::<IpAddr>() {
+            if Self::is_forbidden_destination_ip(ip) {
+                return Err(Self::phase_wrap_validation(
+                    phase,
+                    format!("forbidden private HTTP destination address: {}", ip),
+                ));
+            }
+            return Ok(parsed);
+        }
+
+        let port = parsed.port_or_known_default().ok_or_else(|| {
+            Self::phase_wrap_validation(
+                phase,
+                format!(
+                    "URL has no known default port for scheme: {}",
+                    parsed.scheme()
+                ),
+            )
+        })?;
+        let resolved = tokio::net::lookup_host((host, port)).await.map_err(|e| {
+            Self::phase_wrap_internal(
+                phase,
+                format!(
+                    "failed to resolve HTTP destination {}:{}: {}",
+                    host, port, e
+                ),
+            )
+        })?;
+
+        for addr in resolved {
+            let ip = addr.ip();
+            if Self::is_forbidden_destination_ip(ip) {
+                return Err(Self::phase_wrap_validation(
+                    phase,
+                    format!(
+                        "forbidden private HTTP destination address: {} resolved from {}",
+                        ip, host
+                    ),
+                ));
+            }
+        }
+
+        Ok(parsed)
+    }
+
+    fn reqwest_method(method: HttpMethod) -> reqwest::Method {
+        match method {
+            HttpMethod::Get => reqwest::Method::GET,
+            HttpMethod::Post => reqwest::Method::POST,
+            HttpMethod::Put => reqwest::Method::PUT,
+            HttpMethod::Patch => reqwest::Method::PATCH,
+            HttpMethod::Delete => reqwest::Method::DELETE,
+        }
+    }
+
+    fn http_client() -> Result<reqwest::Client, AdapterError> {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .use_rustls_tls()
+            .build()
+            .map_err(|e| AdapterError::Internal(format!("failed to build HTTP client: {}", e)))
     }
 
     /// Normalizes a validation error with phase context.
@@ -547,17 +696,26 @@ impl HttpAdapter {
         url: &str,
         method: HttpMethod,
         expected_statuses: &[u16],
+        allow_private_networks: bool,
         phase: &'static str,
     ) -> Result<(), AdapterError> {
-        // Use blocking call in a spawn to avoid blocking the async runtime
-        let url_owned = url.to_string();
-        let method_owned = method;
-        let status = tokio::task::spawn_blocking(move || {
-            Self::fetch_status_code_blocking_with_method(&url_owned, method_owned)
-        })
-        .await
-        .map_err(|e| Self::phase_wrap_internal(phase, format!("task join error: {}", e)))?
-        .map_err(|e| Self::phase_wrap_internal(phase, format!("fetch failed: {}", e)))?;
+        let parsed =
+            Self::validate_outbound_destination(url, allow_private_networks, phase).await?;
+        let client = Self::http_client()?;
+        let status = client
+            .request(Self::reqwest_method(method), parsed)
+            .send()
+            .await
+            .map_err(|e| {
+                let kind = if e.is_connect() {
+                    "connection error"
+                } else {
+                    "HTTP request failed"
+                };
+                Self::phase_wrap_internal(phase, format!("{}: {}", kind, e))
+            })?
+            .status()
+            .as_u16();
 
         if !expected_statuses.contains(&status) {
             let expected_str = if expected_statuses.len() == 1 {
@@ -575,6 +733,7 @@ impl HttpAdapter {
     }
 
     /// Makes a blocking HTTP request with the specified method and returns the status code.
+    #[allow(dead_code)]
     fn fetch_status_code_blocking_with_method(
         url: &str,
         method: HttpMethod,
@@ -695,6 +854,7 @@ impl HttpAdapter {
         check: &ferrum_proto::CheckSpec,
         url: &str,
         target_method: HttpMethod,
+        allow_private_networks: bool,
         phase: &'static str,
     ) -> Result<(), AdapterError> {
         match check.check_type {
@@ -805,7 +965,14 @@ impl HttpAdapter {
                     target_method
                 };
 
-                Self::run_http_status_check(url, check_method, &expected_statuses, phase).await
+                Self::run_http_status_check(
+                    url,
+                    check_method,
+                    &expected_statuses,
+                    allow_private_networks,
+                    phase,
+                )
+                .await
             }
             _ => Err(AdapterError::Unsupported(format!(
                 "[{}] unsupported check type: {:?}",
@@ -1151,6 +1318,7 @@ impl HttpAdapter {
 
     /// Makes a blocking HTTP request and returns the response status and body bytes.
     /// Optionally includes an Idempotency-Key header if provided.
+    #[allow(dead_code)]
     fn execute_http_request_blocking(
         method: HttpMethod,
         url: &str,
@@ -1301,22 +1469,38 @@ impl HttpAdapter {
         url: &str,
         body: Option<Vec<u8>>,
         idempotency_key: Option<&str>,
+        allow_private_networks: bool,
+        phase: &'static str,
     ) -> Result<(u16, Vec<u8>), AdapterError> {
-        let method_owned = method;
-        let url_owned = url.to_string();
-        let body_owned = body;
-        let idempotency_key_owned = idempotency_key.map(|s| s.to_string());
+        let parsed =
+            Self::validate_outbound_destination(url, allow_private_networks, phase).await?;
+        let client = Self::http_client()?;
+        let mut request = client.request(Self::reqwest_method(method), parsed);
 
-        tokio::task::spawn_blocking(move || {
-            Self::execute_http_request_blocking(
-                method_owned,
-                &url_owned,
-                body_owned,
-                idempotency_key_owned.as_deref(),
-            )
-        })
-        .await
-        .map_err(|e| Self::phase_wrap_internal(PHASE_EXECUTE, format!("task join error: {}", e)))?
+        if let Some(key) = idempotency_key {
+            request = request.header("Idempotency-Key", key);
+        }
+
+        if let Some(body_bytes) = body {
+            request = request
+                .header("Content-Type", "application/json")
+                .body(body_bytes);
+        }
+
+        let response = request.send().await.map_err(|e| {
+            let kind = if e.is_connect() {
+                "connection error"
+            } else {
+                "HTTP request failed"
+            };
+            Self::phase_wrap_internal(phase, format!("{}: {}", kind, e))
+        })?;
+        let status = response.status().as_u16();
+        let body = response.bytes().await.map_err(|e| {
+            Self::phase_wrap_internal(phase, format!("failed to read HTTP response body: {}", e))
+        })?;
+
+        Ok((status, body.to_vec()))
     }
 
     /// Helper to build structured reason codes for unsupported compensation.
@@ -1377,7 +1561,14 @@ impl RollbackAdapter for HttpAdapter {
 
         // Run prepare_checks if present (fail-closed on check failure)
         for check in &request.prepare_checks {
-            Self::run_check(check, url, (*method).clone(), PHASE_PREPARE).await?;
+            Self::run_check(
+                check,
+                url,
+                (*method).clone(),
+                self.allow_private_networks,
+                PHASE_PREPARE,
+            )
+            .await?;
         }
 
         let mut metadata = JsonMap::new();
@@ -1507,6 +1698,8 @@ impl RollbackAdapter for HttpAdapter {
             url,
             body_bytes,
             idempotency_key_for_request,
+            self.allow_private_networks,
+            PHASE_EXECUTE,
         )
         .await?;
 
@@ -1698,7 +1891,14 @@ impl RollbackAdapter for HttpAdapter {
 
         // Run explicit verify_checks (fail-closed on mismatch or error)
         for check in &contract.verify_checks {
-            Self::run_check(check, url, (*method).clone(), PHASE_VERIFY).await?;
+            Self::run_check(
+                check,
+                url,
+                (*method).clone(),
+                self.allow_private_networks,
+                PHASE_VERIFY,
+            )
+            .await?;
         }
 
         // All checks passed
@@ -1795,6 +1995,8 @@ impl RollbackAdapter for HttpAdapter {
             &replay.url,
             body_bytes,
             Some(&replay.idempotency_key),
+            self.allow_private_networks,
+            PHASE_COMPENSATE,
         )
         .await?;
 
@@ -1964,6 +2166,8 @@ impl RollbackAdapter for HttpAdapter {
             &replay.url,
             body_bytes,
             Some(&replay.idempotency_key),
+            self.allow_private_networks,
+            PHASE_ROLLBACK,
         )
         .await?;
 
@@ -2273,7 +2477,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/test", 200);
         let url = format!("http://127.0.0.1:{}/test", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let request = create_test_request(&url, HttpMethod::Get);
 
         let receipt = adapter.prepare(&request).await.unwrap();
@@ -2294,7 +2498,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_fails_on_malformed_url() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let request = create_test_request("not-a-valid-url", HttpMethod::Get);
 
         let result = adapter.prepare(&request).await;
@@ -2304,8 +2508,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prepare_fails_on_unsupported_action_type() {
+    async fn test_execute_rejects_loopback_destination_by_default() {
         let adapter = HttpAdapter::new("http");
+        let contract = create_test_contract("http://127.0.0.1:1/test", HttpMethod::Get);
+
+        let result = adapter.execute(&contract, &serde_json::json!(null)).await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("forbidden private HTTP destination address")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_prepare_fails_on_unsupported_action_type() {
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request("http://example.com/test", HttpMethod::Get);
         request.action_type = ActionType::SqlMutation; // Not supported
 
@@ -2317,7 +2537,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_fails_on_wrong_target_type() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let request = RollbackPrepareRequest {
             intent_id: IntentId::new(),
             proposal_id: ProposalId::new(),
@@ -2349,7 +2569,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/health", 200);
         let url = format!("http://127.0.0.1:{}/health", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request(&url, HttpMethod::Get);
         request.prepare_checks = vec![CheckSpec {
             check_type: CheckType::HttpStatusExpected,
@@ -2376,7 +2596,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/status", 200);
         let url = format!("http://127.0.0.1:{}/status", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request(&url, HttpMethod::Get);
         // Expect 201 but server returns 200
         request.prepare_checks = vec![CheckSpec {
@@ -2405,7 +2625,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/test", 200);
         let url = format!("http://127.0.0.1:{}/test", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request(&url, HttpMethod::Get);
         request.prepare_checks = vec![CheckSpec {
             check_type: CheckType::FileExists, // Not supported for http
@@ -2431,7 +2651,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_fails_closed_without_checks() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Get);
 
         let result = adapter.verify(&contract).await;
@@ -2447,7 +2667,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/api/data", 200);
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         contract.verify_checks = vec![CheckSpec {
             check_type: CheckType::HttpStatusExpected,
@@ -2474,7 +2694,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/error", 500);
         let url = format!("http://127.0.0.1:{}/error", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         contract.verify_checks = vec![CheckSpec {
             check_type: CheckType::HttpStatusExpected,
@@ -2502,7 +2722,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/actual", 200);
         let actual_url = format!("http://127.0.0.1:{}/actual", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&actual_url, HttpMethod::Get);
         // Check specifies a different URL
         contract.verify_checks = vec![CheckSpec {
@@ -2534,7 +2754,7 @@ mod tests {
             start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Get);
 
         let receipt = adapter
@@ -2570,7 +2790,7 @@ mod tests {
             start_test_server_with_body("/api/items", 201, r#"{"id":"123","name":"test"}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Post);
 
         let payload = serde_json::json!({
@@ -2602,9 +2822,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_fails_on_connection_error() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         // Use a port that's unlikely to have anything listening
-        let contract = create_test_contract("http://127.0.0.1:99999/api/test", HttpMethod::Get);
+        let contract = create_test_contract("http://127.0.0.1:1/api/test", HttpMethod::Get);
 
         let result = adapter.execute(&contract, &serde_json::json!({})).await;
         assert!(result.is_err());
@@ -2619,7 +2839,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_fails_on_unsupported_action() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract("http://example.com/test", HttpMethod::Get);
         contract.action_type = ActionType::SqlMutation; // Not supported
 
@@ -2631,7 +2851,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_returns_unsupported() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
 
         let result = adapter.rollback(&contract).await;
@@ -2643,7 +2863,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_returns_unsupported() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
 
         let result = adapter.compensate(&contract).await;
@@ -2655,7 +2875,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_validates_https_url_shape() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let request = create_test_request("https://example.com/api", HttpMethod::Get);
 
         // https URLs should pass validation (even though we can't actually connect)
@@ -2675,7 +2895,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/resource", 200);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request(&url, HttpMethod::Get);
         // No explicit method in check - should use target method (GET)
         request.prepare_checks = vec![CheckSpec {
@@ -2702,7 +2922,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/resource", 201);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request(&url, HttpMethod::Post);
         // No explicit method in check - should use target method (POST)
         request.prepare_checks = vec![CheckSpec {
@@ -2730,7 +2950,7 @@ mod tests {
         let (_server_handle, port) = start_test_server("/resource", 200);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Post);
         // Explicitly specify GET method but target is POST - should fail
         contract.verify_checks = vec![CheckSpec {
@@ -2758,7 +2978,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/resource", 201);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Post);
         // Explicitly specify POST method matching target - should pass
         contract.verify_checks = vec![CheckSpec {
@@ -2786,7 +3006,7 @@ mod tests {
         let (_server_handle, port) = start_test_server("/resource", 200);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         // Invalid method string - should fail closed with clear error
         contract.verify_checks = vec![CheckSpec {
@@ -2818,7 +3038,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/resource", 201);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Post);
         // expected_statuses array - 201 is one of the acceptable statuses
         contract.verify_checks = vec![CheckSpec {
@@ -2846,7 +3066,7 @@ mod tests {
         let (server_handle, port) = start_test_server("/error", 500);
         let url = format!("http://127.0.0.1:{}/error", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         // expected_statuses array - 500 is NOT in the acceptable list
         contract.verify_checks = vec![CheckSpec {
@@ -2877,7 +3097,7 @@ mod tests {
         let (_server_handle, port) = start_test_server("/resource", 200);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         // Empty array - should fail closed
         contract.verify_checks = vec![CheckSpec {
@@ -2904,7 +3124,7 @@ mod tests {
         let (_server_handle, port) = start_test_server("/resource", 200);
         let url = format!("http://127.0.0.1:{}/resource", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         // Array with mixed types (string in number array) - should fail
         contract.verify_checks = vec![CheckSpec {
@@ -2931,7 +3151,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_phase_context_in_error_messages() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request("http://example.com/test", HttpMethod::Get);
         // Missing expected_status - should fail with [prepare] context
         request.prepare_checks = vec![CheckSpec {
@@ -2955,7 +3175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_phase_context_in_error_messages() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract("http://example.com/test", HttpMethod::Get);
         // Missing expected_status - should fail with [verify] context
         contract.verify_checks = vec![CheckSpec {
@@ -2979,7 +3199,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_malformed_expected_status_type_fails_closed() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut request = create_test_request("http://example.com/test", HttpMethod::Get);
         // expected_status is an object instead of number - should fail closed
         request.prepare_checks = vec![CheckSpec {
@@ -3003,7 +3223,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_unsupported_check_type_has_phase_context() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract("http://example.com/test", HttpMethod::Get);
         // Use unsupported check type
         contract.verify_checks = vec![CheckSpec {
@@ -3036,7 +3256,7 @@ mod tests {
             start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Get);
 
         let receipt = adapter
@@ -3108,7 +3328,7 @@ mod tests {
         );
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Post);
         let payload = serde_json::json!({
             "password": "my-secret-password",
@@ -3176,7 +3396,7 @@ mod tests {
         let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
         let url = format!("http://127.0.0.1:{}/api/large", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Get);
 
         let receipt = adapter
@@ -3229,7 +3449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_has_rollback_groundwork_marker() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let request = create_test_request("http://example.com/test", HttpMethod::Post);
 
         let receipt = adapter.prepare(&request).await.unwrap();
@@ -3271,7 +3491,7 @@ mod tests {
             start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Post);
         let payload = serde_json::json!({ "name": "test" });
 
@@ -3307,7 +3527,7 @@ mod tests {
             start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Get);
 
         let receipt = adapter
@@ -3359,7 +3579,7 @@ mod tests {
             start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract(&url, HttpMethod::Get);
 
         let receipt = adapter
@@ -3408,7 +3628,7 @@ mod tests {
             start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
         let url = format!("http://127.0.0.1:{}/api/data", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Get);
         contract.compensation_plan = vec![CompensationStep {
             order: 1,
@@ -3455,7 +3675,7 @@ mod tests {
             start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract(&url, HttpMethod::Post);
         contract.compensation_plan = vec![CompensationStep {
             order: 1,
@@ -3500,7 +3720,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_error_has_structured_reason_codes() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
 
         let result = adapter.rollback(&contract).await;
@@ -3530,7 +3750,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_error_has_structured_reason_codes() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
 
         let result = adapter.compensate(&contract).await;
@@ -3560,7 +3780,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_error_mentions_idempotency_key_when_compensation_present() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         contract.compensation_plan = vec![CompensationStep {
             order: 1,
@@ -3585,7 +3805,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_error_mentions_idempotency_key_when_compensation_present() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let mut contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         contract.compensation_plan = vec![CompensationStep {
             order: 1,
@@ -3686,7 +3906,7 @@ mod tests {
             start_test_server_with_body("/api/items", 200, r#"{"recovered":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
 
         // Compute the correct request digest for the payload
@@ -3733,7 +3953,7 @@ mod tests {
             start_test_server_with_body("/api/items", 200, r#"{"rolled_back":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
 
         // Compute the correct request digest for the payload
@@ -3780,7 +4000,7 @@ mod tests {
             start_test_server_with_body("/api/items", 200, r#"{"recovered":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
 
         // Compute the correct request digest for the payload
@@ -3862,7 +4082,7 @@ mod tests {
             start_test_server_with_body("/api/items", 200, r#"{"rolled_back":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
 
         // Compute the correct request digest for the payload
@@ -3944,7 +4164,7 @@ mod tests {
         let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
         let url = format!("http://127.0.0.1:{}/api/large", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -3986,7 +4206,7 @@ mod tests {
         let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
         let url = format!("http://127.0.0.1:{}/api/large", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -4028,7 +4248,7 @@ mod tests {
             start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -4077,7 +4297,7 @@ mod tests {
             start_test_server_with_body("/api/items", 201, r#"{"created":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -4127,7 +4347,7 @@ mod tests {
             start_test_server_with_body("/api/items", 500, r#"{"error":"internal"}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -4171,7 +4391,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_wrong_operation() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         let mut c = contract;
         c.compensation_plan = vec![CompensationStep {
@@ -4191,7 +4411,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_wrong_method() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         let mut c = contract;
         c.compensation_plan = vec![CompensationStep {
@@ -4221,7 +4441,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_url_mismatch() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4264,7 +4484,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_digest_mismatch() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         // Create contract with WRONG request_digest
         let contract = create_replay_contract(
@@ -4283,7 +4503,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_empty_idempotency_key() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         let mut c = contract;
         c.compensation_plan = vec![CompensationStep {
@@ -4312,7 +4532,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_non_header_safe_idempotency_key() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         let mut c = contract;
         c.compensation_plan = vec![CompensationStep {
@@ -4341,7 +4561,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_unknown_args_keys() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4389,7 +4609,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_multiple_compensation_steps() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4432,7 +4652,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_fails_closed_for_unsupported_shapes() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         // No compensation plan - should fail with structured reason codes
         let result = adapter.rollback(&contract).await;
@@ -4450,7 +4670,7 @@ mod tests {
             start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest for the payload
@@ -4509,7 +4729,7 @@ mod tests {
             start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Create contract with WRONG request_digest - should fail execute
@@ -4529,7 +4749,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_when_expected_statuses_missing() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         // Compensation plan with http.replay_v1 but missing expected_statuses
         let mut c = contract;
@@ -4562,7 +4782,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_fails_when_expected_statuses_missing() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         // Compensation plan with http.replay_v1 but missing expected_statuses
         let mut c = contract;
@@ -4595,7 +4815,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_empty_expected_statuses_array() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4620,7 +4840,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_fails_on_empty_expected_statuses_array() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4645,7 +4865,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_out_of_range_status_0() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4671,7 +4891,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_fails_on_out_of_range_status_0() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4697,7 +4917,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compensate_fails_on_out_of_range_status_700() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4723,7 +4943,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_fails_on_out_of_range_status_700() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let mut d = Sha256::new();
@@ -4754,7 +4974,7 @@ mod tests {
             start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -4786,7 +5006,7 @@ mod tests {
             start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest
@@ -4814,7 +5034,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_replay_contract_fails_on_string_out_of_range_status() {
         // Test that string-form status values are also validated
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let contract = create_test_contract("http://example.com/test", HttpMethod::Post);
         let mut c = contract;
         c.compensation_plan = vec![CompensationStep {
@@ -4931,7 +5151,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "updated item", "quantity": 100 });
 
         // Compute the correct request digest for PUT
@@ -4984,7 +5204,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"patched":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "quantity": 50 });
 
         // Compute the correct request digest for PATCH
@@ -5037,7 +5257,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"rolled_back":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "updated item" });
 
         // Compute the correct request digest for PUT
@@ -5076,7 +5296,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"rolled_back":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "quantity": 25 });
 
         // Compute the correct request digest for PATCH
@@ -5110,7 +5330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_delete_replay_still_fails_closed() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let url = "http://example.com/test";
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
@@ -5173,7 +5393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_get_replay_still_fails_closed() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let url = "http://example.com/test";
         let payload = serde_json::json!({ "name": "test" });
         let body_bytes = serde_json::to_vec(&payload).unwrap();
@@ -5241,7 +5461,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "updated item" });
 
         // Compute the correct request digest (but we'll use wrong_digest in contract)
@@ -5286,7 +5506,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "updated item" });
 
         // Compute the correct request digest
@@ -5350,7 +5570,7 @@ mod tests {
             start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
         let url = format!("http://127.0.0.1:{}/api/items/1", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "updated item" });
 
         // Compute the correct request digest
@@ -5416,7 +5636,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_patch_replay_requires_expected_statuses() {
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let url = "http://example.com/test";
         let payload = serde_json::json!({ "quantity": 50 });
 
@@ -5888,7 +6108,7 @@ mod tests {
         let (server_handle, port) = start_failing_then_succeeding_server(2, 200);
         let url = format!("http://127.0.0.1:{}/api/items", port);
 
-        let adapter = HttpAdapter::new("http");
+        let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
         let payload = serde_json::json!({ "name": "test" });
 
         // Compute the correct request digest for the payload

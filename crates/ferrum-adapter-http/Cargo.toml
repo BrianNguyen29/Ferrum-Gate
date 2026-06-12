@@ -17,6 +17,7 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 sha2 = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }
 
