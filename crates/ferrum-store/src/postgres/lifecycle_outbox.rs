@@ -465,6 +465,9 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
         lease: &LifecycleOutboxLease,
         result: JsonMap,
     ) -> Result<bool> {
+        if !lease_is_current(&self.pool, lease).await? {
+            return Ok(false);
+        }
         let Some(mut record) = self.get(lease.outbox_id).await? else {
             return Ok(false);
         };
@@ -753,4 +756,22 @@ async fn update_outbox_record_claimed(
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
+}
+
+async fn lease_is_current(pool: &PgPool, lease: &LifecycleOutboxLease) -> Result<bool> {
+    let row = sqlx::query(
+        "SELECT 1
+         FROM lifecycle_outbox
+         WHERE outbox_id = $1
+           AND reconciliation_lease_owner = $2
+           AND reconciliation_lease_generation = $3
+           AND reconciliation_lease_expires_at > NOW()
+         LIMIT 1",
+    )
+    .bind(lease.outbox_id.to_string())
+    .bind(&lease.owner)
+    .bind(lease.generation)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
 }

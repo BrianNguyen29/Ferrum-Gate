@@ -1143,10 +1143,10 @@ fn lifecycle_outbox_for(
     )
 }
 
-fn lifecycle_capability_minted_event(execution: &ExecutionRecord) -> ProvenanceEvent {
+fn lifecycle_action_proposal_submitted_event(execution: &ExecutionRecord) -> ProvenanceEvent {
     ProvenanceEvent {
         event_id: EventId::new(),
-        kind: ProvenanceEventKind::CapabilityMinted,
+        kind: ProvenanceEventKind::ActionProposalSubmitted,
         occurred_at: ts_offset(0),
         actor: ActorRef {
             actor_type: ActorType::Gateway,
@@ -1154,15 +1154,15 @@ fn lifecycle_capability_minted_event(execution: &ExecutionRecord) -> ProvenanceE
             display_name: None,
         },
         object: ObjectRef {
-            object_type: ObjectType::Capability,
-            object_id: execution.capability_id.to_string(),
+            object_type: ObjectType::Proposal,
+            object_id: execution.proposal_id.to_string(),
             summary: None,
         },
         intent_id: Some(execution.intent_id),
         proposal_id: Some(execution.proposal_id),
-        execution_id: None,
+        execution_id: Some(execution.execution_id),
         capability_id: Some(execution.capability_id),
-        rollback_contract_id: None,
+        rollback_contract_id: execution.rollback_contract_id,
         policy_bundle_id: None,
         trust_labels: Vec::new(),
         sensitivity_labels: Vec::new(),
@@ -1229,7 +1229,7 @@ async fn postgres_lifecycle_reconciler_repairs_missing_provenance_and_edge() {
     let (mut execution, mut contract) = seed_lifecycle_outbox_graph(store.as_ref()).await;
     let repo = store.lifecycle_outbox();
     let outbox = lifecycle_outbox_for(&execution, &contract);
-    let parent_event = lifecycle_capability_minted_event(&execution);
+    let parent_event = lifecycle_action_proposal_submitted_event(&execution);
     store
         .provenance()
         .append_event(&parent_event)
@@ -1270,7 +1270,7 @@ async fn postgres_lifecycle_reconciler_repairs_missing_edge_for_existing_event()
     let (mut execution, mut contract) = seed_lifecycle_outbox_graph(store.as_ref()).await;
     let repo = store.lifecycle_outbox();
     let outbox = lifecycle_outbox_for(&execution, &contract);
-    let parent_event = lifecycle_capability_minted_event(&execution);
+    let parent_event = lifecycle_action_proposal_submitted_event(&execution);
     let prepared_event = lifecycle_prepared_event(&execution, &contract);
     store
         .provenance()
