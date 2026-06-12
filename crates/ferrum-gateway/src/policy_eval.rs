@@ -64,7 +64,7 @@ pub(crate) fn evaluate_bundle_rules(
 ) -> Option<EvaluateProposalResponse> {
     // Sort rules by descending priority
     let mut rules = bundle.rules.clone();
-    rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+    rules.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
 
     for rule in rules {
         if evaluate_rule_matchers(&rule, intent, proposal, trust) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# run_security_audit.sh — Local/manual cargo security audit gate
-# Status: Operational. cargo-audit v0.22.1 installed and passing. No CI integration. No secrets.
+# run_security_audit.sh — Cargo security audit gate
+# Status: Operational. Runs locally and in CI when cargo-deny/cargo-audit are installed. No secrets.
 # Scope: Single-node SQLite v1. No production-ready claim.
 #
 # Usage:
@@ -28,7 +28,7 @@ if command -v cargo-audit &>/dev/null || cargo audit --version &>/dev/null 2>&1;
     AUDIT_AVAILABLE=true
 fi
 
-echo "=== FerrumGate Local Security Audit Gate ==="
+echo "=== FerrumGate Security Audit Gate ==="
 echo ""
 
 if [[ "${DENY_AVAILABLE}" == "true" ]]; then
@@ -46,6 +46,8 @@ fi
 
 if [[ "${AUDIT_AVAILABLE}" == "true" ]]; then
     echo "[cargo-audit] Found. Running 'cargo audit' ..."
+    # RUSTSEC-2023-0071 is from sqlx-mysql's optional rsa dependency. FerrumGate
+    # builds sqlx with default features disabled and does not enable mysql.
     if cargo audit --ignore RUSTSEC-2023-0071; then
         echo "[cargo-audit] PASS"
     else

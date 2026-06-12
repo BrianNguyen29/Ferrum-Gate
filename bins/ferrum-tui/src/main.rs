@@ -151,7 +151,10 @@ async fn run_app<B: Backend>(
     interval_secs: u64,
     window_dir: String,
     evidence_dir: String,
-) -> Result<()> {
+) -> Result<()>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let (tx, mut rx) = mpsc::channel::<AppEvent>(32);
 
     // Spawn refresh task

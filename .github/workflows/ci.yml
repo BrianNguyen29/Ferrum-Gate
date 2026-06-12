@@ -5,6 +5,21 @@ on:
   pull_request:
 
 jobs:
+  release-governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hardcoded secrets scan
+        run: bash scripts/run_secret_scan.sh
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo security audit tools
+        run: |
+          cargo install --locked cargo-deny
+          cargo install --locked cargo-audit
+      - name: Dependency security audit
+        run: bash scripts/run_security_audit.sh
+
   validate:
     runs-on: ubuntu-latest
     steps:

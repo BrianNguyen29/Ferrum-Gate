@@ -29,6 +29,7 @@ SKIP_PATTERNS=(
     "SECURITY.md"
     "^.git/"
     "^target/"
+    "^scripts/run_secret_scan\.sh$"
 )
 
 # Patterns that indicate a line is a known safe placeholder/test fixture.
@@ -47,16 +48,22 @@ DETECT_REGEX="(fg_live_[a-f0-9]{16,})|(fg_test_[a-f0-9]{16,})|(-----BEGIN .*PRIV
 
 is_safe_line() {
     local line="$1"
-    if echo "$line" | grep -qE "$SAFE_LINE_REGEX"; then
+    if echo "$line" | grep -qE -- "$SAFE_LINE_REGEX"; then
         return 0
     fi
     return 1
 }
 
+line_matches() {
+    local line="$1"
+    local pattern="$2"
+    echo "$line" | grep -qE -- "$pattern"
+}
+
 should_skip_file() {
     local file="$1"
     for skip in "${SKIP_PATTERNS[@]}"; do
-        if echo "$file" | grep -qE "$skip"; then
+        if echo "$file" | grep -qE -- "$skip"; then
             return 0
         fi
     done
@@ -67,25 +74,25 @@ identify_pattern() {
     local line="$1"
     local name=""
 
-    if echo "$line" | grep -qE 'fg_live_[a-f0-9]{16,}'; then name="FERRUM_LIVE_TOKEN"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'fg_test_[a-f0-9]{16,}'; then name="FERRUM_TEST_TOKEN"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE '-----BEGIN .*PRIVATE KEY-----'; then name="PEM_PRIVATE_KEY"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'ghp_[A-Za-z0-9_]{36}'; then name="GITHUB_PAT"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'gho_[A-Za-z0-9_]{36}'; then name="GITHUB_OAUTH"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'ghs_[A-Za-z0-9_]{36}'; then name="GITHUB_SERVER"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'sk_live_[a-zA-Z0-9]{24,}'; then name="STRIPE_LIVE_SK"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'sk_test_[a-zA-Z0-9]{24,}'; then name="STRIPE_TEST_SK"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'pk_live_[a-zA-Z0-9]{24,}'; then name="STRIPE_LIVE_PK"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'pk_test_[a-zA-Z0-9]{24,}'; then name="STRIPE_TEST_PK"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'SG\.[A-Za-z0-9_-]{22,}'; then name="SENDGRID_KEY"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'bearer_token\s*[=:]\s*"[^"]{8,}"'; then name="BEARER_ASSIGNMENT"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE "bearer_token\s*[=:]\s*'[^']{8,}'"; then name="BEARER_ASSIGNMENT_SINGLE"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'api_key\s*[=:]\s*"[^"]{8,}"'; then name="API_KEY_ASSIGNMENT"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE "api_key\s*[=:]\s*'[^']{8,}'"; then name="API_KEY_ASSIGNMENT_SINGLE"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'api_secret\s*[=:]\s*"[^"]{8,}"'; then name="API_SECRET_ASSIGNMENT"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE "api_secret\s*[=:]\s*'[^']{8,}'"; then name="API_SECRET_ASSIGNMENT_SINGLE"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE 'password\s*[=:]\s*"[^"]{8,}"'; then name="PASSWORD_ASSIGNMENT"; fi
-    if [[ -z "$name" ]] && echo "$line" | grep -qE "password\s*[=:]\s*'[^']{8,}'"; then name="PASSWORD_ASSIGNMENT_SINGLE"; fi
+    if line_matches "$line" 'fg_live_[a-f0-9]{16,}'; then name="FERRUM_LIVE_TOKEN"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'fg_test_[a-f0-9]{16,}'; then name="FERRUM_TEST_TOKEN"; fi
+    if [[ -z "$name" ]] && line_matches "$line" '-----BEGIN .*PRIVATE KEY-----'; then name="PEM_PRIVATE_KEY"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'ghp_[A-Za-z0-9_]{36}'; then name="GITHUB_PAT"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'gho_[A-Za-z0-9_]{36}'; then name="GITHUB_OAUTH"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'ghs_[A-Za-z0-9_]{36}'; then name="GITHUB_SERVER"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'sk_live_[a-zA-Z0-9]{24,}'; then name="STRIPE_LIVE_SK"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'sk_test_[a-zA-Z0-9]{24,}'; then name="STRIPE_TEST_SK"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'pk_live_[a-zA-Z0-9]{24,}'; then name="STRIPE_LIVE_PK"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'pk_test_[a-zA-Z0-9]{24,}'; then name="STRIPE_TEST_PK"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'SG\.[A-Za-z0-9_-]{22,}'; then name="SENDGRID_KEY"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'bearer_token\s*[=:]\s*"[^"]{8,}"'; then name="BEARER_ASSIGNMENT"; fi
+    if [[ -z "$name" ]] && line_matches "$line" "bearer_token\s*[=:]\s*'[^']{8,}'"; then name="BEARER_ASSIGNMENT_SINGLE"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'api_key\s*[=:]\s*"[^"]{8,}"'; then name="API_KEY_ASSIGNMENT"; fi
+    if [[ -z "$name" ]] && line_matches "$line" "api_key\s*[=:]\s*'[^']{8,}'"; then name="API_KEY_ASSIGNMENT_SINGLE"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'api_secret\s*[=:]\s*"[^"]{8,}"'; then name="API_SECRET_ASSIGNMENT"; fi
+    if [[ -z "$name" ]] && line_matches "$line" "api_secret\s*[=:]\s*'[^']{8,}'"; then name="API_SECRET_ASSIGNMENT_SINGLE"; fi
+    if [[ -z "$name" ]] && line_matches "$line" 'password\s*[=:]\s*"[^"]{8,}"'; then name="PASSWORD_ASSIGNMENT"; fi
+    if [[ -z "$name" ]] && line_matches "$line" "password\s*[=:]\s*'[^']{8,}'"; then name="PASSWORD_ASSIGNMENT_SINGLE"; fi
 
     if [[ -z "$name" ]]; then
         name="UNKNOWN"
@@ -110,7 +117,8 @@ echo "Files to scan: ${#FILES[@]}"
 echo ""
 
 FILE_LIST=$(mktemp)
-trap 'rm -f "$FILE_LIST"' EXIT
+RAW_OUT=$(mktemp)
+trap 'rm -f "$FILE_LIST" "$RAW_OUT"' EXIT
 
 for f in "${FILES[@]}"; do
     [[ -f "$f" ]] || continue
@@ -123,7 +131,6 @@ for f in "${FILES[@]}"; do
     printf '%s\n' "$f" >> "$FILE_LIST"
 done
 
-RAW_OUT=$(mktemp)
 # Use xargs with newline delimiter to handle filenames containing spaces safely.
 xargs -d '\n' grep -nH -E -- "$DETECT_REGEX" < "$FILE_LIST" 2>/dev/null > "$RAW_OUT" || true
 
@@ -132,7 +139,6 @@ if [[ ! -s "$RAW_OUT" ]]; then
     echo "No potential hardcoded secrets detected."
     echo "Scope: tracked working-tree files only. Git history NOT scanned."
     echo "This scan does NOT constitute formal compliance or production-ready certification."
-    rm -f "$RAW_OUT"
     exit 0
 fi
 
@@ -148,8 +154,6 @@ while IFS= read -r match; do
     echo "[FINDING] $file:$line_num — pattern: $matched_name"
     FINDINGS=$((FINDINGS + 1))
 done < "$RAW_OUT"
-
-rm -f "$RAW_OUT"
 
 # ---------------------------------------------------------------------------
 # Summary
