@@ -1,6 +1,2 @@
 [advisories]
-# RUSTSEC-2023-0071: `rsa` crate vulnerability (via sqlx-mysql).
-# Ignored because sqlx-mysql is an uncompiled optional dependency.
-# The workspace Cargo.toml sets `default-features = false` on sqlx, which blocks
-# the mysql feature (and thus the rsa dependency) from being built or shipped.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = []
