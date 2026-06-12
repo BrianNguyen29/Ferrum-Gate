@@ -5544,7 +5544,7 @@ async fn test_sustained_concurrent_rate_limit_overload() {
 
 /// Verify that cancel execution successfully cancels a running execution.
 #[tokio::test]
-async fn test_cancel_execution_success() {
+async fn test_cancel_execution_running_state_rejected() {
     let pdp = Arc::new(StaticPdpEngine);
     let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
 
@@ -5640,7 +5640,8 @@ async fn test_cancel_execution_success() {
         .await
         .expect("execution insert should succeed");
 
-    // Cancel the execution
+    // Running means the adapter side effect may already exist. Cancel must
+    // fail closed and require the compensate/rollback path.
     let request = axum::http::Request::builder()
         .method(axum::http::Method::POST)
         .uri(format!("/v1/executions/{}/cancel", execution_id))
@@ -5654,31 +5655,18 @@ async fn test_cancel_execution_success() {
 
     assert_eq!(
         response.status(),
-        axum::http::StatusCode::OK,
-        "cancel should return 200, got: {:?}",
+        axum::http::StatusCode::CONFLICT,
+        "cancel should return 409, got: {:?}",
         response.status()
     );
 
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+    let stored = store
+        .executions()
+        .get(execution_id)
         .await
-        .expect("read cancel response body");
-    let cancel_response: ferrum_proto::CancelExecutionResponse =
-        serde_json::from_slice(&body).expect("valid json");
-
-    assert_eq!(
-        cancel_response.execution_id, execution_id,
-        "execution_id should match"
-    );
-    assert_eq!(
-        cancel_response.previous_state,
-        ExecutionState::Running,
-        "previous_state should be Running"
-    );
-    assert_eq!(
-        cancel_response.current_state,
-        ExecutionState::Canceled,
-        "current_state should be Canceled"
-    );
+        .expect("execution lookup should succeed")
+        .expect("execution should still exist");
+    assert_eq!(stored.state, ExecutionState::Running);
 }
 
 /// Verify that cancel execution rejects nonexistent executions with 404.

@@ -78,7 +78,7 @@ pub fn is_valid_approval_transition(from: &ApprovalState, to: &ApprovalState) ->
 
 /// Returns true if the ExecutionState is terminal.
 ///
-/// Terminal states: Committed, Compensated, RolledBack, Denied, Quarantined, Failed
+/// Terminal states: Committed, Compensated, RolledBack, Denied, Quarantined, Failed, Canceled
 pub fn execution_state_is_terminal(state: &ExecutionState) -> bool {
     matches!(
         state,
@@ -88,6 +88,7 @@ pub fn execution_state_is_terminal(state: &ExecutionState) -> bool {
             | ExecutionState::Denied
             | ExecutionState::Quarantined
             | ExecutionState::Failed
+            | ExecutionState::Canceled
     )
 }
 
@@ -287,6 +288,11 @@ mod tests {
     }
 
     #[test]
+    fn execution_canceled_is_terminal() {
+        assert!(execution_state_is_terminal(&ExecutionState::Canceled));
+    }
+
+    #[test]
     fn execution_terminal_no_transitions() {
         // Cannot transition out of any terminal state
         assert!(!is_valid_execution_transition(
@@ -311,6 +317,10 @@ mod tests {
         ));
         assert!(!is_valid_execution_transition(
             &ExecutionState::Failed,
+            &ExecutionState::Running,
+        ));
+        assert!(!is_valid_execution_transition(
+            &ExecutionState::Canceled,
             &ExecutionState::Running,
         ));
         // Cannot transition between terminal states
@@ -348,6 +358,7 @@ mod tests {
             ExecutionState::Denied,
             ExecutionState::Quarantined,
             ExecutionState::Failed,
+            ExecutionState::Canceled,
         ];
         for from in &non_terminal {
             for to in &targets {

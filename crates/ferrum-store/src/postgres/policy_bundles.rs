@@ -27,7 +27,9 @@ impl PostgresPolicyBundleRepo {
     ) -> Result<i64> {
         let raw_json = to_json(bundle)?;
         let new_version: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(version), 0) + 1 FROM policy_bundle_version WHERE bundle_id = $1",
+            "SELECT (COALESCE(MAX(version), 0) + 1)::BIGINT
+             FROM policy_bundle_version
+             WHERE bundle_id = $1",
         )
         .bind(&bundle.bundle_id)
         .fetch_one(&self.pool)
@@ -43,7 +45,7 @@ impl PostgresPolicyBundleRepo {
         .bind(new_version)
         .bind(raw_json)
         .bind(bundle.active)
-        .bind(bundle.created_at.to_rfc3339())
+        .bind(bundle.created_at)
         .bind(created_by)
         .bind(note)
         .execute(&self.pool)

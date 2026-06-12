@@ -66,8 +66,24 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         }
 
         let mut tx = self.pool.begin().await?;
+        let expected_execution_state =
+            outbox.previous_execution_state.as_ref().ok_or_else(|| {
+                crate::StoreError::InvalidState(format!(
+                    "lifecycle outbox {} missing previous execution state",
+                    outbox.outbox_id
+                ))
+            })?;
+        if !crate::transitions::is_valid_execution_transition(
+            expected_execution_state,
+            &execution.state,
+        ) {
+            return Err(crate::StoreError::InvalidState(format!(
+                "invalid execution transition from {:?} to {:?}",
+                expected_execution_state, execution.state
+            )));
+        }
         let execution_raw = to_json(execution)?;
-        sqlx::query(
+        let execution_update = sqlx::query(
             "UPDATE executions
              SET rollback_contract_id = ?2,
                  decision = ?3,
@@ -75,7 +91,8 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
                  finished_at = ?5,
                  result_digest = ?6,
                  raw_json = ?7
-             WHERE execution_id = ?1",
+             WHERE execution_id = ?1
+               AND state = ?8",
         )
         .bind(execution.execution_id.to_string())
         .bind(execution.rollback_contract_id.map(|id| id.to_string()))
@@ -84,37 +101,65 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         .bind(execution.finished_at)
         .bind(&execution.result_digest)
         .bind(execution_raw)
+        .bind(enum_text(expected_execution_state)?)
         .execute(&mut *tx)
         .await?;
+        if execution_update.rows_affected() != 1 {
+            return Err(crate::StoreError::InvalidState(format!(
+                "execution {} state changed before lifecycle transition",
+                execution.execution_id
+            )));
+        }
 
         if let Some(contract) = rollback_contract {
             let contract_raw = to_json(contract)?;
-            sqlx::query(
-                "INSERT INTO rollback_contracts (
+            if let Some(expected_rollback_state) = outbox.previous_rollback_state.as_ref() {
+                let contract_update = sqlx::query(
+                    "UPDATE rollback_contracts
+                     SET state = ?2,
+                         auto_commit = ?3,
+                         expires_at = ?4,
+                         raw_json = ?5
+                     WHERE contract_id = ?1
+                       AND state = ?6",
+                )
+                .bind(contract.contract_id.to_string())
+                .bind(enum_text(&contract.state)?)
+                .bind(contract.auto_commit)
+                .bind(contract.expires_at)
+                .bind(contract_raw)
+                .bind(enum_text(expected_rollback_state)?)
+                .execute(&mut *tx)
+                .await?;
+                if contract_update.rows_affected() != 1 {
+                    return Err(crate::StoreError::InvalidState(format!(
+                        "rollback contract {} state changed before lifecycle transition",
+                        contract.contract_id
+                    )));
+                }
+            } else {
+                sqlx::query(
+                    "INSERT INTO rollback_contracts (
                     contract_id, intent_id, proposal_id, execution_id, adapter_key,
                     action_type, rollback_class, state, auto_commit, created_at, expires_at,
                     raw_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-                ON CONFLICT(contract_id) DO UPDATE SET
-                    state = excluded.state,
-                    auto_commit = excluded.auto_commit,
-                    expires_at = excluded.expires_at,
-                    raw_json = excluded.raw_json",
-            )
-            .bind(contract.contract_id.to_string())
-            .bind(contract.intent_id.to_string())
-            .bind(contract.proposal_id.to_string())
-            .bind(contract.execution_id.to_string())
-            .bind(&contract.adapter_key)
-            .bind(enum_text(&contract.action_type)?)
-            .bind(enum_text(&contract.rollback_class)?)
-            .bind(enum_text(&contract.state)?)
-            .bind(contract.auto_commit)
-            .bind(contract.created_at)
-            .bind(contract.expires_at)
-            .bind(contract_raw)
-            .execute(&mut *tx)
-            .await?;
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                )
+                .bind(contract.contract_id.to_string())
+                .bind(contract.intent_id.to_string())
+                .bind(contract.proposal_id.to_string())
+                .bind(contract.execution_id.to_string())
+                .bind(&contract.adapter_key)
+                .bind(enum_text(&contract.action_type)?)
+                .bind(enum_text(&contract.rollback_class)?)
+                .bind(enum_text(&contract.state)?)
+                .bind(contract.auto_commit)
+                .bind(contract.created_at)
+                .bind(contract.expires_at)
+                .bind(contract_raw)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         insert_outbox_record_tx(&mut tx, outbox).await?;
@@ -468,6 +513,9 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         lease: &LifecycleOutboxLease,
         result: JsonMap,
     ) -> Result<bool> {
+        if !lease_is_current(&self.pool, lease).await? {
+            return Ok(false);
+        }
         let Some(mut record) = self.get(lease.outbox_id).await? else {
             return Ok(false);
         };
@@ -477,6 +525,7 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
             serde_json::json!(result),
         );
         record.updated_at = chrono::Utc::now();
+        require_all_obligations_satisfied(&record)?;
         update_outbox_record_claimed(&self.pool, &record, lease, true).await
     }
 
@@ -759,6 +808,25 @@ async fn update_outbox_record_claimed(
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
+}
+
+async fn lease_is_current(pool: &SqlitePool, lease: &LifecycleOutboxLease) -> Result<bool> {
+    let row = sqlx::query(
+        "SELECT 1
+         FROM lifecycle_outbox
+         WHERE outbox_id = ?1
+           AND reconciliation_lease_owner = ?2
+           AND reconciliation_lease_generation = ?3
+           AND reconciliation_lease_expires_at > ?4
+         LIMIT 1",
+    )
+    .bind(lease.outbox_id.to_string())
+    .bind(&lease.owner)
+    .bind(lease.generation)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
 }
 
 #[cfg(test)]
@@ -1162,6 +1230,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claimed_reconcile_requires_all_provenance_obligations() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let (execution, contract) = seed_execution(&store).await;
+        let outbox = outbox_for(&execution, &contract);
+        let repo = store.lifecycle_outbox();
+        repo.enqueue_lifecycle_transition(&outbox).await.unwrap();
+
+        let claim = repo
+            .claim_pending_reconciliation(1, "node-a", chrono::Duration::minutes(5))
+            .await
+            .unwrap()
+            .remove(0);
+        let err = repo
+            .mark_reconciled_claimed(&claim.lease, ferrum_proto::JsonMap::new())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsatisfied provenance obligations")
+        );
+
+        let stored = repo.get(outbox.outbox_id).await.unwrap().unwrap();
+        assert_eq!(stored.status, LifecycleOutboxStatus::PendingProvenance);
+    }
+
+    #[tokio::test]
     async fn lifecycle_outbox_fencing_rejects_stale_worker_after_reclaim() {
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
         store.apply_embedded_migrations().await.unwrap();
@@ -1365,6 +1460,103 @@ mod tests {
             ferrum_proto::ExecutionState::Authorized
         );
         assert_eq!(stored_contract.state, RollbackState::PendingPrepare);
+        assert!(
+            repo.list_pending_reconciliation(10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn record_lifecycle_transition_rejects_stale_execution_state() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let (mut execution, mut contract) = seed_execution(&store).await;
+        let repo = store.lifecycle_outbox();
+        let outbox = outbox_for(&execution, &contract);
+
+        store
+            .executions()
+            .update_state(
+                execution.execution_id,
+                ferrum_proto::ExecutionState::Running,
+            )
+            .await
+            .unwrap();
+
+        execution.state = ferrum_proto::ExecutionState::Prepared;
+        contract.state = RollbackState::Prepared;
+        let err = repo
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("state changed"));
+
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored_execution.state,
+            ferrum_proto::ExecutionState::Running
+        );
+        assert_eq!(stored_contract.state, RollbackState::PendingPrepare);
+        assert!(
+            repo.list_pending_reconciliation(10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn record_lifecycle_transition_rejects_stale_rollback_state() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let (mut execution, mut contract) = seed_execution(&store).await;
+        let repo = store.lifecycle_outbox();
+        let outbox = outbox_for(&execution, &contract);
+
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Verified)
+            .await
+            .unwrap();
+
+        execution.state = ferrum_proto::ExecutionState::Prepared;
+        contract.state = RollbackState::Prepared;
+        let err = repo
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("state changed"));
+
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored_execution.state,
+            ferrum_proto::ExecutionState::Authorized
+        );
+        assert_eq!(stored_contract.state, RollbackState::Verified);
         assert!(
             repo.list_pending_reconciliation(10)
                 .await
