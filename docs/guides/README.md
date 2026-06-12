@@ -6,6 +6,11 @@
 
 ## Guide index
 
+For product-level positioning and onboarding, start with the root README:
+
+- [`../../README.md`](../../README.md) — English
+- [`../../README.vi.md`](../../README.vi.md) — Vietnamese / Tiếng Việt
+
 | Guide | Description |
 |-------|-------------|
 | [Quickstart](quickstart.md) | FerrumGate in 10 minutes — local demo only; API/curl, ferrumctl, and MCP paths confirmed |
@@ -21,7 +26,7 @@
 | [Troubleshooting](troubleshooting.md) | Common issues, diagnostics, recovery steps |
 | [Demo Flows](demo-flows.md) | Six copy-paste demo flows: governed file write, git commit, SQLite mutation, approval-required R3, MCP agent, policy simulation |
 
-## Landing page
+## Static site scaffold
 
 A Zola-based static site scaffold is available in `site/`:
 
@@ -30,7 +35,7 @@ A Zola-based static site scaffold is available in `site/`:
 - `site/static/css/main.css` — Stylesheet
 - `site/content/_index.md` — Root page content with summary and quick links
 
-Build the landing page locally with `make site-build` (requires Zola `0.22.1`); configure publishing separately if you host the site.
+Build the site locally with `make site-build` (requires Zola `0.22.1`); configure publishing separately if you host the site.
 
 ## Guide scope
 
