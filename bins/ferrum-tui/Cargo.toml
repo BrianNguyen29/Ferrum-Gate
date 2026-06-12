@@ -13,7 +13,12 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 clap = { workspace = true, features = ["derive"] }
 chrono.workspace = true
-ratatui = "0.30.1"
+ratatui = { version = "0.30.1", default-features = false, features = [
+    "crossterm",
+    "layout-cache",
+    "macros",
+    "underline-color",
+] }
 crossterm = "0.28"
 
 [dev-dependencies]

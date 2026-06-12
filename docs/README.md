@@ -1,11 +1,16 @@
 # FerrumGate Docs
 
-This is the **single docs directory** used as the foundation for the FerrumGate project.
+This is the documentation hub for FerrumGate, an intent-scoped reversible execution gateway for AI agents and tool-using systems.
 
 The goals of this documentation set:
 - Provide a complete, consistent, and clear description of the project
 - Enable AI agents and other engineers to implement and operate it
 - Avoid scattered lookups across many files and specs
+
+## Product READMEs
+
+- [`../README.md`](../README.md) — English product overview and onboarding path
+- [`../README.vi.md`](../README.vi.md) — Vietnamese product overview and onboarding path
 
 ## How to use
 
