@@ -155,3 +155,4 @@ secrets:
 - [`docs/guides/hosted-deployment.md`](../../../docs/guides/hosted-deployment.md)
 - [`docs/PRODUCTION_NOTES.md`](../../../docs/PRODUCTION_NOTES.md)
 - [`configs/ferrumgate.prod.toml`](../../configs/ferrumgate.prod.toml)
+- For HA operational notes and local HA simulation, see `docs/guides/hosted-deployment.md` § HA operational notes and Makefile targets `ha-local-*`.

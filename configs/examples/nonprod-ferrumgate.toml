@@ -8,11 +8,19 @@
 bind_addr = "127.0.0.1:8080"
 
 # Store data source name (DSN)
-# NOTE: PostgreSQL and MySQL are NOT implemented. See ADR-50.
+# NOTE: PostgreSQL local Docker / single-node runtime support is implemented.
+#       Production / HA / multi-node PostgreSQL is NOT yet supported.
+#       MySQL is NOT implemented.
 # Examples:
 #   sqlite://nonprod-ferrumgate.db - file-based SQLite in current directory
 #   sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db - absolute path
+#   postgres://user:pass@localhost:5432/ferrumgate - local PostgreSQL
 store_dsn = "sqlite:///var/lib/ferrumgate/nonprod-ferrumgate.db"
+
+# PostgreSQL connection pool tuning (used when store_dsn is postgres://)
+# pg_max_connections = 10
+# pg_min_idle = 2
+# pg_acquire_timeout_secs = 30
 
 # Authentication mode: "disabled", "bearer", "scoped", or "oidc"
 # WARNING: Never use "disabled" with a non-loopback bind address in non-prod
@@ -52,9 +60,7 @@ store_synchronous = "NORMAL"
 # Reduce for more frequent checkpoints during testing
 # store_wal_autocheckpoint = 1000
 
-# Store busy timeout in milliseconds (default 5000)
-# Adjust based on expected concurrency
-# store_busy_timeout = 5000
+# busy_timeout is a hardcoded SQLite PRAGMA (5000 ms); it is not a config key.
 
 # Rate limiting (tower_governor, per-IP token bucket)
 #

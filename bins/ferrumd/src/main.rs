@@ -54,7 +54,7 @@ struct Args {
     #[arg(long)]
     store_dsn: Option<String>,
 
-    /// Auth mode: "disabled", "bearer", "scoped", or "oidc".
+    /// Auth mode: "disabled", "bearer", "scoped", "oidc", or "agent".
     #[arg(long)]
     auth_mode: Option<String>,
 

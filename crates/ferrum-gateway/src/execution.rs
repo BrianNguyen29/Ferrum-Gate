@@ -628,11 +628,23 @@ pub(crate) fn infer_action_type_and_adapter(
     tool_name: &str,
     metadata: &ferrum_proto::JsonMap,
 ) -> Result<(ferrum_proto::ActionType, String), String> {
-    if let Some(binding) = explicit_action_binding(metadata)? {
-        return Ok(binding);
+    if let Some((action_type, adapter_key)) = explicit_action_binding(metadata)? {
+        if matches!(action_type, ferrum_proto::ActionType::EmailSend) {
+            return Err(
+                "EmailSend is reserved/R3 but not implemented in v1. Use MailDraft for draft operations."
+                    .to_string(),
+            );
+        }
+        return Ok((action_type, adapter_key));
     }
 
     let tool_lower = tool_name.to_lowercase();
+    if tool_lower.contains("email_send") {
+        return Err(
+            "EmailSend is reserved/R3 but not implemented in v1. Use MailDraft for draft operations."
+                .to_string(),
+        );
+    }
     if tool_lower.contains("file_write")
         || tool_lower.contains("write_file")
         || tool_lower.contains("fs_")
@@ -3794,5 +3806,23 @@ mod tests {
         assert!(validate_resource_bindings_subset_of_scope(&binding, &scope).is_err());
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn email_send_rejected_via_explicit_action_binding() {
+        // EmailSend via explicit metadata.action_type + metadata.adapter_key is rejected
+        let mut metadata = ferrum_proto::JsonMap::new();
+        metadata.insert("action_type".to_string(), serde_json::json!("EmailSend"));
+        metadata.insert("adapter_key".to_string(), serde_json::json!("email"));
+        let err = infer_action_type_and_adapter("any_tool", &metadata).unwrap_err();
+        assert!(err.contains("EmailSend is reserved/R3"));
+    }
+
+    #[test]
+    fn email_send_rejected_via_tool_name_path() {
+        // EmailSend via tool name pattern matching is also rejected
+        let metadata = ferrum_proto::JsonMap::new();
+        let err = infer_action_type_and_adapter("email_send", &metadata).unwrap_err();
+        assert!(err.contains("EmailSend is reserved/R3"));
     }
 }

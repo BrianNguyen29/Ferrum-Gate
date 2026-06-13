@@ -6,7 +6,7 @@
 
 ## Current security controls
 
-- **Auth mode**: `Disabled` (dev), `Bearer` (pilot), or `Scoped` when explicitly enabled.
+- **Auth mode**: `Disabled` (dev), `Bearer` (pilot), `Scoped`, `OIDC`, and `Agent` (all implemented).
 - **Bearer token**: Single global token remains supported for pilot compatibility.
 - **Scoped tokens/RBAC**: Implemented with deny-by-default middleware and admin token lifecycle APIs/CLI.
 - **No multi-tenancy**: One deployment, one implicit tenant.

@@ -377,7 +377,9 @@ pub fn infer_risk_tier(action_type: &str) -> RiskTier {
         "fs_write" | "http_post" => RiskTier::High,
 
         // Destructive/irreversible — Critical risk
-        "sql_mutate" | "db_mutate" | "fs_delete" | "git_force_push" => RiskTier::Critical,
+        "sql_mutate" | "db_mutate" | "fs_delete" | "git_force_push" | "email_send" => {
+            RiskTier::Critical
+        }
 
         // Unknown — High risk by default (fail-closed for unmapped actions)
         _ => RiskTier::High,
@@ -428,7 +430,7 @@ pub fn infer_rollback_class(action_type: &str, _target: Option<&str>) -> Rollbac
         "git_push" => RollbackClass::R2Compensatable,
 
         // Irreversible or high consequence (C6: http_post -> R3)
-        "http_post" | "git_force_push" | "sql_mutate" | "db_mutate" => {
+        "http_post" | "git_force_push" | "sql_mutate" | "db_mutate" | "email_send" => {
             RollbackClass::R3IrreversibleHighConsequence
         }
 
@@ -653,6 +655,7 @@ mod tests {
         assert_eq!(infer_risk_tier("db_mutate"), RiskTier::Critical);
         assert_eq!(infer_risk_tier("fs_delete"), RiskTier::Critical);
         assert_eq!(infer_risk_tier("git_force_push"), RiskTier::Critical);
+        assert_eq!(infer_risk_tier("email_send"), RiskTier::Critical);
     }
 
     #[test]
@@ -785,6 +788,10 @@ mod tests {
         );
         assert_eq!(
             infer_rollback_class("git_force_push", None),
+            RollbackClass::R3IrreversibleHighConsequence
+        );
+        assert_eq!(
+            infer_rollback_class("email_send", None),
             RollbackClass::R3IrreversibleHighConsequence
         );
     }

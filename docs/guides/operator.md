@@ -29,6 +29,16 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_RATE_LIMIT_PER_SECOND` | Rate limit | `2` |
 | `FERRUMD_RATE_LIMIT_BURST` | Rate limit burst | `50` |
 | `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND` | Allow non-local bind without TLS | `false` (default) |
+| `FERRUMD_STORE_SYNCHRONOUS` | SQLite synchronous pragma | `NORMAL` |
+| `FERRUMD_STORE_WAL_AUTOCHECKPOINT` | SQLite WAL autocheckpoint pages | `1000` |
+| `FERRUMD_WRITE_QUEUE_THRESHOLD` | Write queue depth threshold for deep readiness | `100` |
+| `FERRUMD_PG_MAX_CONNECTIONS` | PostgreSQL max connections | `10` |
+| `FERRUMD_PG_MIN_IDLE` | PostgreSQL min idle connections | `1` |
+| `FERRUMD_PG_ACQUIRE_TIMEOUT_SECS` | PostgreSQL connection acquire timeout | `5` |
+| `FERRUMD_PG_STATEMENT_TIMEOUT_MS` | PostgreSQL statement timeout | `5000` |
+| `FERRUMD_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS` | PostgreSQL idle-in-transaction timeout | `10000` |
+
+OIDC env vars are listed in [`configs/examples/ferrumd.env.example`](../../configs/examples/ferrumd.env.example).
 
 #### CLI client env vars
 
@@ -52,6 +62,8 @@ rate_limit_per_second = 2
 rate_limit_burst = 50
 store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 ```
+
+Supported auth modes: `disabled`, `bearer`, `scoped`, `oidc`, and `agent`. For agent auth setup, see [`docs/security/agent-identity-ed25519.md`](../security/agent-identity-ed25519.md).
 
 ### Local development config
 
@@ -264,7 +276,7 @@ ferrumctl admin tokens rotate <TOKEN_ID> --reason "rotation" --expires-in-days 3
 
 4. Verify new token works (200) and old token fails (401):
    ```bash
-    curl -H "Authorization: Bearer ${FERRUM_BEARER_TOKEN}" http://127.0.0.1:8080/v1/intents
+    curl -H "Authorization: Bearer ${FERRUMD_BEARER_TOKEN}" http://127.0.0.1:8080/v1/intents
     curl -H "Authorization: Bearer ${OLD_TOKEN}" http://127.0.0.1:8080/v1/intents
    ```
 

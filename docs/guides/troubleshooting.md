@@ -45,9 +45,9 @@ lsof -i :8080
 
 **Diagnostic**:
 ```bash
-curl http://localhost:8080/v1/readyz/deep
-curl http://localhost:8080/v1/metrics | grep ferrumgate_store_health_up
-curl http://localhost:8080/v1/metrics | grep ferrumgate_write_queue_depth
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_store_health_up
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_write_queue_depth
 ```
 If auth is enabled, include the same bearer/scoped/OIDC/agent credentials you
 use for operator probes.
@@ -94,7 +94,7 @@ use for operator probes.
 
 **Diagnostic**:
 ```bash
-curl -s http://localhost:8080/v1/metrics | grep 'ferrumgate_governance_errors_total{status="429"}'
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep 'ferrumgate_governance_errors_total{status="429"}'
 ```
 If auth is enabled, include operator credentials for `/v1/metrics`.
 
@@ -113,8 +113,8 @@ If auth is enabled, include operator credentials for `/v1/metrics`.
 
 **Diagnostic**:
 ```bash
-curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_health_up
-curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_acquire_timeouts_total
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_store_health_up
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_acquire_timeouts_total
 ```
 
 **Fix**:
@@ -138,8 +138,8 @@ curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_acquire_time
 
 **Diagnostic**:
 ```bash
-curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_idle
-curl -s http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_size
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_idle
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep ferrumgate_store_pg_pool_size
 ```
 
 **Fix**:
@@ -233,7 +233,7 @@ ls -lt /var/backups/ferrumgate-postgres/ | head -n 5
 **Cause**: ferrumd is not running, scrape URL is wrong, or firewall blocks the scrape port.
 
 **Fix**:
-1. `curl http://localhost:19080/v1/metrics` from the Prometheus host.
+1. `curl -H "Authorization: Bearer $TOKEN" http://localhost:19080/v1/metrics` from the Prometheus host.
 2. Verify `prometheus.yml` job `ferrumgate-ferrumd` points to the correct port.
 3. Check ferrumd service status: `systemctl status ferrumgate`.
 
@@ -256,8 +256,8 @@ ls -lt /var/backups/ferrumgate-postgres/ | head -n 5
 
 **Diagnostic**:
 ```bash
-curl http://localhost:8080/v1/metrics | grep write_queue_depth
-curl http://localhost:8080/v1/metrics | grep request_duration_seconds
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep write_queue_depth
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics | grep request_duration_seconds
 ```
 
 **Fixes**:
@@ -271,7 +271,7 @@ curl http://localhost:8080/v1/metrics | grep request_duration_seconds
 1. Check [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) for runtime configuration details.
 2. Check [`operator.md`](./operator.md) for config and incident response procedures.
 3. Review logs: `journalctl -u ferrumgate -n 500`
-4. Check metrics: `curl /v1/metrics`
+4. Check metrics: `curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics`
 5. If issue persists, capture:
    - ferrumd version (`ferrumd --version`)
    - Config (redact token)
@@ -285,10 +285,10 @@ curl http://localhost:8080/v1/metrics | grep request_duration_seconds
 curl http://localhost:8080/v1/healthz
 
 # Deep readiness
-curl http://localhost:8080/v1/readyz/deep
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/readyz/deep
 
 # Metrics
-curl http://localhost:8080/v1/metrics
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/metrics
 
 # Audit log (admin:audit scope required)
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/admin/audit-logs?limit=5

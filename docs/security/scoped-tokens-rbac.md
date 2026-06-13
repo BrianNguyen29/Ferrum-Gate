@@ -156,7 +156,12 @@ Supported CLI lifecycle commands are implemented in `bins/ferrumctl/src/main.rs`
 - `last_used_at` / `rotated_from` integration coverage is outside this document's scope.
 - This document records current route-enforced scopes and flags reserved names.
 
-## 11. Evidence Links
+## 11. Related Auth Documents
+
+- OIDC / JWT federation: see [`docs/security/oidc-jwt-federation.md`](./oidc-jwt-federation.md).
+- Agent identity (Ed25519): see [`docs/security/agent-identity-ed25519.md`](./agent-identity-ed25519.md).
+
+## 12. Evidence Links
 
 - [`security-model.md`](../guides/security-model.md) — Scoped token store and RBAC middleware implementation
 

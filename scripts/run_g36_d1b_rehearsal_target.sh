@@ -41,6 +41,7 @@ OUTPUT_DIR="/tmp/ferrum-g36-d1b-rehearsal-$(date +%Y%m%d_%H%M%S)"
 PHASES_JSON='[{"name":"baseline","duration_sec":5,"rate_rps":0},{"name":"target","duration_sec":20,"rate_rps":1.0},{"name":"cooldown","duration_sec":5,"rate_rps":0}]'
 WRAPPER_STARTED=0
 BACKUP_FILE=""
+CONFIRM=0
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,6 +63,7 @@ Target-side D1b rehearsal script. Applies test-window rate-limit config,
 runs a short workload, and reverts config on completion or failure.
 
 Optional:
+  --confirm                 REQUIRED. Confirm this script may mutate system config and restart the service.
   --server-url URL          FerrumGate server base URL (default: ${SERVER_URL})
   --rate-limit-ps N         D1b rate_limit_per_second (default: ${RATE_LIMIT_PS})
   --rate-limit-burst N      D1b rate_limit_burst (default: ${RATE_LIMIT_BURST})
@@ -75,6 +77,7 @@ EOF
 # Parse CLI args
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --confirm) CONFIRM=1; shift ;;
         --server-url) SERVER_URL="$2"; shift 2 ;;
         --rate-limit-ps) RATE_LIMIT_PS="$2"; shift 2 ;;
         --rate-limit-burst) RATE_LIMIT_BURST="$2"; shift 2 ;;
@@ -85,6 +88,15 @@ while [[ $# -gt 0 ]]; do
         *) fail "Unknown argument: $1" ;;
     esac
 done
+
+# ---------------------------------------------------------------------------
+# Safety confirmation guard
+# ---------------------------------------------------------------------------
+if [[ ${CONFIRM} -eq 0 ]]; then
+    log "ERROR: This script mutates ${ENV_FILE} and restarts ferrumgate.service."
+    log "Re-run with --confirm to proceed."
+    exit 2
+fi
 
 # ---------------------------------------------------------------------------
 # Outer trap: revert config if script fails BEFORE wrapper takes over

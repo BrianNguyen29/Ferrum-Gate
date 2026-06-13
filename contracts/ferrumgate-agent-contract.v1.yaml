@@ -50,19 +50,19 @@ objects:
     invariants:
       - "if rollback_class == R2Compensatable then compensation_plan.length > 0"
       - "if rollback_class == R3IrreversibleHighConsequence then auto_commit == false"
-      - "EmailSend is always R3 in v1"
+      - "EmailSend is always R3 in v1; adapter reserved but not yet available"
 
   ProvenanceEvent:
     invariants:
       - "side effect executions must emit minimum lineage chain"
 
 minimum_lineage_chain:
-  - ActionProposalSubmitted
   - PolicyEvaluated
   - CapabilityMinted
+  - ActionProposalSubmitted
+  - SideEffectPrepared
   - ToolCallPrepared
   - ToolCallExecuted
-  - SideEffectPrepared
   - SideEffectVerified
   - "Terminal event: SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack"
 

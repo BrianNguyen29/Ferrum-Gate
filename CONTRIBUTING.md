@@ -7,6 +7,7 @@ Thank you for your interest in contributing to FerrumGate. This project welcomes
 1. Read `docs/guides/README.md` for the guide index.
 2. Read `docs/guides/concepts.md` for core architecture.
 3. Review `docs/guides/security-model.md` to understand the security model.
+4. Review `AGENTS.md` if you are an AI assistant working in this repository.
 
 ## Development Flow
 

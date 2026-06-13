@@ -82,12 +82,12 @@ If any step fails, you must stop the propagation of the sensitive action.
 ## 5. Minimum lineage rule
 
 A valid side effect must have the chain:
-- ActionProposalSubmitted
 - PolicyEvaluated
 - CapabilityMinted
+- ActionProposalSubmitted
+- SideEffectPrepared
 - ToolCallPrepared
 - ToolCallExecuted
-- SideEffectPrepared
 - SideEffectVerified
 - Terminal event:
   - SideEffectCommitted

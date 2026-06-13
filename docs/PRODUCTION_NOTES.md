@@ -3,8 +3,9 @@
 ## SQLite Configuration
 
 ### Connection Pool
-- **Pool size**: 20 connections (default).
+- **Pool size**: 5 connections (default).
 - **Write queue**: Enabled. All SQLite writes are funneled through a single in-process `mpsc` write queue to eliminate lock thrash and `SQLITE_BUSY` retry storms.
+- **Write queue threshold**: Configurable via config or env `FERRUMD_WRITE_QUEUE_THRESHOLD` (default 100).
 - **busy_timeout**: 5000ms (5s), now primarily a defensive fallback rather than the main contention-control mechanism.
 - **WAL mode**: Enabled by default. Provides concurrent read access while writes are being serialized by the queue.
 - **PRAGMA tuning**: `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `cache_size=-64000`, `busy_timeout=5000`.
@@ -79,7 +80,7 @@ Release build, full `ferrum-stress` suite after WriteQueue + PRAGMA tuning + ret
 
 ## Performance Optimization Plan
 
-See [`docs/operations/`](./operations/) for operational guides.
+See [`docs/operations/rate-limit-tuning-guide.md`](./operations/rate-limit-tuning-guide.md) for operational guides.
 
 Optimization history:
 
