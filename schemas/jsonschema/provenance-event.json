@@ -43,6 +43,9 @@
         "SideEffectCommitted",
         "SideEffectCompensated",
         "SideEffectRolledBack",
+        "PolicyBundleActivated",
+        "PolicyBundleDeactivated",
+        "PolicyBundleRolledBack",
         "Quarantined",
         "ErrorRaised",
         "ExternalEventReceived"

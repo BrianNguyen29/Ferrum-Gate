@@ -20,3 +20,10 @@
   echo "Visit http://127.0.0.1:8080 to use your application"
   kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
 {{- end }}
+
+2. Deep readiness (requires auth token when auth is enabled):
+   kubectl exec -n {{ .Release.Namespace }} $POD_NAME -- wget -qO- http://127.0.0.1:{{ .Values.service.port }}/v1/healthz
+   kubectl exec -n {{ .Release.Namespace }} $POD_NAME -- wget --header="Authorization: Bearer $TOKEN" -qO- http://127.0.0.1:{{ .Values.service.port }}/v1/readyz/deep
+
+3. Notes:
+   - Default SQLite is single-replica only. For PostgreSQL/HA, see docs/guides/hosted-deployment.md.

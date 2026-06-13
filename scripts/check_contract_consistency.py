@@ -4,6 +4,7 @@ import json
 import re
 import sys
 from pathlib import Path
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,11 @@ def read_text(path: Path) -> str:
 def load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def load_yaml(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
 
 
 def check_required_files() -> list[str]:
@@ -170,6 +176,146 @@ def check_contract_structure() -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# Enum drift checks
+# ---------------------------------------------------------------------------
+
+
+def extract_rust_enum_variants(path: Path, enum_name: str) -> set[str]:
+    text = read_text(path)
+    match = re.search(rf'pub enum {enum_name} \{{(.*?)\}}', text, re.DOTALL)
+    if not match:
+        return set()
+    body = match.group(1)
+    variants = set()
+    for line in body.splitlines():
+        line = line.strip().rstrip(',')
+        if not line or line.startswith('//') or line.startswith('#'):
+            continue
+        if '(' in line:
+            line = line.split('(')[0].strip()
+        if line:
+            variants.add(line)
+    return variants
+
+
+def get_openapi_enum(openapi: dict, schema_name: str, field_name: str) -> set[str] | None:
+    schema = openapi.get("components", {}).get("schemas", {}).get(schema_name, {})
+    props = schema.get("properties", {})
+    field = props.get(field_name, {})
+    enum = field.get("enum")
+    if enum is None:
+        return None
+    return set(enum)
+
+
+def _diff(a: set[str], b: set[str], label: str) -> list[str]:
+    errors: list[str] = []
+    missing = sorted(a - b)
+    extra = sorted(b - a)
+    if missing:
+        errors.append(f"{label} missing: {', '.join(missing)}")
+    if extra:
+        errors.append(f"{label} extra: {', '.join(extra)}")
+    return errors
+
+
+def check_enum_drift() -> list[str]:
+    errors: list[str] = []
+    openapi = load_yaml(ROOT / "openapi" / "ferrumgate-control-api.v1.yaml")
+
+    # ExecutionState
+    rust = extract_rust_enum_variants(ROOT / "crates" / "ferrum-proto" / "src" / "execution.rs", "ExecutionState")
+    openapi_enum = get_openapi_enum(openapi, "ExecutionRecord", "state")
+    if openapi_enum is None:
+        errors.append("openapi missing enum for ExecutionRecord.state")
+    else:
+        errors.extend(_diff(rust, openapi_enum, "ExecutionRecord.state"))
+    openapi_exec = get_openapi_enum(openapi, "IntentListItem", "exec_state")
+    if openapi_exec is None:
+        errors.append("openapi missing enum for IntentListItem.exec_state")
+    else:
+        errors.extend(_diff(rust, openapi_exec, "IntentListItem.exec_state"))
+
+    # CapabilityStatus
+    rust = extract_rust_enum_variants(ROOT / "crates" / "ferrum-proto" / "src" / "capability.rs", "CapabilityStatus")
+    openapi_enum = get_openapi_enum(openapi, "CapabilityLease", "status")
+    if openapi_enum is None:
+        errors.append("openapi missing enum for CapabilityLease.status")
+    else:
+        errors.extend(_diff(rust, openapi_enum, "CapabilityLease.status"))
+
+    # ProvenanceEventKind
+    rust = extract_rust_enum_variants(ROOT / "crates" / "ferrum-proto" / "src" / "provenance.rs", "ProvenanceEventKind")
+    openapi_enum = get_openapi_enum(openapi, "ProvenanceEvent", "kind")
+    if openapi_enum is None:
+        errors.append("openapi missing enum for ProvenanceEvent.kind")
+    else:
+        errors.extend(_diff(rust, openapi_enum, "ProvenanceEvent.kind"))
+    openapi_ingest = get_openapi_enum(openapi, "ProvenanceIngestRequest", "kind")
+    if openapi_ingest is None:
+        errors.append("openapi missing enum for ProvenanceIngestRequest.kind")
+    else:
+        errors.extend(_diff(rust, openapi_ingest, "ProvenanceIngestRequest.kind"))
+
+    # ActionType
+    rust = extract_rust_enum_variants(ROOT / "crates" / "ferrum-proto" / "src" / "rollback.rs", "ActionType")
+    openapi_enum = get_openapi_enum(openapi, "RollbackContract", "action_type")
+    if openapi_enum is None:
+        errors.append("openapi missing enum for RollbackContract.action_type")
+    else:
+        errors.extend(_diff(rust, openapi_enum, "RollbackContract.action_type"))
+    # JSON schema rollback-contract.json
+    schema = load_json(ROOT / "schemas" / "jsonschema" / "rollback-contract.json")
+    schema_enum = schema.get("properties", {}).get("action_type", {}).get("enum")
+    if schema_enum is None:
+        errors.append("jsonschema rollback-contract.json missing enum for action_type")
+    else:
+        errors.extend(_diff(rust, set(schema_enum), "rollback-contract.json action_type"))
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Route coverage check
+# ---------------------------------------------------------------------------
+
+
+def check_route_coverage() -> list[str]:
+    errors: list[str] = []
+    openapi = load_yaml(ROOT / "openapi" / "ferrumgate-control-api.v1.yaml")
+    paths = set(openapi.get("paths", {}).keys())
+
+    expected = {
+        "/v1/policy-bundles/simulate",
+        "/v1/policy-bundles/{bundle_id}/versions",
+        "/v1/policy-bundles/{bundle_id}/diff",
+        "/v1/policy-bundles/{bundle_id}/rollback",
+        "/v1/admin/tokens",
+        "/v1/admin/tokens/{token_id}",
+        "/v1/admin/tokens/{token_id}/rotate",
+        "/v1/admin/agents",
+        "/v1/admin/agents/{agent_id}",
+        "/v1/admin/lifecycle-outbox",
+        "/v1/admin/lifecycle-outbox/{outbox_id}",
+        "/v1/admin/lifecycle-outbox/{outbox_id}/retry",
+        "/v1/admin/lifecycle-outbox/{outbox_id}/resolve",
+        "/v1/admin/audit-logs",
+        "/v1/admin/audit-logs/export",
+        "/v1/admin/audit/verify",
+        "/v1/admin/audit/merkle-verify",
+        "/v1/admin/audit/merkle-roots",
+        "/v1/admin/audit/checkpoints",
+        "/v1/admin/audit/checkpoints/{window_start}/verify",
+    }
+
+    for route in expected:
+        if route not in paths:
+            errors.append(f"openapi missing expected route: {route}")
+
+    return errors
+
+
 def main() -> int:
     checks = [
         check_required_files,
@@ -178,6 +324,8 @@ def main() -> int:
         check_openapi_drift,
         check_proto_alignment,
         check_contract_structure,
+        check_enum_drift,
+        check_route_coverage,
     ]
 
     errors: list[str] = []

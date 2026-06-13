@@ -66,6 +66,7 @@ validate:
 	@python3 scripts/validate_openapi_yaml.py
 	@python3 scripts/validate_docs_links.py
 	@$(MAKE) test-python-validators
+	@$(MAKE) site-check
 
 tree:
 	find . -maxdepth 4 | sort

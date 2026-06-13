@@ -30,7 +30,7 @@ resolver = "2"
 edition = "2024"
 version = "0.1.0"
 license = "Apache-2.0"
-repository = "https://github.com/ferrumgate/ferrum-gate"
+repository = "https://github.com/BrianNguyen29/Ferrum-Gate"
 
 [workspace.dependencies]
 anyhow = "1"

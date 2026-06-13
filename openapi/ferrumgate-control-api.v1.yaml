@@ -638,12 +638,12 @@ paths:
 
   /v1/executions/{execution_id}/cancel:
     post:
-      summary: Cancel a running or pending execution
+      summary: Cancel a pending execution before side effects begin
       description: |
-        Cancels an execution that is in a non-terminal state (Proposed, Authorized, Prepared,
-        Running, AwaitingApproval, or AwaitingVerification). Terminal executions (Verified,
-        Committed, Compensated, RolledBack, Failed, Expired, Denied, Quarantined) cannot be canceled
-        and return 409 Conflict.
+        Cancels an execution that is in a pre-side-effect state (Proposed, Authorized,
+        Prepared, or AwaitingApproval). Terminal executions (Committed, Compensated,
+        RolledBack, Failed, Denied, Quarantined, Canceled) cannot be canceled and return
+        409 Conflict.
       operationId: cancelExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
@@ -844,6 +844,395 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/policy-bundles/simulate:
+    post:
+      summary: Simulate a policy bundle
+      operationId: simulatePolicyBundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Simulation result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}/versions:
+    get:
+      summary: List versions of a policy bundle
+      operationId: listPolicyBundleVersions
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Versions list
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}/diff:
+    get:
+      summary: Diff a policy bundle version
+      operationId: diffPolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Diff result
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/policy-bundles/{bundle_id}/rollback:
+    post:
+      summary: Rollback a policy bundle
+      operationId: rollbackPolicyBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleId'
+      responses:
+        '200':
+          description: Rollback result
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/tokens:
+    get:
+      summary: List admin tokens
+      operationId: listAdminTokens
+      responses:
+        '200':
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+    post:
+      summary: Create an admin token
+      operationId: createAdminToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Token created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/tokens/{token_id}:
+    delete:
+      summary: Delete an admin token
+      operationId: deleteAdminToken
+      parameters:
+        - $ref: '#/components/parameters/TokenId'
+      responses:
+        '200':
+          description: Token deleted
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/tokens/{token_id}/rotate:
+    post:
+      summary: Rotate an admin token
+      operationId: rotateAdminToken
+      parameters:
+        - $ref: '#/components/parameters/TokenId'
+      responses:
+        '200':
+          description: Token rotated
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents:
+    get:
+      summary: List agents
+      operationId: listAgents
+      responses:
+        '200':
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+    post:
+      summary: Register an agent
+      operationId: createAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Agent registered
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents/{agent_id}:
+    delete:
+      summary: Delete an agent
+      operationId: deleteAgent
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Agent deleted
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/lifecycle-outbox:
+    get:
+      summary: List lifecycle outbox records
+      operationId: listLifecycleOutbox
+      responses:
+        '200':
+          description: Outbox records
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+
+  /v1/admin/lifecycle-outbox/{outbox_id}:
+    get:
+      summary: Get a lifecycle outbox record
+      operationId: getLifecycleOutbox
+      parameters:
+        - $ref: '#/components/parameters/OutboxId'
+      responses:
+        '200':
+          description: Outbox record
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/lifecycle-outbox/{outbox_id}/retry:
+    post:
+      summary: Retry a lifecycle outbox record
+      operationId: retryLifecycleOutbox
+      parameters:
+        - $ref: '#/components/parameters/OutboxId'
+      responses:
+        '200':
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/lifecycle-outbox/{outbox_id}/resolve:
+    post:
+      summary: Resolve a lifecycle outbox record
+      operationId: resolveLifecycleOutbox
+      parameters:
+        - $ref: '#/components/parameters/OutboxId'
+      responses:
+        '200':
+          description: Resolve accepted
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit-logs:
+    get:
+      summary: List audit logs
+      operationId: listAuditLogs
+      responses:
+        '200':
+          description: Audit logs
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit-logs/export:
+    get:
+      summary: Export audit logs
+      operationId: exportAuditLogs
+      responses:
+        '200':
+          description: Audit logs export
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit/verify:
+    get:
+      summary: Verify audit log integrity
+      operationId: verifyAudit
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit/merkle-verify:
+    get:
+      summary: Verify merkle tree
+      operationId: verifyMerkle
+      responses:
+        '200':
+          description: Merkle verification result
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit/merkle-roots:
+    get:
+      summary: List merkle roots
+      operationId: listMerkleRoots
+      responses:
+        '200':
+          description: Merkle roots
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit/checkpoints:
+    get:
+      summary: List audit checkpoints
+      operationId: listAuditCheckpoints
+      responses:
+        '200':
+          description: Checkpoints
+          content:
+            application/json:
+              schema:
+                type: object
+      security:
+        - BearerAuth: []
+    post:
+      summary: Create an audit checkpoint
+      operationId: createAuditCheckpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Checkpoint created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/audit/checkpoints/{window_start}/verify:
+    get:
+      summary: Verify an audit checkpoint window
+      operationId: verifyAuditCheckpoint
+      parameters:
+        - $ref: '#/components/parameters/WindowStart'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
 components:
   securitySchemes:
     BearerAuth:
@@ -908,6 +1297,33 @@ components:
       schema:
         type: string
       description: Policy bundle identifier
+    TokenId:
+      name: token_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AgentId:
+      name: agent_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    OutboxId:
+      name: outbox_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    WindowStart:
+      name: window_start
+      in: path
+      required: true
+      schema:
+        type: string
 
   responses:
     ApiError:
@@ -1013,6 +1429,11 @@ components:
             type: object
         requested_risk_tier:
           type: string
+          enum:
+            - Low
+            - Medium
+            - High
+            - Critical
           nullable: true
         metadata:
           type: object
@@ -1054,12 +1475,37 @@ components:
           type: string
         status:
           type: string
+          enum:
+            - Active
+            - Closed
+            - Expired
+            - Quarantined
+            - Revoked
           description: Intent status (Active, Closed, Expired, Quarantined, Revoked)
         risk_tier:
           type: string
+          enum:
+            - Low
+            - Medium
+            - High
+            - Critical
           description: Risk tier (Low, Medium, High, Critical)
         exec_state:
           type: string
+          enum:
+            - Proposed
+            - Authorized
+            - Prepared
+            - Running
+            - AwaitingApproval
+            - AwaitingVerification
+            - Committed
+            - Compensated
+            - RolledBack
+            - Denied
+            - Quarantined
+            - Failed
+            - Canceled
           nullable: true
           description: Latest execution state for this intent when an execution exists; null when no execution exists.
         created_at:
@@ -1135,10 +1581,25 @@ components:
             type: object
         risk_tier:
           type: string
+          enum:
+            - Low
+            - Medium
+            - High
+            - Critical
         approval_mode:
           type: string
+          enum:
+            - None
+            - Required
+            - DraftOnly
+            - TwoPhaseCommit
         default_rollback_class:
           type: string
+          enum:
+            - R0NativeReversible
+            - R1SnapshotRecoverable
+            - R2Compensatable
+            - R3IrreversibleHighConsequence
         time_budget:
           type: object
         trust_context:
@@ -1156,6 +1617,12 @@ components:
           type: object
         status:
           type: string
+          enum:
+            - Active
+            - Closed
+            - Expired
+            - Quarantined
+            - Revoked
         created_at:
           type: string
           format: date-time
@@ -1198,8 +1665,18 @@ components:
           type: string
         estimated_risk:
           type: string
+          enum:
+            - Low
+            - Medium
+            - High
+            - Critical
         requested_rollback_class:
           type: string
+          enum:
+            - R0NativeReversible
+            - R1SnapshotRecoverable
+            - R2Compensatable
+            - R3IrreversibleHighConsequence
         taint_inputs:
           type: array
           items:
@@ -1216,6 +1693,12 @@ components:
       properties:
         decision:
           type: string
+          enum:
+            - Allow
+            - Deny
+            - Quarantine
+            - RequireApproval
+            - AllowDraftOnly
         reason:
           type: string
         matched_rule_ids:
@@ -1322,6 +1805,12 @@ components:
           nullable: true
         status:
           type: string
+          enum:
+            - Active
+            - Used
+            - Expired
+            - Revoked
+            - Quarantined
         issued_at:
           type: string
           format: date-time
@@ -1381,8 +1870,28 @@ components:
           nullable: true
         decision:
           type: string
+          enum:
+            - Allow
+            - Deny
+            - Quarantine
+            - RequireApproval
+            - AllowDraftOnly
         state:
           type: string
+          enum:
+            - Proposed
+            - Authorized
+            - Prepared
+            - Running
+            - AwaitingApproval
+            - AwaitingVerification
+            - Committed
+            - Compensated
+            - RolledBack
+            - Denied
+            - Quarantined
+            - Failed
+            - Canceled
         started_at:
           type: string
           format: date-time
@@ -1444,8 +1953,36 @@ components:
           format: uuid
         action_type:
           type: string
+          enum:
+            - FileWrite
+            - FileDelete
+            - FileMove
+            - FileCopy
+            - FileAppend
+            - FileChmod
+            - DirCreate
+            - DirDelete
+            - GitCommit
+            - GitBranchCreate
+            - GitBranchDelete
+            - GitTagCreate
+            - GitTagDelete
+            - GitPush
+            - GitPull
+            - GitFetch
+            - SqlMutation
+            - HttpMutation
+            - EmailSend
+            - MailDraft
+            - McpToolMutation
+            - Unknown
         rollback_class:
           type: string
+          enum:
+            - R0NativeReversible
+            - R1SnapshotRecoverable
+            - R2Compensatable
+            - R3IrreversibleHighConsequence
         adapter_key:
           type: string
         target:
@@ -1466,6 +2003,17 @@ components:
           type: boolean
         state:
           type: string
+          enum:
+            - PendingPrepare
+            - Prepared
+            - ExecutedAwaitingVerify
+            - Verified
+            - Committed
+            - CompensationPending
+            - Compensated
+            - RolledBack
+            - Failed
+            - Expired
         created_at:
           type: string
           format: date-time
@@ -1504,6 +2052,11 @@ components:
           format: date-time
         state:
           type: string
+          enum:
+            - Pending
+            - Granted
+            - Denied
+            - Expired
         created_at:
           type: string
           format: date-time
@@ -1537,6 +2090,34 @@ components:
           nullable: true
         event_kind:
           type: string
+          enum:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+            - PolicyBundleActivated
+            - PolicyBundleDeactivated
+            - PolicyBundleRolledBack
           nullable: true
         since:
           type: string
@@ -1582,6 +2163,34 @@ components:
           format: uuid
         kind:
           type: string
+          enum:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+            - PolicyBundleActivated
+            - PolicyBundleDeactivated
+            - PolicyBundleRolledBack
         occurred_at:
           type: string
           format: date-time
@@ -1731,6 +2340,9 @@ components:
             - Quarantined
             - ErrorRaised
             - ExternalEventReceived
+            - PolicyBundleActivated
+            - PolicyBundleDeactivated
+            - PolicyBundleRolledBack
         description:
           type: string
         execution_id:
@@ -1848,9 +2460,37 @@ components:
           format: uuid
         previous_state:
           type: string
+          enum:
+            - Proposed
+            - Authorized
+            - Prepared
+            - Running
+            - AwaitingApproval
+            - AwaitingVerification
+            - Committed
+            - Compensated
+            - RolledBack
+            - Denied
+            - Quarantined
+            - Failed
+            - Canceled
           description: The execution state before cancellation
         current_state:
           type: string
+          enum:
+            - Proposed
+            - Authorized
+            - Prepared
+            - Running
+            - AwaitingApproval
+            - AwaitingVerification
+            - Committed
+            - Compensated
+            - RolledBack
+            - Denied
+            - Quarantined
+            - Failed
+            - Canceled
           description: The execution state after cancellation (Canceled)
         canceled_at:
           type: string

@@ -82,12 +82,12 @@ The rollback class determines whether approval is required and what compensation
 
 Every significant event is recorded:
 
-- `ActionProposalSubmitted`
 - `PolicyEvaluated`
 - `CapabilityMinted`
+- `ActionProposalSubmitted`
+- `SideEffectPrepared`
 - `ToolCallPrepared`
 - `ToolCallExecuted`
-- `SideEffectPrepared`
 - `SideEffectVerified`
 - Terminal (`SideEffectCommitted` / `SideEffectCompensated` / `SideEffectRolledBack`)
 - `ErrorRaised` for fail-closed terminal failures such as incomplete recovery
@@ -105,14 +105,14 @@ The directed graph of provenance events for an execution.
 The minimum lineage chain before a side effect is committed:
 
 ```
-ActionProposalSubmitted
-  → PolicyEvaluated
+PolicyEvaluated
   → CapabilityMinted
+  → ActionProposalSubmitted
   → SideEffectPrepared
   → ToolCallPrepared
   → ToolCallExecuted
   → SideEffectVerified
-  → Terminal (SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack | ErrorRaised)
+  → Terminal (SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack)
 ```
 
 If any required step is missing, the gateway fails closed and will not commit.

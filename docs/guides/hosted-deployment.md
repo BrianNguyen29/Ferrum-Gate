@@ -98,7 +98,7 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   ferrumd:
-    image: ferrumgate:latest
+    image: ferrumgate/ferrumd:latest
     environment:
       FERRUMD_STORE_DSN: postgres://ferrumgate:<strong-password>@postgres:5432/ferrumgate
       FERRUMD_AUTH_MODE: Bearer
@@ -114,7 +114,7 @@ volumes:
 
 > **Note**: A local demo compose file (`docker-compose.postgres-demo.yml`) exists for development only. PostgreSQL hardening is the operator's responsibility.
 
-### Mode D — Kubernetes
+### Mode D — Kubernetes (local-safe scaffold)
 
 Components:
 - ferrumd Deployment
@@ -123,6 +123,8 @@ Components:
 - Prometheus ServiceMonitor
 
 Purpose: shared scalable deployment.
+
+See the local-safe Helm scaffold in [`deploy/helm/ferrumgate/`](../../deploy/helm/ferrumgate/).
 
 ## Reverse proxy / TLS
 
@@ -264,20 +266,20 @@ FerrumGate does not run a backup scheduler itself. Use the host scheduler (syste
 
 **Feature matrix by deployment mode:**
 
-| Feature | Mode A<br>Local demo | Mode B<br>Single-node SQLite | Mode C<br>PostgreSQL self-hosted | Mode D<br>Kubernetes/Helm (planned) |
+| Feature | Mode A<br>Local demo | Mode B<br>Single-node SQLite | Mode C<br>PostgreSQL self-hosted | Mode D<br>Kubernetes/Helm (local-safe scaffold) |
 |---------|:---:|:---:|:---:|:---:|
 | **Intended use** | Development / quickstart only | Small internal deployments | Shared deployments requiring higher throughput | Shared scalable deployment |
 | **Auth bearer** | ❌ Disabled (loopback) | ✅ Supported | ✅ Supported | ✅ Supported |
 | **Scoped tokens / RBAC** | ⚠️ Present but not enforced in dev mode | ⚠️ Present; operator-owned enforcement | ⚠️ Present; operator-owned enforcement | ⚠️ Present; operator-owned enforcement |
 | **TLS termination / domain** | ❌ None (loopback only) | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy + Ingress required |
-| **Persistent storage** | ❌ In-memory only | ✅ SQLite on filesystem | ✅ PostgreSQL (local or managed) | ⏳ PostgreSQL external / managed |
-| **Backup / restore** | ❌ Not applicable | ⚠️ `ferrumctl backup`; operator-owned scheduler | ⚠️ `pg_dump` / `pg_restore`; operator-owned scheduler | ⏳ Operator-owned |
+| **Persistent storage** | ❌ In-memory only | ✅ SQLite on filesystem | ✅ PostgreSQL (local or managed) | ✅ PostgreSQL external / managed |
+| **Backup / restore** | ❌ Not applicable | ⚠️ `ferrumctl backup`; operator-owned scheduler | ⚠️ `pg_dump` / `pg_restore`; operator-owned scheduler | ⚠️ Operator-owned |
 | **Health / readiness endpoints** | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ Service health probes |
-| **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Metrics require auth when auth is enabled | ✅ Authenticated metrics + PG-specific alerts | ⏳ ServiceMonitor |
-| **Grafana dashboards** | ❌ Not included | ⚠️ Operator-owned | ⚠️ Operator-owned | ⏳ Planned |
+| **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Metrics require auth when auth is enabled | ✅ Authenticated metrics + PG-specific alerts | ✅ ServiceMonitor |
+| **Grafana dashboards** | ❌ Not included | ⚠️ Operator-owned | ⚠️ Operator-owned | ⚠️ Operator-owned |
 | **PostgreSQL support** | ❌ Not applicable | ❌ SQLite only | ✅ Native | ✅ External / managed |
-| **Kubernetes / Helm support** | ❌ Not applicable | ❌ Not applicable | ❌ Not applicable | ⏳ Helm chart planned item |
-| **Zero-downtime upgrade path** | ❌ Not applicable | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⏳ Planned |
+| **Kubernetes / Helm support** | ❌ Not applicable | ❌ Not applicable | ❌ Not applicable | ✅ Local-safe scaffold (`deploy/helm/ferrumgate/`) |
+| **Zero-downtime upgrade path** | ❌ Not applicable | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) | ⚠️ Maintenance window required; see [`./zero-downtime-upgrade.md`](./zero-downtime-upgrade.md) |
 
 **Links:**
 

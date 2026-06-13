@@ -58,7 +58,7 @@ pub enum ActionType {
     GitFetch,
     SqlMutation,
     HttpMutation,
-    EmailDraftCreate,
+    /// Reserved future email-send adapter; R3 per contract; not wired to adapter.
     EmailSend,
     MailDraft,
     McpToolMutation,

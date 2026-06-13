@@ -1,6 +1,6 @@
 # FerrumGate Guides
 
-> **Owner**: Engineering
+This directory contains operator and integrator guides for FerrumGate.
 
 ---
 
@@ -35,7 +35,7 @@ A Zola-based static site scaffold is available in `site/`:
 - `site/static/css/main.css` — Stylesheet
 - `site/content/_index.md` — Root page content with summary and quick links
 
-Build the site locally with `make site-build` (requires Zola `0.22.1`); configure publishing separately if you host the site.
+Build the site locally with `make site-build` (requires Zola, tested with `0.22.1`); configure publishing separately if you host the site.
 
 ## Guide scope
 
