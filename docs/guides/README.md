@@ -25,6 +25,7 @@ For product-level positioning and onboarding, start with the root README:
 | [Adapter Reference](adapter-reference.md) | Per-adapter operations, rollback, limitations, examples, risk classes |
 | [Troubleshooting](troubleshooting.md) | Common issues, diagnostics, recovery steps |
 | [Demo Flows](demo-flows.md) | Six copy-paste demo flows: governed file write, git commit, SQLite mutation, approval-required R3, MCP agent, policy simulation |
+| [FAQ](faq.md) | Frequently asked questions: scope, SaaS, email, MCP HTTP, compliance, PostgreSQL HA, security reporting |
 
 ## Static site scaffold
 
