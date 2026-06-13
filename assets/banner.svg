@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-labelledby="fg-banner-title fg-banner-desc">
+  <title id="fg-banner-title">FerrumGate — Scoped. Auditable. Reversible.</title>
+  <desc id="fg-banner-desc">FerrumGate is a governance gateway for AI agents. A schematic of an iron gateway with a single-use capability token passing through, returning a verified outcome, with the execution lifecycle summarized below.</desc>
+
+  <defs>
+    <!-- Faint blueprint grid (engineering-drawing texture) -->
+    <pattern id="fg-grid" x="720" y="0" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 L 0 16" fill="none" stroke="currentColor" stroke-width="0.5" />
+    </pattern>
+  </defs>
+
+  <style>
+    /* Default = light mode. Dark mode overrides below. */
+    .fg-sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, "Liberation Sans", sans-serif; }
+    .fg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .fg-grid-color { color: #1f2330; }
+
+    .fg-stroke        { fill: none; stroke: #2d3344; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+    .fg-stroke-soft   { fill: none; stroke: #2d3344; stroke-width: 0.75; stroke-linecap: round; stroke-linejoin: round; opacity: 0.4; }
+    .fg-stroke-rail   { fill: none; stroke: #4f6b9c; stroke-width: 1.5;  stroke-linecap: round; stroke-linejoin: round; }
+    .fg-stroke-rust   { fill: none; stroke: #b8553a; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+    .fg-stroke-violet { fill: none; stroke: #6f5ac9; stroke-width: 1.5;  stroke-linecap: round; stroke-linejoin: round; }
+
+    .fg-fill-mute   { fill: #1f2330; }
+    .fg-fill-muted  { fill: #4a5066; }
+    .fg-fill-rail   { fill: #4f6b9c; }
+    .fg-fill-rust   { fill: #b8553a; }
+    .fg-fill-violet { fill: #6f5ac9; }
+    .fg-fill-bg     { fill: #ffffff; }
+
+    .fg-text-display { font-size: 68px; font-weight: 700; letter-spacing: -0.025em; fill: #1f2330; }
+    .fg-text-tag     { font-size: 20px; font-weight: 500; letter-spacing:  0.005em; fill: #4a5066; }
+    .fg-text-eyebrow { font-size: 11px; font-weight: 600; letter-spacing:  0.22em; fill: #4a5066; }
+    .fg-text-chip    { font-size: 11px; font-weight: 600; letter-spacing:  0.16em; fill: #4a5066; }
+    .fg-text-mono    { font-size: 10.5px; font-weight: 500; letter-spacing:  0.08em; fill: #4a5066; }
+    .fg-text-label   { font-size: 10px; font-weight: 600; letter-spacing:  0.14em; fill: #4a5066; }
+
+    @media (prefers-color-scheme: dark) {
+      .fg-grid-color { color: #d8dce6; }
+      .fg-stroke        { stroke: #c4cad8; }
+      .fg-stroke-soft   { stroke: #c4cad8; opacity: 0.4; }
+      .fg-stroke-rail   { stroke: #7aa2f7; }
+      .fg-stroke-rust   { stroke: #d97757; }
+      .fg-stroke-violet { stroke: #bb9af7; }
+      .fg-fill-mute   { fill: #d8dce6; }
+      .fg-fill-muted  { fill: #8b92a8; }
+      .fg-fill-rail   { fill: #7aa2f7; }
+      .fg-fill-rust   { fill: #d97757; }
+      .fg-fill-violet { fill: #bb9af7; }
+      .fg-fill-bg     { fill: #0d1117; }
+      .fg-text-display { fill: #d8dce6; }
+      .fg-text-tag     { fill: #8b92a8; }
+      .fg-text-eyebrow { fill: #8b92a8; }
+      .fg-text-chip    { fill: #8b92a8; }
+      .fg-text-mono    { fill: #8b92a8; }
+      .fg-text-label   { fill: #8b92a8; }
+    }
+  </style>
+
+  <!-- ============================== Background grid (right side) ============================== -->
+  <g class="fg-grid-color" opacity="0.07" aria-hidden="true">
+    <rect x="720" y="56" width="512" height="208" fill="url(#fg-grid)" />
+  </g>
+
+  <!-- ============================== LEFT COLUMN: brand ============================== -->
+  <g transform="translate(56, 0)">
+    <!-- Eyebrow -->
+    <text class="fg-sans fg-text-eyebrow" x="0" y="92">GOVERNANCE GATEWAY · v0.1.0</text>
+
+    <!-- Wordmark -->
+    <text class="fg-sans fg-text-display" x="-2" y="170">FerrumGate</text>
+
+    <!-- Tagline -->
+    <text class="fg-sans fg-text-tag" x="0" y="208">Scoped. Auditable. Reversible.</text>
+
+    <!-- Principle chips -->
+    <g transform="translate(0, 240)">
+      <!-- INTENT-SCOPED -->
+      <g transform="translate(0, 0)">
+        <rect class="fg-stroke-soft" x="0" y="0" width="166" height="28" rx="14" />
+        <circle class="fg-fill-rail" cx="14" cy="14" r="3" />
+        <text class="fg-sans fg-text-chip" x="26" y="18">INTENT-SCOPED</text>
+      </g>
+      <!-- SINGLE-USE -->
+      <g transform="translate(178, 0)">
+        <rect class="fg-stroke-soft" x="0" y="0" width="142" height="28" rx="14" />
+        <circle class="fg-fill-violet" cx="14" cy="14" r="3" />
+        <text class="fg-sans fg-text-chip" x="26" y="18">SINGLE-USE</text>
+      </g>
+      <!-- ROLLBACK-READY -->
+      <g transform="translate(332, 0)">
+        <rect class="fg-stroke-soft" x="0" y="0" width="186" height="28" rx="14" />
+        <circle class="fg-fill-rust" cx="14" cy="14" r="3" />
+        <text class="fg-sans fg-text-chip" x="26" y="18">ROLLBACK-READY</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ============================== RIGHT COLUMN: gateway schematic ============================== -->
+  <g transform="translate(960, 160)">
+
+    <!-- Section eyebrow -->
+    <text class="fg-sans fg-text-eyebrow" x="0" y="-92" text-anchor="middle">GATEWAY · CAPABILITY FLOW</text>
+
+    <!-- === Rails (input/output tracks with hash ticks) === -->
+    <g class="fg-stroke-rail" opacity="0.55">
+      <!-- Top rail segment to the left of the gate -->
+      <line x1="-180" y1="-32" x2="-60" y2="-32" />
+      <!-- Top rail segment to the right of the gate -->
+      <line x1="60"   y1="-32" x2="180" y2="-32" />
+      <!-- Bottom rail segment to the left of the gate -->
+      <line x1="-180" y1="32"  x2="-60" y2="32" />
+      <!-- Bottom rail segment to the right of the gate -->
+      <line x1="60"   y1="32"  x2="180" y2="32" />
+    </g>
+    <g class="fg-stroke-soft">
+      <!-- Hash ticks (top-left) -->
+      <line x1="-160" y1="-37" x2="-160" y2="-27" />
+      <line x1="-130" y1="-37" x2="-130" y2="-27" />
+      <line x1="-100" y1="-37" x2="-100" y2="-27" />
+      <line x1="-80"  y1="-37" x2="-80"  y2="-27" />
+      <!-- Hash ticks (top-right) -->
+      <line x1="80"   y1="-37" x2="80"   y2="-27" />
+      <line x1="100"  y1="-37" x2="100"  y2="-27" />
+      <line x1="130"  y1="-37" x2="130"  y2="-27" />
+      <line x1="160"  y1="-37" x2="160"  y2="-27" />
+      <!-- Hash ticks (bottom-left) -->
+      <line x1="-160" y1="27"  x2="-160" y2="37" />
+      <line x1="-130" y1="27"  x2="-130" y2="37" />
+      <line x1="-100" y1="27"  x2="-100" y2="37" />
+      <line x1="-80"  y1="27"  x2="-80"  y2="37" />
+      <!-- Hash ticks (bottom-right) -->
+      <line x1="80"   y1="27"  x2="80"   y2="37" />
+      <line x1="100"  y1="27"  x2="100"  y2="37" />
+      <line x1="130"  y1="27"  x2="130"  y2="37" />
+      <line x1="160"  y1="27"  x2="160"  y2="37" />
+    </g>
+
+    <!-- === INPUT: capability token (left of gate) === -->
+    <g transform="translate(-118, 0)">
+      <rect class="fg-stroke-violet" x="-46" y="-13" width="92" height="26" rx="4" />
+      <!-- TTL tick marks on the shaft (single-use) -->
+      <line class="fg-stroke-violet" x1="-30" y1="13" x2="-30" y2="17" />
+      <line class="fg-stroke-violet" x1="-18" y1="13" x2="-18" y2="17" />
+      <line class="fg-stroke-violet" x1="-6"  y1="13" x2="-6"  y2="17" />
+      <text class="fg-mono fg-text-mono" x="0" y="4" text-anchor="middle">cap_a7f3</text>
+    </g>
+
+    <!-- Arrow: token → gate -->
+    <g class="fg-stroke-rail">
+      <line x1="-72" y1="0" x2="-58" y2="0" />
+      <polyline points="-64,-4 -58,0 -64,4" />
+    </g>
+
+    <!-- === GATE: iron frame with policy decision inside === -->
+    <g transform="translate(0, 0)">
+      <!-- Frame: octagonal portal, slightly chamfered corners (the iron gate) -->
+      <path class="fg-stroke" d="M -36 -68 L 36 -68 L 50 -54 L 50 54 L 36 68 L -36 68 L -50 54 L -50 -54 Z" />
+      <!-- Inner pass-through (the "channel") -->
+      <rect class="fg-stroke-soft" x="-34" y="-44" width="68" height="88" rx="3" />
+      <!-- Policy shield + check inside the gate -->
+      <g>
+        <path class="fg-stroke-rail" d="M 0 -22 L 16 -14 L 16 4 Q 16 16 0 24 Q -16 16 -16 4 L -16 -14 Z" />
+        <polyline class="fg-stroke-rail" points="-7,1 -2,7 8,-5" stroke-width="2.25" />
+      </g>
+      <!-- Side bolts (the "iron" detail) -->
+      <circle class="fg-fill-mute" cx="-44" cy="-46" r="1.6" />
+      <circle class="fg-fill-mute" cx="44"  cy="-46" r="1.6" />
+      <circle class="fg-fill-mute" cx="-44" cy="46"  r="1.6" />
+      <circle class="fg-fill-mute" cx="44"  cy="46"  r="1.6" />
+    </g>
+
+    <!-- Arrow: gate → verified output -->
+    <g class="fg-stroke-rail">
+      <line x1="58" y1="0" x2="72" y2="0" />
+      <polyline points="66,-4 72,0 66,4" />
+    </g>
+
+    <!-- === OUTPUT: verified check + label === -->
+    <g transform="translate(118, 0)">
+      <polyline class="fg-stroke-rust" points="-36,0 -28,9 -14,-9" stroke-width="2.25" />
+      <text class="fg-sans fg-text-label" x="-6" y="4">VERIFIED</text>
+    </g>
+
+  </g>
+
+  <!-- ============================== BOTTOM MONO LINE: lifecycle summary (centered) ============================== -->
+  <text class="fg-mono fg-text-mono" x="640" y="290" text-anchor="middle">intent  →  proposal  →  policy  →  capability  →  prepare  →  execute  →  verify  →  terminal  ·  provenance chain</text>
+</svg>

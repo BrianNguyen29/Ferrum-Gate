@@ -22,6 +22,8 @@ If you have time to read only a few documents, read them in this order:
 4. `guides/operator.md`
 5. `guides/security-model.md`
 6. `PRODUCTION_NOTES.md`
+7. `guides/faq.md`
+8. `ROADMAP.md`
 
 ## Subdirectories
 
