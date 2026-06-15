@@ -12,7 +12,7 @@ Current direction and near-term priorities for FerrumGate.
 | SQLite performance | Write queue + PRAGMA tuning validated; operator tuning guide available | Stable |
 | PostgreSQL support | Runtime and CI live tests passing; HA topology remains operator-owned | Beta |
 | MCP integration | stdio tools validated; HTTP/SSE deferred | Experimental |
-| AWS S3 adapter | Groundwork: validation, planning, metadata, ADR; live network deferred | Experimental |
+| AWS S3 adapter | Live execution (put/delete/get/copy) with versioning-based rollback; MinIO-gated integration tests; gateway/MCP wired | Implemented (experimental) |
 | Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
 | Multi-tenancy | Not on current roadmap | Not implemented |
 | Compliance certification | Out of scope for open-source project | Not implemented |

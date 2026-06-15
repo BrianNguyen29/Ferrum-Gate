@@ -171,10 +171,10 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 
 | Operation | Prepare | Execute | Verify | Rollback |
 |-----------|---------|---------|--------|----------|
-| S3PutObject | Validate bucket/key, capture `before_version_id` | Put object (network deferred) | S3VersionIdMatches | Delete new version to restore previous |
-| S3DeleteObject | Validate bucket/key, capture `before_version_id` | Delete object (network deferred) | S3ObjectExists (absent) | Delete delete marker to restore object |
-| S3GetObject | Validate bucket/key | Get object (network deferred) | S3ObjectExists | N/A (read-only) |
-| S3CopyObject | Validate bucket/key, capture `before_version_id` | Copy object (network deferred) | S3VersionIdMatches (dest) | Delete destination new version |
+| S3PutObject | Validate bucket/key, HeadObject for `before_version_id`, GetBucketVersioning check | Live PutObject with ByteStream; captures `after_version_id` | S3ObjectExists via HeadObject (live) or shape-only fallback | Delete `after_version_id` to restore previous version |
+| S3DeleteObject | Validate bucket/key, HeadObject for `before_version_id`, GetBucketVersioning check | Live DeleteObject; captures `delete_marker_version_id` | S3ObjectExists via HeadObject (live) or shape-only fallback | Delete `delete_marker_version_id` to restore object |
+| S3GetObject | Validate bucket/key | Live GetObject with body collect; enforces `max_object_size` | S3ObjectExists via HeadObject (live) or shape-only fallback | N/A (read-only) |
+| S3CopyObject | Validate bucket/key, HeadObject for `before_version_id`, GetBucketVersioning check | Live CopyObject; captures `after_version_id` | S3VersionIdMatches via HeadObject (live) or shape-only fallback | Delete destination `after_version_id` |
 
 ### Example: S3PutObject with rollback
 
@@ -193,7 +193,7 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 }
 ```
 
-The adapter captures `before_version_id` at prepare. After execute, the new `after_version_id` is captured. If rollback is triggered, the adapter deletes the `after_version_id` to restore the previous version.
+The adapter captures `before_version_id` at prepare via HeadObject. After execute, the new `after_version_id` is captured. If rollback is triggered, the adapter deletes the `after_version_id` to restore the previous version.
 
 ### Rollback behavior
 
@@ -202,12 +202,35 @@ The adapter captures `before_version_id` at prepare. After execute, the new `aft
 - **CopyObject**: Deletes the destination object's new version.
 - **GetObject**: No-op (read-only).
 
+### Fail-closed behavior
+
+When the S3 adapter is configured with `live: true` (which ferrumd sets automatically when `s3_config` is present):
+- `prepare` fails if `GetBucketVersioning` returns that versioning is not enabled or the call fails.
+- `execute` fails if the S3 SDK call (PutObject, DeleteObject, GetObject, CopyObject) fails.
+- `verify` fails if `HeadObject` does not match the expected state.
+- `rollback`/`compensate` attempts to delete the captured version/delete marker; if the live delete fails, it returns `recovered: false` with structured metadata.
+
+When the adapter is configured with `live: false` (the default for `S3Config::default()` and unit tests), all phases fall back to shape-only validation and mark `execution_groundwork: true`. This allows safe unit testing without real credentials. The `live` flag must be explicitly set to `true` for the adapter to make real S3 SDK calls.
+
+### Configuration
+
+```toml
+[server.s3_config]
+allowed_bucket = "my-bucket"
+max_object_size = 104857600        # 100 MB
+require_versioning = true
+endpoint_url = "http://localhost:9000"  # optional (MinIO)
+region = "us-east-1"
+access_key_id = "minioadmin"       # optional (static credentials)
+secret_access_key = "minioadmin"   # optional (static credentials)
+```
+
 ### Limitations
 
-- This slice is **groundwork**: validation, planning, and metadata are fully implemented. Live S3 network execution requires a future slice.
 - Single-bucket allowlist only; no bucket creation/IAM/ACL admin.
 - Max object size is enforced at the adapter boundary, not by S3 itself.
 - Multipart upload, lifecycle, presigned URLs, replication, and batch deletion are out of scope.
+- Live network calls require valid credentials or an endpoint; if the adapter is configured with `live: true` and the S3 call fails, the phase **fails closed**. If the adapter is configured with `live: false` (default), it falls back to shape-only validation and marks `execution_groundwork: true`.
 
 ### Risk class mapping
 
@@ -311,7 +334,7 @@ The adapter captures `before_version_id` at prepare. After execute, the new `aft
 | http | Limited (replay only for POST/PUT/PATCH) | No | Target API must support replay |
 | sqlite | Yes (transaction rollback) | Yes | None |
 | maildraft | Yes (delete/restore/recreate) | Yes | None |
-| s3 | Groundwork only (versioning logic designed; network deferred) | No | S3-compatible endpoint with versioning enabled |
+| s3 | Live execution implemented (put/delete/get/copy) with versioning-based rollback; MinIO integration tests gated (`#[ignore]`) | No | S3-compatible endpoint with versioning enabled |
 
 ### When rollback fails
 

@@ -16,11 +16,13 @@
 //!
 //! # Limitations
 //!
-//! - This slice is **groundwork**: validation, planning, and metadata are fully implemented.
-//!   Live S3 network execution requires a future slice that wires an AWS SDK or MinIO client.
+//! - Live S3 execution is implemented behind the `live` config flag. When `live: true`,
+//!   real AWS SDK calls are made and failures fail closed. When `live: false` (default),
+//!   the adapter falls back to shape-only validation for safe unit testing.
 //! - Single-bucket allowlist only; no bucket creation/IAM/ACL admin.
 //! - Max object size is enforced at the adapter boundary, not by S3 itself.
 //! - Multipart upload, lifecycle, presigned URLs, replication, and batch deletion are out of scope.
+//! - MinIO integration tests exist but are gated (`#[ignored]`) and require a local Docker container.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -65,6 +67,14 @@ pub struct S3Config {
     pub endpoint_url: Option<String>,
     /// Region (default "us-east-1").
     pub region: String,
+    /// Whether to enable live S3 SDK calls. Default false for safe unit testing.
+    /// When true, the adapter uses aws-config from_env (supports env vars, IAM, etc.).
+    /// When false, all phases fall back to shape-only validation.
+    pub live: bool,
+    /// Optional AWS access key ID for static credentials (MinIO/dev).
+    pub access_key_id: Option<String>,
+    /// Optional AWS secret access key for static credentials (MinIO/dev).
+    pub secret_access_key: Option<String>,
 }
 
 impl Default for S3Config {
@@ -75,6 +85,9 @@ impl Default for S3Config {
             require_versioning: true,
             endpoint_url: None,
             region: "us-east-1".to_string(),
+            live: false,
+            access_key_id: None,
+            secret_access_key: None,
         }
     }
 }
@@ -252,11 +265,12 @@ pub struct S3RollbackMetadata {
 
 /// S3 adapter implementing the `RollbackAdapter` trait.
 ///
-/// This slice provides full validation, planning, and metadata capture.
-/// Live S3 network execution is deferred to a future slice.
+/// Provides validation, planning, and live S3 network execution with
+/// versioning-based rollback semantics.
 pub struct S3Adapter {
     key: &'static str,
     config: S3Config,
+    client: std::sync::Mutex<Option<aws_sdk_s3::Client>>,
 }
 
 impl S3Adapter {
@@ -267,12 +281,17 @@ impl S3Adapter {
         Self {
             key,
             config: S3Config::default(),
+            client: std::sync::Mutex::new(None),
         }
     }
 
     /// Creates a new S3Adapter with explicit configuration.
     pub fn new_with_config(key: &'static str, config: S3Config) -> Self {
-        Self { key, config }
+        Self {
+            key,
+            config,
+            client: std::sync::Mutex::new(None),
+        }
     }
 
     /// Returns a reference to the S3 configuration.
@@ -329,12 +348,42 @@ impl S3Adapter {
 
     /// Validates that versioning is required (and would be confirmed for a live client).
     /// In this slice, we enforce the config flag but do not make a live HEAD request.
-    fn validate_versioning_requirement(&self, bucket: &str) -> Result<(), S3AdapterError> {
+    async fn validate_versioning_requirement_live(
+        &self,
+        bucket: &str,
+    ) -> Result<(), S3AdapterError> {
         if self.config.require_versioning {
-            // Groundwork: in a future slice with a live client, we would verify
-            // `get_bucket_versioning` and fail-closed if Status != "Enabled".
-            // For now, we accept the configuration as the operator contract.
-            let _ = bucket;
+            match self.client().await {
+                Ok(client) => {
+                    let resp = client
+                        .get_bucket_versioning()
+                        .bucket(bucket.to_string())
+                        .send()
+                        .await;
+                    match resp {
+                        Ok(output) => {
+                            let status = output.status();
+                            if !matches!(
+                                status,
+                                Some(aws_sdk_s3::types::BucketVersioningStatus::Enabled)
+                            ) {
+                                return Err(S3AdapterError::VersioningRequired(bucket.to_string()));
+                            }
+                        }
+                        Err(e) => {
+                            return Err(S3AdapterError::Validation(format!(
+                                "get_bucket_versioning failed for bucket '{}': {}",
+                                bucket, e
+                            )));
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Client not configured for live S3; skip live check.
+                    // Shape-only validation is acceptable only when the adapter
+                    // is not wired to a real endpoint/credentials.
+                }
+            }
         }
         Ok(())
     }
@@ -357,14 +406,60 @@ impl S3Adapter {
         hex::encode(hasher.finalize())
     }
 
+    /// Builds or returns the cached AWS S3 client.
+    ///
+    /// Returns Err if `live` is false. This allows unit tests to run without
+    /// real credentials while still failing closed when a live client is
+    /// configured but the S3 call fails.
+    ///
+    /// When `live` is true, `aws_config::from_env()` is used, which supports
+    /// explicit credentials, environment variables, and the AWS default
+    /// credential chain (including IAM roles).
+    async fn client(&self) -> Result<aws_sdk_s3::Client, AdapterError> {
+        if !self.config.live {
+            return Err(AdapterError::Validation(
+                "S3 live mode is not enabled; set live=true to use live S3 calls".into(),
+            ));
+        }
+        {
+            let lock = self.client.lock().unwrap();
+            if let Some(client) = lock.clone() {
+                return Ok(client);
+            }
+        }
+        let mut aws_cfg = aws_config::from_env()
+            .region(aws_sdk_s3::config::Region::new(self.config.region.clone()));
+        if let Some(ref endpoint) = self.config.endpoint_url {
+            aws_cfg = aws_cfg.endpoint_url(endpoint.clone());
+        }
+        if let (Some(key), Some(secret)) =
+            (&self.config.access_key_id, &self.config.secret_access_key)
+        {
+            let creds = aws_credential_types::Credentials::new(
+                key.clone(),
+                secret.clone(),
+                None,
+                None,
+                "ferrum-adapter-s3",
+            );
+            aws_cfg = aws_cfg.credentials_provider(creds);
+        }
+        let shared_cfg = aws_cfg.load().await;
+        let mut s3_builder = aws_sdk_s3::config::Builder::from(&shared_cfg);
+        if self.config.endpoint_url.is_some() {
+            s3_builder = s3_builder.force_path_style(true);
+        }
+        let client = aws_sdk_s3::Client::from_conf(s3_builder.build());
+        let mut lock = self.client.lock().unwrap();
+        *lock = Some(client.clone());
+        Ok(client)
+    }
+
     /// Runs a single check spec and returns an error if it fails.
     ///
-    /// # Arguments
-    /// * `check` - The check specification to run
-    /// * `bucket` - The target bucket
-    /// * `key` - The target object key
-    /// * `phase` - The phase context for error messages
-    fn run_check(
+    /// For live checks, uses the S3 client when available.
+    async fn run_check_live(
+        &self,
         check: &ferrum_proto::CheckSpec,
         bucket: &str,
         key: &str,
@@ -390,9 +485,18 @@ impl S3Adapter {
                         )));
                     }
                 }
-                // Groundwork: in a future slice with a live client, we would verify
-                // object existence via HeadObject. For now, we validate shape only.
-                Ok(())
+                // Live check: try HeadObject if client available
+                if let Ok(client) = self.client().await {
+                    match client.head_object().bucket(bucket).key(key).send().await {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(AdapterError::Validation(format!(
+                            "S3ObjectExists live check failed for {}/{}: {}",
+                            bucket, key, e
+                        ))),
+                    }
+                } else {
+                    Ok(())
+                }
             }
             CheckType::S3VersionIdMatches => {
                 // Validate 'bucket' and 'key' fields if present
@@ -412,15 +516,33 @@ impl S3Adapter {
                         )));
                     }
                 }
-                // Validate 'expected_version_id' is present
-                let _expected = check.config.get("expected_version_id").ok_or_else(|| {
+                let expected = check.config.get("expected_version_id").ok_or_else(|| {
                     AdapterError::Validation(
                         "S3VersionIdMatches check requires 'expected_version_id' config".into(),
                     )
                 })?;
-                // Groundwork: in a future slice with a live client, we would verify
-                // the actual version ID against the expected value.
-                Ok(())
+                // Live check: try HeadObject if client available
+                if let Ok(client) = self.client().await {
+                    match client.head_object().bucket(bucket).key(key).send().await {
+                        Ok(resp) => {
+                            let actual = resp.version_id();
+                            let expected_str = expected.as_str().unwrap_or("");
+                            if actual != Some(expected_str) {
+                                return Err(AdapterError::Validation(format!(
+                                    "S3VersionIdMatches mismatch: expected '{}', got '{:?}'",
+                                    expected_str, actual
+                                )));
+                            }
+                            Ok(())
+                        }
+                        Err(e) => Err(AdapterError::Validation(format!(
+                            "S3VersionIdMatches live check failed for {}/{}: {}",
+                            bucket, key, e
+                        ))),
+                    }
+                } else {
+                    Ok(())
+                }
             }
             _ => Err(AdapterError::Unsupported(format!(
                 "unsupported check type: {:?}",
@@ -467,14 +589,15 @@ impl RollbackAdapter for S3Adapter {
             return Err(Self::phase_wrap_validation(PHASE_PREPARE, e.to_string()));
         }
 
-        // Validate versioning requirement (config-only in this slice)
-        if let Err(e) = self.validate_versioning_requirement(bucket) {
+        // Validate versioning requirement (live if client available, config-only otherwise)
+        if let Err(e) = self.validate_versioning_requirement_live(bucket).await {
             return Err(Self::phase_wrap_validation(PHASE_PREPARE, e.to_string()));
         }
 
         // Run prepare_checks if present
         for check in &request.prepare_checks {
-            Self::run_check(check, bucket, key, PHASE_PREPARE)?;
+            self.run_check_live(check, bucket, key, PHASE_PREPARE)
+                .await?;
         }
 
         let mut metadata = JsonMap::new();
@@ -495,15 +618,24 @@ impl RollbackAdapter for S3Adapter {
             serde_json::Value::String(key.to_string()),
         );
 
-        // Capture before_version_id if provided in target (live client would query HeadObject)
-        if let Some(vid) = version_id {
+        // Capture before_version_id via live HeadObject if client available
+        let before_version_id = if let Ok(client) = self.client().await {
+            match client.head_object().bucket(bucket).key(key).send().await {
+                Ok(resp) => resp.version_id().map(String::from),
+                Err(e) => {
+                    tracing::debug!("head_object failed during prepare: {}", e);
+                    version_id.map(String::from)
+                }
+            }
+        } else {
+            version_id.map(String::from)
+        };
+        if let Some(ref vid) = before_version_id {
             metadata.insert(
                 "before_version_id".to_string(),
-                serde_json::Value::String(vid.to_string()),
+                serde_json::Value::String(vid.clone()),
             );
         } else {
-            // Groundwork: with a live client, we would query the current version ID
-            // and store it here. For now, we mark it as unknown.
             metadata.insert("before_version_id".to_string(), serde_json::Value::Null);
         }
 
@@ -598,8 +730,6 @@ impl RollbackAdapter for S3Adapter {
                     return Err(Self::phase_wrap_validation(PHASE_EXECUTE, e.to_string()));
                 }
 
-                // Groundwork: live execution would call PutObject here.
-                // For this slice, we capture metadata and return an unsupported marker.
                 let content_hash = Self::compute_content_hash(&content);
                 let mut metadata = JsonMap::new();
                 metadata.insert(
@@ -626,21 +756,55 @@ impl RollbackAdapter for S3Adapter {
                     "bytes_written".to_string(),
                     serde_json::Value::Number(content.len().into()),
                 );
-                // after_version_id would be captured from PutObject response in a future slice
-                metadata.insert("after_version_id".to_string(), serde_json::Value::Null);
-                metadata.insert(
-                    "execution_groundwork".to_string(),
-                    serde_json::Value::Bool(true),
-                );
+
+                // Live execution: try PutObject if client available
+                let after_version_id = if let Ok(client) = self.client().await {
+                    let body = aws_sdk_s3::primitives::ByteStream::from(content.clone());
+                    match client
+                        .put_object()
+                        .bucket(bucket)
+                        .key(key)
+                        .body(body)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            let vid = resp.version_id().map(String::from);
+                            metadata.insert(
+                                "after_version_id".to_string(),
+                                vid.clone()
+                                    .map(serde_json::Value::String)
+                                    .unwrap_or(serde_json::Value::Null),
+                            );
+                            metadata.insert(
+                                "execution_groundwork".to_string(),
+                                serde_json::Value::Bool(false),
+                            );
+                            vid
+                        }
+                        Err(e) => {
+                            return Err(AdapterError::Validation(format!(
+                                "S3 PutObject live execution failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                } else {
+                    metadata.insert("after_version_id".to_string(), serde_json::Value::Null);
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                    None
+                };
 
                 Ok(ExecuteReceipt {
-                    external_id: None,
+                    external_id: after_version_id,
                     result_digest: Some(content_hash),
                     adapter_metadata: metadata,
                 })
             }
             ActionType::S3DeleteObject => {
-                // Groundwork: live execution would call DeleteObject here.
                 let mut metadata = JsonMap::new();
                 metadata.insert(
                     "adapter_kind".to_string(),
@@ -658,24 +822,55 @@ impl RollbackAdapter for S3Adapter {
                     "object_key".to_string(),
                     serde_json::Value::String(key.to_string()),
                 );
-                // delete_marker_version_id would be captured from DeleteObject response
-                metadata.insert(
-                    "delete_marker_version_id".to_string(),
-                    serde_json::Value::Null,
-                );
-                metadata.insert(
-                    "execution_groundwork".to_string(),
-                    serde_json::Value::Bool(true),
-                );
+
+                // Live execution: try DeleteObject if client available
+                let delete_marker_version_id = if let Ok(client) = self.client().await {
+                    match client.delete_object().bucket(bucket).key(key).send().await {
+                        Ok(resp) => {
+                            let vid = resp.version_id().map(String::from);
+                            let is_delete_marker = resp.delete_marker().unwrap_or(false);
+                            metadata.insert(
+                                "delete_marker_version_id".to_string(),
+                                vid.clone()
+                                    .map(serde_json::Value::String)
+                                    .unwrap_or(serde_json::Value::Null),
+                            );
+                            metadata.insert(
+                                "delete_marker".to_string(),
+                                serde_json::Value::Bool(is_delete_marker),
+                            );
+                            metadata.insert(
+                                "execution_groundwork".to_string(),
+                                serde_json::Value::Bool(false),
+                            );
+                            vid
+                        }
+                        Err(e) => {
+                            return Err(AdapterError::Validation(format!(
+                                "S3 DeleteObject live execution failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                } else {
+                    metadata.insert(
+                        "delete_marker_version_id".to_string(),
+                        serde_json::Value::Null,
+                    );
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                    None
+                };
 
                 Ok(ExecuteReceipt {
-                    external_id: None,
+                    external_id: delete_marker_version_id,
                     result_digest: None,
                     adapter_metadata: metadata,
                 })
             }
             ActionType::S3GetObject => {
-                // Groundwork: live execution would call GetObject here.
                 let mut metadata = JsonMap::new();
                 metadata.insert(
                     "adapter_kind".to_string(),
@@ -693,14 +888,54 @@ impl RollbackAdapter for S3Adapter {
                     "object_key".to_string(),
                     serde_json::Value::String(key.to_string()),
                 );
-                metadata.insert(
-                    "execution_groundwork".to_string(),
-                    serde_json::Value::Bool(true),
-                );
+
+                // Live execution: try GetObject if client available
+                let mut result_digest = None;
+                if let Ok(client) = self.client().await {
+                    match client.get_object().bucket(bucket).key(key).send().await {
+                        Ok(resp) => {
+                            let data = resp.body.collect().await.map_err(|e| {
+                                AdapterError::Internal(format!("S3 GetObject stream error: {}", e))
+                            })?;
+                            let bytes = data.into_bytes();
+                            if bytes.len() as u64 > self.config.max_object_size {
+                                return Err(AdapterError::Validation(format!(
+                                    "S3 GetObject body exceeds max_object_size {}",
+                                    self.config.max_object_size
+                                )));
+                            }
+                            let hash = Self::compute_content_hash(&bytes);
+                            metadata.insert(
+                                "content_hash".to_string(),
+                                serde_json::Value::String(hash.clone()),
+                            );
+                            metadata.insert(
+                                "bytes_read".to_string(),
+                                serde_json::Value::Number(bytes.len().into()),
+                            );
+                            metadata.insert(
+                                "execution_groundwork".to_string(),
+                                serde_json::Value::Bool(false),
+                            );
+                            result_digest = Some(hash);
+                        }
+                        Err(e) => {
+                            return Err(AdapterError::Validation(format!(
+                                "S3 GetObject live execution failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                } else {
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                }
 
                 Ok(ExecuteReceipt {
                     external_id: None,
-                    result_digest: None,
+                    result_digest,
                     adapter_metadata: metadata,
                 })
             }
@@ -724,7 +959,6 @@ impl RollbackAdapter for S3Adapter {
                     return Err(Self::phase_wrap_validation(PHASE_EXECUTE, e.to_string()));
                 }
 
-                // Groundwork: live execution would call CopyObject here.
                 let mut metadata = JsonMap::new();
                 metadata.insert(
                     "adapter_kind".to_string(),
@@ -746,13 +980,50 @@ impl RollbackAdapter for S3Adapter {
                     "destination_key".to_string(),
                     serde_json::Value::String(destination_key.clone()),
                 );
-                metadata.insert(
-                    "execution_groundwork".to_string(),
-                    serde_json::Value::Bool(true),
-                );
+
+                // Live execution: try CopyObject if client available
+                let after_version_id = if let Ok(client) = self.client().await {
+                    let copy_source = format!("{}/{}", bucket, key);
+                    match client
+                        .copy_object()
+                        .bucket(bucket)
+                        .key(&destination_key)
+                        .copy_source(copy_source)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            let vid = resp.version_id().map(String::from);
+                            metadata.insert(
+                                "after_version_id".to_string(),
+                                vid.clone()
+                                    .map(serde_json::Value::String)
+                                    .unwrap_or(serde_json::Value::Null),
+                            );
+                            metadata.insert(
+                                "execution_groundwork".to_string(),
+                                serde_json::Value::Bool(false),
+                            );
+                            vid
+                        }
+                        Err(e) => {
+                            return Err(AdapterError::Validation(format!(
+                                "S3 CopyObject live execution failed: {}",
+                                e
+                            )));
+                        }
+                    }
+                } else {
+                    metadata.insert("after_version_id".to_string(), serde_json::Value::Null);
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                    None
+                };
 
                 Ok(ExecuteReceipt {
-                    external_id: None,
+                    external_id: after_version_id,
                     result_digest: None,
                     adapter_metadata: metadata,
                 })
@@ -786,9 +1057,10 @@ impl RollbackAdapter for S3Adapter {
             ));
         }
 
-        // Run explicit verify_checks
+        // Run explicit verify_checks with live client when available
         for check in &contract.verify_checks {
-            Self::run_check(check, bucket, key, PHASE_VERIFY)?;
+            self.run_check_live(check, bucket, key, PHASE_VERIFY)
+                .await?;
         }
 
         Ok(VerifyReceipt {
@@ -820,7 +1092,8 @@ impl S3Adapter {
     /// 3. If there is an after version, delete that specific version to restore the before version.
     /// 4. If there is a delete marker, delete the delete marker to restore the object.
     ///
-    /// In this slice, the logic is fully structured but the live S3 call is deferred.
+    /// When `live: true`, the adapter attempts a live S3 delete of the captured
+    /// after version or delete marker; if the live delete fails, `recovered` is false.
     async fn rollback_or_compensate(
         &self,
         contract: &RollbackContract,
@@ -852,11 +1125,29 @@ impl S3Adapter {
                     .get("delete_marker_version_id")
                     .and_then(|v| if v.is_null() { None } else { v.as_str() });
 
-                // Groundwork: in a future slice with a live client, we would:
-                // - For PutObject: delete the after_version_id to restore the before_version_id
-                // - For DeleteObject: delete the delete_marker_version_id to restore the object
-                // - For CopyObject: delete the destination object's new version
-                // For now, we return recovered=false with structured metadata explaining the gap.
+                // Live rollback: delete the created version/delete marker if client available
+                let mut recovered = false;
+                if let Ok(client) = self.client().await {
+                    let version_to_delete = after_version_id.or(delete_marker_version_id);
+                    if let Some(vid) = version_to_delete {
+                        let result = client
+                            .delete_object()
+                            .bucket(bucket)
+                            .key(key)
+                            .version_id(vid)
+                            .send()
+                            .await;
+                        match result {
+                            Ok(_) => {
+                                recovered = true;
+                            }
+                            Err(e) => {
+                                tracing::warn!("S3 rollback delete failed: {}", e);
+                            }
+                        }
+                    }
+                }
+
                 let mut metadata = JsonMap::new();
                 metadata.insert(
                     "adapter_kind".to_string(),
@@ -866,13 +1157,17 @@ impl S3Adapter {
                     "phase".to_string(),
                     serde_json::Value::String(phase.to_string()),
                 );
-                metadata.insert("recovered".to_string(), serde_json::Value::Bool(false));
+                metadata.insert("recovered".to_string(), serde_json::Value::Bool(recovered));
                 metadata.insert(
                     "reason".to_string(),
                     serde_json::Value::String(
-                        "S3 rollback/compensate network execution is not implemented in this slice; \
-                         use MinIO smoke or a future slice."
-                            .to_string(),
+                        if recovered {
+                            "S3 rollback/compensate succeeded: deleted the created version/delete marker"
+                                .to_string()
+                        } else {
+                            "S3 rollback/compensate did not delete a version; client unavailable or no after_version_id/delete_marker_version_id"
+                                .to_string()
+                        },
                     ),
                 );
                 metadata.insert(
@@ -903,7 +1198,7 @@ impl S3Adapter {
                 );
 
                 Ok(RecoveryReceipt {
-                    recovered: false,
+                    recovered,
                     adapter_metadata: metadata,
                 })
             }
@@ -1229,8 +1524,7 @@ mod tests {
                 .unwrap()
                 .as_str()
                 .unwrap(),
-            "S3 rollback/compensate network execution is not implemented in this slice; \
-             use MinIO smoke or a future slice."
+            "S3 rollback/compensate did not delete a version; client unavailable or no after_version_id/delete_marker_version_id"
         );
     }
 

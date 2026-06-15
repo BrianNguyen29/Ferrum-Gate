@@ -689,6 +689,23 @@ pub(crate) fn infer_action_type_and_adapter(
         || tool_lower.contains("http_delete")
     {
         Ok((ferrum_proto::ActionType::HttpMutation, "http".to_string()))
+    } else if tool_lower.contains("s3_put")
+        || tool_lower.contains("s3putobject")
+        || tool_lower.contains("s3.write")
+    {
+        Ok((ferrum_proto::ActionType::S3PutObject, "s3".to_string()))
+    } else if tool_lower.contains("s3_delete")
+        || tool_lower.contains("s3deleteobject")
+        || tool_lower.contains("s3.remove")
+    {
+        Ok((ferrum_proto::ActionType::S3DeleteObject, "s3".to_string()))
+    } else if tool_lower.contains("s3_get")
+        || tool_lower.contains("s3getobject")
+        || tool_lower.contains("s3.read")
+    {
+        Ok((ferrum_proto::ActionType::S3GetObject, "s3".to_string()))
+    } else if tool_lower.contains("s3_copy") || tool_lower.contains("s3copyobject") {
+        Ok((ferrum_proto::ActionType::S3CopyObject, "s3".to_string()))
     } else {
         Err(format!(
             "unknown mutating tool '{}' has no explicit action binding",
@@ -940,6 +957,31 @@ pub(crate) fn infer_target_from_scope(
                     method: method.clone(),
                     url,
                     request_digest: String::new(),
+                };
+            }
+        }
+    }
+
+    // S3Bucket selector for S3 action types
+    let is_s3_action = matches!(
+        action_type,
+        ferrum_proto::ActionType::S3PutObject
+            | ferrum_proto::ActionType::S3DeleteObject
+            | ferrum_proto::ActionType::S3GetObject
+            | ferrum_proto::ActionType::S3CopyObject
+    );
+    if is_s3_action {
+        for selector in scope {
+            if let ferrum_proto::ResourceSelector::S3Bucket {
+                bucket,
+                key_prefix_allowlist: _,
+                mode: _,
+            } = selector
+            {
+                return RollbackTarget::S3Object {
+                    bucket: bucket.clone(),
+                    key: String::new(), // key is provided at runtime via payload
+                    version_id: None,
                 };
             }
         }

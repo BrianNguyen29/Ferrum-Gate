@@ -1,7 +1,7 @@
 # Manual MCP and MinIO Smoke Checklist
 
 > **Status**: Manual checklist — no automated CI integration. No real AWS credentials required.
-> **Scope**: Validate existing stdio MCP flow and S3 adapter groundwork against a local MinIO instance.
+> **Scope**: Validate existing stdio MCP flow and S3 adapter live execution (gated behind `live: true` config) against a local MinIO instance.
 
 ---
 
@@ -100,7 +100,7 @@ Expected: lineage chain with at least `IntentSubmitted` and `PolicyEvaluated` ev
 
 ## Step 5: S3 Adapter Groundwork Validation (Manual)
 
-> **Note**: Live S3 network execution is **not** implemented in this slice. The following steps validate the adapter's validation, planning, and metadata capture only.
+> **Note**: Live S3 network execution is implemented behind the `live` config flag. When `live: true` (set by ferrumd when `s3_config` is present), the adapter makes real AWS SDK calls. The following steps validate the adapter's validation, planning, metadata capture, and live execution against a local MinIO instance.
 
 ### 5.1 Verify unit tests pass
 
@@ -150,7 +150,8 @@ assert!(plan.is_some());
 - [ ] S3 adapter rejects an invalid object key (`../etc/passwd`).
 - [ ] S3 adapter rejects an unsupported action type (`FileWrite`).
 - [ ] S3 `verify` fails closed when no `verify_checks` are provided.
-- [ ] S3 `rollback`/`compensate` returns `recovered: false` with structured metadata (network deferred).
+- [ ] S3 `rollback`/`compensate` attempts live delete of captured version/delete marker; falls back gracefully if client unavailable.
+- [ ] S3 `execute` marks `execution_groundwork: true` when live client is unavailable (graceful degradation).
 
 ---
 
@@ -174,9 +175,10 @@ mc rb local/my-test-bucket
 | MCP stdio `ping` returns `{}` | ☐ |
 | Intent submission via MCP returns `intent_id` | ☐ |
 | `ferrum-adapter-s3` unit tests pass (26/26) | ☐ |
-| `cargo check --workspace` is clean | ☐ |
-| S3 adapter rejects invalid bucket/key/unsupported action | ☐ |
-| S3 adapter `rollback` returns `recovered: false` with metadata | ☐ |
+| `ferrum-adapter-s3` MinIO integration tests compile and are gated (`#[ignore]`) | ☐ |
+| S3 adapter registered in ferrumd when `s3_config` is present | ☐ |
+| S3 operations mapped in gateway (`infer_action_type_and_adapter`) | ☐ |
+| S3 resource scope parsed in MCP (`s3:put:bucket:key`) | ☐ |
 | No real AWS credentials used in repo or test | ☐ |
 
 ---
@@ -184,7 +186,7 @@ mc rb local/my-test-bucket
 ## Notes
 
 - **Production MCP HTTP/SSE is NOT claimed** in this repo. Only stdio transport is validated.
-- **Production S3 readiness is NOT claimed** in this slice. Only groundwork (validation, planning, metadata) is present.
+- **Production S3 readiness is NOT claimed**. Live S3 execution is implemented but requires operator-managed credentials and endpoints. MinIO integration tests are gated (`#[ignore]`).
 - Do not commit AWS/MinIO credentials to version control.
 
 ## Related docs

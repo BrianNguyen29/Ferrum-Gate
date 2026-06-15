@@ -73,3 +73,6 @@ blake3 = "1.5"
 jsonwebtoken = "9"
 rand = "0.8"
 regex = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1", features = ["rustls"] }
+aws-credential-types = "1"

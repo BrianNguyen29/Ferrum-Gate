@@ -524,6 +524,20 @@ pub fn parse_resource_scope(scope: &str) -> Result<Vec<ResourceSelector>, Mappin
                 mode: parse_resource_mode(parts[1]),
             }])
         }
+        ("s3", "put") | ("s3", "get") | ("s3", "delete") | ("s3", "copy") => {
+            let bucket = parts.get(2).unwrap_or(&"*").to_string();
+            let key_prefix_allowlist = parts
+                .get(3..)
+                .unwrap_or(&[])
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            Ok(vec![ResourceSelector::S3Bucket {
+                bucket,
+                key_prefix_allowlist,
+                mode: parse_resource_mode(parts[1]),
+            }])
+        }
         ("email", "send") => {
             let recipient = parts.get(2).unwrap_or(&"*");
             Ok(vec![ResourceSelector::EmailDraft {
@@ -579,6 +593,7 @@ pub fn resolve_server_name(action_type: &str) -> Result<String, MappingError> {
         g if g.starts_with("git_") => "git",
         h if h.starts_with("http_") => "http",
         s if s.starts_with("sql_") || s.starts_with("db_") => "database",
+        s if s.starts_with("s3_") => "s3",
         e if e.starts_with("email_") => "email",
         m if m.starts_with("mcp_") => "mcp",
         _ => {

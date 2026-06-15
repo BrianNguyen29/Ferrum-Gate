@@ -4,6 +4,7 @@ use ferrum_adapter_fs::{FsAdapter, FsBoundsConfig, PlannableFsAdapter};
 use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_http::{PlannableHttpAdapter, register_http_adapter};
 use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_adapter};
+use ferrum_adapter_s3::{PlannableS3Adapter, S3Adapter, S3Config};
 use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::InMemoryCapabilityService;
 use ferrum_gateway::{AuthMode, GatewayRuntime, ServerConfig, run_http_server};
@@ -209,6 +210,37 @@ struct ServerSection {
     git_repo_roots: Vec<PathBuf>,
     #[serde(default)]
     sqlite_db_roots: Vec<PathBuf>,
+    #[serde(default)]
+    s3_config: Option<S3ConfigSection>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct S3ConfigSection {
+    allowed_bucket: String,
+    #[serde(default = "default_s3_max_object_size")]
+    max_object_size: u64,
+    #[serde(default = "default_s3_require_versioning")]
+    require_versioning: bool,
+    #[serde(default)]
+    endpoint_url: Option<String>,
+    #[serde(default = "default_s3_region")]
+    region: String,
+    #[serde(default)]
+    access_key_id: Option<String>,
+    #[serde(default)]
+    secret_access_key: Option<String>,
+}
+
+fn default_s3_max_object_size() -> u64 {
+    100 * 1024 * 1024
+}
+
+fn default_s3_require_versioning() -> bool {
+    true
+}
+
+fn default_s3_region() -> String {
+    "us-east-1".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -423,6 +455,39 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.sqlite_db_roots.clone()))
         .unwrap_or_default();
 
+    let s3_config = {
+        let file_s3 = server.as_ref().and_then(|s| s.s3_config.as_ref());
+        let allowed_bucket = get_env::<String>("FERRUMD_S3_ALLOWED_BUCKET")?
+            .or_else(|| file_s3.map(|c| c.allowed_bucket.clone()));
+        if let Some(bucket) = allowed_bucket {
+            let endpoint_url = get_env::<String>("FERRUMD_S3_ENDPOINT_URL")?
+                .or_else(|| file_s3.and_then(|c| c.endpoint_url.clone()));
+            let region = get_env::<String>("FERRUMD_S3_REGION")?
+                .or_else(|| file_s3.map(|c| c.region.clone()))
+                .unwrap_or_else(|| "us-east-1".to_string());
+            let access_key_id = get_env::<String>("FERRUMD_S3_ACCESS_KEY_ID")?
+                .or_else(|| file_s3.and_then(|c| c.access_key_id.clone()));
+            let secret_access_key = get_env::<String>("FERRUMD_S3_SECRET_ACCESS_KEY")?
+                .or_else(|| file_s3.and_then(|c| c.secret_access_key.clone()));
+            let max_object_size = file_s3
+                .map(|c| c.max_object_size)
+                .unwrap_or(100 * 1024 * 1024);
+            let require_versioning = file_s3.map(|c| c.require_versioning).unwrap_or(true);
+            Some(S3Config {
+                allowed_bucket: bucket,
+                max_object_size,
+                require_versioning,
+                endpoint_url,
+                region,
+                live: true,
+                access_key_id,
+                secret_access_key,
+            })
+        } else {
+            None
+        }
+    };
+
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("failed to parse bind address: {}", bind_addr))?;
@@ -617,6 +682,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         fs_workdir,
         git_repo_roots,
         sqlite_db_roots,
+        s3_config,
         oidc_config,
         agent_clock_skew_secs: 30,
     };
@@ -727,6 +793,23 @@ async fn main() -> Result<()> {
         );
     }
     register_maildraft_adapter(&mut registry);
+    if let Some(ref s3_cfg) = config.s3_config {
+        if let Err(e) = s3_cfg.validate() {
+            tracing::warn!("S3 config invalid; adapter not registered: {}", e);
+        } else {
+            registry.register(Arc::new(S3Adapter::new_with_config("s3", s3_cfg.clone())));
+            tracing::info!(
+                "S3 adapter registered for bucket '{}'",
+                s3_cfg.allowed_bucket
+            );
+        }
+    } else {
+        tracing::warn!(
+            "S3 adapter not registered because s3_config is not configured; \
+             set FERRUMD_S3_ALLOWED_BUCKET or server.s3_config.allowed_bucket to enable bounded S3 mutations"
+        );
+    }
+    let s3_enabled = config.s3_config.is_some();
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
     if sqlite_adapter_enabled {
@@ -737,6 +820,17 @@ async fn main() -> Result<()> {
         rollback_service.register_planner(Arc::new(PlannableGitAdapter));
     }
     rollback_service.register_planner(Arc::new(PlannableHttpAdapter));
+    if s3_enabled {
+        if let Some(ref s3_cfg) = config.s3_config {
+            if s3_cfg.validate().is_ok() {
+                rollback_service.register_planner(Arc::new(PlannableS3Adapter));
+                tracing::info!(
+                    "S3 planner registered for bucket '{}'",
+                    s3_cfg.allowed_bucket
+                );
+            }
+        }
+    }
     let rollback = Arc::new(rollback_service);
 
     let store: Arc<dyn StoreFacade> = if config.store_dsn.to_lowercase().starts_with("postgres://")

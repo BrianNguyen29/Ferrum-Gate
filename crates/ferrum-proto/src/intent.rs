@@ -111,6 +111,11 @@ pub enum ResourceSelector {
         tool_name: String,
         mode: ResourceMode,
     },
+    S3Bucket {
+        bucket: String,
+        key_prefix_allowlist: Vec<String>,
+        mode: ResourceMode,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
