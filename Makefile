@@ -5,8 +5,9 @@ help:
 	@echo "make fmt       - cargo fmt --all"
 	@echo "make lint      - cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "make test      - cargo test --workspace"
+	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
-	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, MCP tools)"
+	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools)"
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence, expanded validators)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
@@ -57,7 +58,7 @@ test-python-validators:
 	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links + python-validator-tests)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links + CI badges + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
@@ -65,6 +66,7 @@ validate:
 	@python3 scripts/validate_toml_configs.py
 	@python3 scripts/validate_openapi_yaml.py
 	@python3 scripts/validate_docs_links.py
+	@python3 scripts/validate_ci_badges.py
 	@$(MAKE) test-python-validators
 	@$(MAKE) site-check
 
@@ -190,6 +192,21 @@ site-serve:
 	else \
 		echo "zola not found; skipping serve. Install Zola to use this target."; \
 		echo "See https://www.getzola.org/documentation/getting-started/installation/"; \
+	fi
+
+coverage:
+	@echo "Running coverage report..."
+	@if command -v cargo-tarpaulin >/dev/null 2>&1; then \
+		cargo tarpaulin --workspace --out Html --out Stdout; \
+	elif command -v cargo-llvm-cov >/dev/null 2>&1; then \
+		cargo llvm-cov --workspace --html; \
+	else \
+		echo "cargo-tarpaulin not found. Install it to run coverage locally:"; \
+		echo "  cargo install --locked cargo-tarpaulin"; \
+		echo "Or use cargo-llvm-cov:"; \
+		echo "  cargo install --locked cargo-llvm-cov"; \
+		echo "  cargo llvm-cov --workspace --html"; \
+		exit 1; \
 	fi
 
 domainless-tier1-fast:

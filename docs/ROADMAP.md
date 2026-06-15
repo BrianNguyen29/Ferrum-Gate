@@ -12,6 +12,7 @@ Current direction and near-term priorities for FerrumGate.
 | SQLite performance | Write queue + PRAGMA tuning validated; operator tuning guide available | Stable |
 | PostgreSQL support | Runtime and CI live tests passing; HA topology remains operator-owned | Beta |
 | MCP integration | stdio tools validated; HTTP/SSE deferred | Experimental |
+| AWS S3 adapter | Groundwork: validation, planning, metadata, ADR; live network deferred | Experimental |
 | Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
 | Multi-tenancy | Not on current roadmap | Not implemented |
 | Compliance certification | Out of scope for open-source project | Not implemented |
@@ -48,7 +49,7 @@ Skeleton or partial implementation; not ready for production use:
 
 These are planned future directions. They are **not** implemented and have no committed timeline.
 
-- **AWS S3 adapter** — Bounded file/object operations with rollback contracts.
+- **S3 adapter live network slice** — Wire AWS SDK or MinIO client to `ferrum-adapter-s3` execute/rollback/compensate.
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access.
 - **Quickstart split** — Separate "5-minute cheat sheet" (copy-paste commands) from "10-minute walkthrough" (full lifecycle explanation).

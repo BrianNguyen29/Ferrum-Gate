@@ -165,6 +165,61 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 
 ---
 
+## s3 — S3 adapter
+
+### Supported operations
+
+| Operation | Prepare | Execute | Verify | Rollback |
+|-----------|---------|---------|--------|----------|
+| S3PutObject | Validate bucket/key, capture `before_version_id` | Put object (network deferred) | S3VersionIdMatches | Delete new version to restore previous |
+| S3DeleteObject | Validate bucket/key, capture `before_version_id` | Delete object (network deferred) | S3ObjectExists (absent) | Delete delete marker to restore object |
+| S3GetObject | Validate bucket/key | Get object (network deferred) | S3ObjectExists | N/A (read-only) |
+| S3CopyObject | Validate bucket/key, capture `before_version_id` | Copy object (network deferred) | S3VersionIdMatches (dest) | Delete destination new version |
+
+### Example: S3PutObject with rollback
+
+```json
+{
+  "action": "s3.S3PutObject",
+  "target": {
+    "kind": "S3Object",
+    "bucket": "my-allowed-bucket",
+    "key": "config/app.yaml",
+    "version_id": "abc123"
+  },
+  "parameters": {
+    "content": "key: value\n"
+  }
+}
+```
+
+The adapter captures `before_version_id` at prepare. After execute, the new `after_version_id` is captured. If rollback is triggered, the adapter deletes the `after_version_id` to restore the previous version.
+
+### Rollback behavior
+
+- **PutObject**: Deletes the new version ID to restore the previous version.
+- **DeleteObject**: Deletes the delete marker to restore the object.
+- **CopyObject**: Deletes the destination object's new version.
+- **GetObject**: No-op (read-only).
+
+### Limitations
+
+- This slice is **groundwork**: validation, planning, and metadata are fully implemented. Live S3 network execution requires a future slice.
+- Single-bucket allowlist only; no bucket creation/IAM/ACL admin.
+- Max object size is enforced at the adapter boundary, not by S3 itself.
+- Multipart upload, lifecycle, presigned URLs, replication, and batch deletion are out of scope.
+
+### Risk class mapping
+
+| Operation | Default class |
+|-----------|---------------|
+| S3PutObject | R2 |
+| S3DeleteObject | R2 |
+| S3GetObject | R0 |
+| S3CopyObject | R2 |
+
+---
+
 ## sqlite — SQLite adapter
 
 ### Supported operations
@@ -256,6 +311,7 @@ If verification fails, the adapter resets hard to the captured HEAD. This fails 
 | http | Limited (replay only for POST/PUT/PATCH) | No | Target API must support replay |
 | sqlite | Yes (transaction rollback) | Yes | None |
 | maildraft | Yes (delete/restore/recreate) | Yes | None |
+| s3 | Groundwork only (versioning logic designed; network deferred) | No | S3-compatible endpoint with versioning enabled |
 
 ### When rollback fails
 

@@ -16,6 +16,15 @@ Thank you for your interest in contributing to FerrumGate. This project welcomes
 - Preserve intent / capability / provenance / rollback invariants.
 - Match existing code style; run `cargo fmt --all` before submitting.
 
+## Local Coverage
+
+Generate a test coverage report locally with `make coverage`. This requires `cargo-tarpaulin` or `cargo-llvm-cov` to be installed:
+
+```bash
+cargo install --locked cargo-tarpaulin
+make coverage
+```
+
 ## Commit Style
 
 Use conventional commits where possible:
@@ -42,9 +51,12 @@ Use conventional commits where possible:
 
 Open a GitHub issue for bugs, feature requests, or documentation gaps. For security vulnerabilities, see [`SECURITY.md`](./SECURITY.md) and use private disclosure.
 
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+
 ## Expected Behavior
 
-This project does not currently include a separate Code of Conduct file. Contributors are expected to:
 - Be respectful and constructive in all interactions.
 - Accept feedback gracefully and give it thoughtfully.
 - Focus changes on the stated scope; avoid unrelated refactoring.

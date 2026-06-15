@@ -102,6 +102,35 @@ pub struct ApprovalBinding {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Request to mint a new capability lease.
+///
+/// # Examples
+///
+/// ```
+/// use ferrum_proto::{CapabilityMintRequest, ToolBinding, TaintBudget, JsonMap};
+///
+/// let request = CapabilityMintRequest {
+///     intent_id: ferrum_proto::IntentId::new(),
+///     proposal_id: ferrum_proto::ProposalId::new(),
+///     tool_binding: ToolBinding {
+///         server_name: "test".into(),
+///         tool_name: "test-tool".into(),
+///         tool_version: None,
+///     },
+///     resource_bindings: vec![],
+///     argument_constraints: vec![],
+///     taint_budget: TaintBudget {
+///         max_taint_score: 0,
+///         allow_external_tool_output: false,
+///         allow_external_metadata: false,
+///         allow_untrusted_text: false,
+///     },
+///     approval_binding: None,
+///     requested_ttl_secs: 60,
+///     metadata: JsonMap::new(),
+/// };
+/// assert_eq!(request.requested_ttl_secs, 60);
+/// ```
 pub struct CapabilityMintRequest {
     pub intent_id: crate::IntentId,
     pub proposal_id: ProposalId,

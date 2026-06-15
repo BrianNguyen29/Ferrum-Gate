@@ -62,6 +62,11 @@ pub enum ActionType {
     EmailSend,
     MailDraft,
     McpToolMutation,
+    /// AWS S3 object operations; adapter groundwork in PR4.
+    S3PutObject,
+    S3DeleteObject,
+    S3GetObject,
+    S3CopyObject,
     Unknown,
 }
 
@@ -91,6 +96,11 @@ pub enum RollbackTarget {
         draft_id: Option<String>,
         recipients: Vec<String>,
     },
+    S3Object {
+        bucket: String,
+        key: String,
+        version_id: Option<String>,
+    },
     Generic {
         namespace: String,
         identifier: String,
@@ -112,6 +122,10 @@ pub enum CheckType {
     HttpStatusExpected,
     EmailDraftExists,
     JsonPredicate,
+    /// S3 object existence check for prepare/verify phases.
+    S3ObjectExists,
+    /// S3 version-id check for rollback/verify phases.
+    S3VersionIdMatches,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

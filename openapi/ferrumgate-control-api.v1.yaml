@@ -1975,6 +1975,10 @@ components:
             - EmailSend
             - MailDraft
             - McpToolMutation
+            - S3PutObject
+            - S3DeleteObject
+            - S3GetObject
+            - S3CopyObject
             - Unknown
         rollback_class:
           type: string

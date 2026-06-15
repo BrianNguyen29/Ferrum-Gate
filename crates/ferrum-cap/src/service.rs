@@ -9,6 +9,15 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Error)]
+/// Errors that can occur during capability operations.
+///
+/// # Examples
+///
+/// ```
+/// use ferrum_cap::CapabilityError;
+/// assert_eq!(CapabilityError::NotFound.to_string(), "capability not found");
+/// assert_eq!(CapabilityError::Expired.to_string(), "capability expired");
+/// ```
 pub enum CapabilityError {
     #[error("capability not found")]
     NotFound,
@@ -38,6 +47,40 @@ pub trait CapabilityService: Send + Sync {
 }
 
 #[derive(Default)]
+/// In-memory implementation of [`CapabilityService`] for testing and local development.
+///
+/// # Examples
+///
+/// ```
+/// use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
+/// use ferrum_proto::{CapabilityMintRequest, ToolBinding, TaintBudget, JsonMap};
+///
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let service = InMemoryCapabilityService::default();
+/// let request = CapabilityMintRequest {
+///     intent_id: ferrum_proto::IntentId::new(),
+///     proposal_id: ferrum_proto::ProposalId::new(),
+///     tool_binding: ToolBinding {
+///         server_name: "test".into(),
+///         tool_name: "test-tool".into(),
+///         tool_version: None,
+///     },
+///     resource_bindings: vec![],
+///     argument_constraints: vec![],
+///     taint_budget: TaintBudget {
+///         max_taint_score: 0,
+///         allow_external_tool_output: false,
+///         allow_external_metadata: false,
+///         allow_untrusted_text: false,
+///     },
+///     approval_binding: None,
+///     requested_ttl_secs: 60,
+///     metadata: JsonMap::new(),
+/// };
+/// let response = service.mint(request).await.unwrap();
+/// assert!(!response.lease.capability_id.to_string().is_empty());
+/// # })
+/// ```
 pub struct InMemoryCapabilityService {
     inner: Arc<RwLock<HashMap<CapabilityId, CapabilityLease>>>,
 }
