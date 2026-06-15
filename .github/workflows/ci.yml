@@ -142,28 +142,28 @@ jobs:
 
   s3-live-tests:
     runs-on: ubuntu-latest
-    services:
-      minio:
-        image: minio/minio:RELEASE.2025-01-20T14-49-16Z
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-        options: >-
-          server /data
-          --console-address ":9001"
     steps:
       - uses: actions/checkout@v4
+      - name: Start MinIO
+        run: |
+          docker run -d --name ferrum-minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:RELEASE.2025-01-20T14-49-16Z \
+            server /data --console-address ":9001"
       - name: Wait for MinIO
         run: |
           for i in $(seq 1 30); do
             if curl -sSf http://localhost:9000/minio/health/live >/dev/null 2>&1; then
               echo "[OK] MinIO is ready"
-              break
+              exit 0
             fi
             sleep 1
           done
+          echo "[ERROR] MinIO did not become healthy within 30s" >&2
+          docker logs ferrum-minio
+          exit 1
       - name: Check AWS CLI version
         run: aws --version
       - name: Create versioned bucket
@@ -181,3 +181,6 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p ferrum-adapter-s3 --test minio_integration -- --ignored --nocapture
+      - name: Cleanup MinIO
+        if: always()
+        run: docker rm -f ferrum-minio || true
