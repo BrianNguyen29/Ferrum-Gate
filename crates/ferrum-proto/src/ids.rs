@@ -1,3 +1,18 @@
+//! Strongly-typed UUID wrappers for domain identifiers.
+//!
+//! # Examples
+//!
+//! ```
+//! use ferrum_proto::{IntentId, CapabilityId, ProposalId};
+//!
+//! let intent = IntentId::new();
+//! let cap = CapabilityId::new();
+//! let proposal = ProposalId::new();
+//! assert!(!intent.to_string().is_empty());
+//! assert!(!cap.to_string().is_empty());
+//! assert!(!proposal.to_string().is_empty());
+//! ```
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;

@@ -383,6 +383,8 @@ pub struct ServerConfig {
     pub git_repo_roots: Vec<PathBuf>,
     /// Parent roots under which SQLite database files may be mutated.
     pub sqlite_db_roots: Vec<PathBuf>,
+    /// S3 adapter configuration. When present, enables the S3 adapter.
+    pub s3_config: Option<ferrum_adapter_s3::S3Config>,
     /// OIDC configuration. Required when `auth_mode` is `Oidc`.
     pub oidc_config: Option<OidcConfig>,
     /// Clock skew tolerance for Agent auth timestamps in seconds.
@@ -413,6 +415,7 @@ impl Default for ServerConfig {
             fs_workdir: None,
             git_repo_roots: Vec::new(),
             sqlite_db_roots: Vec::new(),
+            s3_config: None,
             oidc_config: None,
             agent_clock_skew_secs: 30,
         }

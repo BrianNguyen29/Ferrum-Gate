@@ -16,6 +16,7 @@ members = [
   "crates/ferrum-adapter-sqlite",
   "crates/ferrum-adapter-http",
   "crates/ferrum-adapter-maildraft",
+  "crates/ferrum-adapter-s3",
   "crates/ferrum-testkit",
   "crates/ferrum-integration-tests",
   "crates/ferrum-sync",
@@ -72,3 +73,6 @@ blake3 = "1.5"
 jsonwebtoken = "9"
 rand = "0.8"
 regex = "1"
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a", "http-1x"] }
+aws-credential-types = "1"

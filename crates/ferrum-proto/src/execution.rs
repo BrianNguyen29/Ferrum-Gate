@@ -56,6 +56,19 @@ impl ActionBinding {
     /// Parses the compatibility metadata representation used by existing
     /// `ActionProposal` clients:
     /// `metadata.action_type` + `metadata.adapter_key`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ferrum_proto::{ActionBinding, JsonMap};
+    ///
+    /// let metadata: JsonMap = serde_json::from_value(serde_json::json!({
+    ///     "action_type": "FileWrite",
+    ///     "adapter_key": "fs"
+    /// })).unwrap();
+    /// let binding = ActionBinding::from_metadata(&metadata).unwrap().unwrap();
+    /// assert_eq!(binding.adapter_key, "fs");
+    /// ```
     pub fn from_metadata(metadata: &JsonMap) -> Result<Option<Self>, String> {
         let Some(action_type_value) = metadata.get("action_type") else {
             return Ok(None);
@@ -94,6 +107,31 @@ impl ActionProposal {
     /// expected_effect, estimated_risk, requested_rollback_class.
     ///
     /// Fields excluded: step_index, taint_inputs, metadata, created_at.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ferrum_proto::{ActionProposal, RiskTier, RollbackClass, ProposalId, JsonMap};
+    /// use chrono::Utc;
+    ///
+    /// let proposal = ActionProposal {
+    ///     proposal_id: ProposalId::new(),
+    ///     intent_id: ferrum_proto::IntentId::new(),
+    ///     step_index: 1,
+    ///     title: "Test".into(),
+    ///     tool_name: "fs.read".into(),
+    ///     server_name: "fs".into(),
+    ///     raw_arguments: serde_json::json!({"path": "/tmp"}),
+    ///     expected_effect: "read".into(),
+    ///     estimated_risk: RiskTier::Low,
+    ///     requested_rollback_class: RollbackClass::R0NativeReversible,
+    ///     taint_inputs: vec![],
+    ///     metadata: JsonMap::new(),
+    ///     created_at: Utc::now(),
+    /// };
+    /// let digest = proposal.canonical_action_digest();
+    /// assert_eq!(digest.len(), 64);
+    /// ```
     pub fn canonical_action_digest(&self) -> String {
         let mut digest_input = serde_json::Map::new();
 

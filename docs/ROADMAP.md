@@ -12,6 +12,7 @@ Current direction and near-term priorities for FerrumGate.
 | SQLite performance | Write queue + PRAGMA tuning validated; operator tuning guide available | Stable |
 | PostgreSQL support | Runtime and CI live tests passing; HA topology remains operator-owned | Beta |
 | MCP integration | stdio tools validated; HTTP/SSE deferred | Experimental |
+| AWS S3 adapter | Live execution (put/delete/get/copy) with versioning-based rollback; MinIO-gated integration tests; gateway/MCP wired | Implemented (experimental) |
 | Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
 | Multi-tenancy | Not on current roadmap | Not implemented |
 | Compliance certification | Out of scope for open-source project | Not implemented |
@@ -43,6 +44,24 @@ Functional but may require operator tuning or have known caveats:
 Skeleton or partial implementation; not ready for production use:
 
 - **MCP Streamable HTTP / SSE transport and resumability.**
+
+## Next (future priorities, not implemented)
+
+These are planned future directions. They are **not** implemented and have no committed timeline.
+
+- **S3 adapter live network slice** — Wire AWS SDK or MinIO client to `ferrum-adapter-s3` execute/rollback/compensate.
+- **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
+- **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access.
+- **Quickstart split** — Separate "5-minute cheat sheet" (copy-paste commands) from "10-minute walkthrough" (full lifecycle explanation).
+
+## Later (future priorities, not implemented)
+
+These require broader design decisions or additional evidence before they can be committed.
+
+- **WORM export** — Write-once-read-many sink integration for stronger tamper resistance. Depends on external anchoring design.
+- **GCS / Azure Blob adapters** — Object-store adapters. Require rollback/ compensation contracts and local validation.
+- **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.
+- **Production MCP HTTP/SSE** — After target-host smoke, load, and reconnect evidence exists.
 
 ## Not implemented / out of scope
 

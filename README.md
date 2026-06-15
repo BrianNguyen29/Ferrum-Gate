@@ -6,7 +6,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust)](https://www.rust-lang.org/)
 
-[Tiếng Việt](./README.vi.md) · [Docs](./docs/README.md) · [Quickstart](./docs/guides/quickstart.md) · [Operator Guide](./docs/guides/operator.md) · [Security Model](./docs/guides/security-model.md)
+ [Tiếng Việt](./README.vi.md) · [Docs](./docs/README.md) · [Quickstart](./docs/guides/quickstart.md) · [Cheat Sheet](./docs/guides/cheatsheet.md) · [Operator Guide](./docs/guides/operator.md) · [Security Model](./docs/guides/security-model.md)
 
 <p align="center">
   <img src="./assets/banner.svg" alt="FerrumGate — Scoped. Auditable. Reversible. Governance gateway for AI agents." width="100%">
@@ -76,6 +76,7 @@ Entrypoints and tooling:
 
 - `ferrumd` — gateway daemon
 - `ferrumctl` — CLI for health, readiness, audit, policy, approvals, lifecycle outbox, backup/restore
+- `ferrum-mcp-server` — MCP stdio server (exposes gateway tools to MCP clients)
 - `ferrum-migrate` — SQLite-to-PostgreSQL migration
 - `ferrum-stress` — machine-readable stress/smoke scenarios
 - `ferrum-tui` — terminal operator dashboard

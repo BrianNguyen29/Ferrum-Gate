@@ -111,6 +111,11 @@ pub enum ResourceSelector {
         tool_name: String,
         mode: ResourceMode,
     },
+    S3Bucket {
+        bucket: String,
+        key_prefix_allowlist: Vec<String>,
+        mode: ResourceMode,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -161,6 +166,59 @@ impl IntentEnvelope {
     /// - `expires_at > created_at` (I1: expiry must be in the future relative to creation)
     ///
     /// Returns `Err(String)` describing the first validation failure encountered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ferrum_proto::{
+    ///     IntentEnvelope, IntentStatus, OutcomeClause, EffectType,
+    ///     RiskTier, RollbackClass, TimeBudget, TrustContextSummary,
+    ///     ApprovalMode, JsonMap,
+    /// };
+    /// use chrono::Utc;
+    ///
+    /// let now = Utc::now();
+    /// let intent = IntentEnvelope {
+    ///     intent_id: ferrum_proto::IntentId::new(),
+    ///     principal_id: ferrum_proto::PrincipalId::new(),
+    ///     session_id: None,
+    ///     channel_id: None,
+    ///     title: "test".into(),
+    ///     goal: "test goal".into(),
+    ///     normalized_goal: "test goal".into(),
+    ///     allowed_outcomes: vec![OutcomeClause {
+    ///         id: "read".into(),
+    ///         description: "read only".into(),
+    ///         effect_type: EffectType::ReadOnlyAnalysis,
+    ///         required: true,
+    ///     }],
+    ///     forbidden_outcomes: vec![],
+    ///     resource_scope: vec![],
+    ///     risk_tier: RiskTier::Low,
+    ///     approval_mode: ApprovalMode::None,
+    ///     default_rollback_class: RollbackClass::R0NativeReversible,
+    ///     time_budget: TimeBudget {
+    ///         max_duration_ms: 1000,
+    ///         max_steps: 1,
+    ///         max_retries_per_step: 0,
+    ///     },
+    ///     trust_context: TrustContextSummary {
+    ///         input_labels: vec![],
+    ///         sensitivity_labels: vec![],
+    ///         taint_score: 0,
+    ///         contains_external_metadata: false,
+    ///         contains_tool_output: false,
+    ///         contains_untrusted_text: false,
+    ///     },
+    ///     derived_from_event_ids: vec![],
+    ///     tags: vec![],
+    ///     metadata: JsonMap::new(),
+    ///     status: IntentStatus::Active,
+    ///     created_at: now,
+    ///     expires_at: now + chrono::Duration::minutes(5),
+    /// };
+    /// assert!(intent.validate().is_ok());
+    /// ```
     pub fn validate(&self) -> Result<(), String> {
         if self.allowed_outcomes.is_empty() {
             return Err("intent envelope validation failed: allowed_outcomes is empty (at least one outcome is required)".to_string());

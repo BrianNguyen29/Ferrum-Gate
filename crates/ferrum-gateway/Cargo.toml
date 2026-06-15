@@ -43,4 +43,5 @@ ferrum-store = { path = "../ferrum-store" }
 ferrum-graph = { path = "../ferrum-graph" }
 ferrum-sync = { path = "../ferrum-sync" }
 ferrum-firewall = { path = "../ferrum-firewall" }
+ferrum-adapter-s3 = { path = "../ferrum-adapter-s3" }
 uuid.workspace = true

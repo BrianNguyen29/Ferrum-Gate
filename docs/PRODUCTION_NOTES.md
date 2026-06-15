@@ -218,6 +218,25 @@ enabling autoscaling or multiple replicas.
 - Max-valid `1000/10000`: passes validation workload with 0% 429
 - Operator must tune based on real traffic and IP distribution. See `docs/operations/rate-limit-tuning-guide.md`.
 
+## PostgreSQL feature propagation
+
+PostgreSQL support is feature-gated with `--features postgres`. The flag must be propagated to the binary and crate packages that depend on PostgreSQL storage:
+
+```bash
+# Check all postgres-dependent packages
+cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
+```
+
+**Why multiple packages?**
+- `ferrum-store` — PostgreSQL driver and connection pool.
+- `ferrum-gateway` — Gateway store integration and migration wiring.
+- `ferrumd` — Binary entrypoint that compiles the gateway and store.
+- `ferrum-migrate` — SQLite-to-PostgreSQL migration tool.
+
+**CI verifies:** `cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres` (see `.github/workflows/ci.yml`).
+
+**Note:** `ferrum-stress`, `ferrumctl`, and `ferrum-tui` do not depend on the postgres feature and do not need the flag.
+
 ## HA Configuration
 
 - **Single-node PostgreSQL**: Default. SQLite also supported.
