@@ -238,6 +238,49 @@ FerrumGate does not run a backup scheduler itself. Use the host scheduler (syste
 
 > **Operator-owned**: These examples are templates. Do not install them without reviewing credentials, paths, and retention. No scheduler is active by default.
 
+## HA reference topology
+
+FerrumGate does **not** bundle a turnkey HA product. The following is a **reference-only** topology for operator-owned deployments. Operators must design, validate, and maintain their own clustering, load balancing, and failover.
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│   Load Balancer │────→│   Load Balancer │
+│   (TLS terminate)│     │   (TLS terminate)│
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         └──────────┬────────────┘
+                    │
+         ┌──────────┴──────────┐
+         │   FerrumGate nodes   │
+         │   (stateless, n≥2)   │
+         └──────────┬──────────┘
+                    │
+         ┌──────────┴──────────┐
+         │   PostgreSQL primary │
+         │   + streaming standby│
+         │   (operator-managed)  │
+         └──────────────────────┘
+```
+
+**Operator responsibilities:**
+- PostgreSQL primary/standby replication, failover, and failback.
+- Load balancer health checks using `/v1/readyz/deep` (not `/v1/healthz` or `/v1/readyz`).
+- TLS termination, certificate rotation, and network policy.
+- Backup/restore scheduling and retention.
+- Fencing scripts and WAL setting parity during failback.
+
+**What the repo provides:**
+- Same-VM primary/standby streaming replication scripts (local validation only).
+- `ferrumctl` readiness probes and `ferrum-stress` smoke tests.
+- Helm chart with persistent volume and ServiceMonitor (local-safe scaffold).
+
+**What the repo does NOT provide:**
+- Multi-host clustering or automated failover.
+- Managed load balancer or ingress controller.
+- PostgreSQL operator or cloud-native HA tooling.
+
+See [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) for runtime configuration and [`docs/guides/operator.md`](./operator.md) for backup/restore procedures.
+
 ## HA operational notes
 
 | Item | Support |

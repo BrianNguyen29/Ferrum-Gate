@@ -46,6 +46,15 @@ For Claude Desktop (`claude_desktop_config.json`):
 
 The server uses **line-delimited JSON** over stdio. Each line is a single JSON-RPC request or response. Ensure your MCP client config uses stdio transport.
 
+### MCP transport maturity
+
+| Transport | Status | Validation | Production-ready |
+|-----------|--------|------------|------------------|
+| **stdio** | Implemented | Local lifecycle and query_lineage validated | ✅ Yes (for local/self-hosted deployments) |
+| **Streamable HTTP** | Skeleton | Not tested | ❌ No — experimental |
+| **SSE** | Skeleton | Not tested | ❌ No — experimental |
+| **Resumability** | Not implemented | — | ❌ No — planned |
+
 > **MCP transport maturity**: stdio transport is implemented and locally validated. Streamable HTTP / SSE transport and resumability are experimental and not yet production-ready.
 
 ## Tools list

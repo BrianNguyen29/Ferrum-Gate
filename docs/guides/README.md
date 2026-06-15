@@ -13,6 +13,7 @@ For product-level positioning and onboarding, start with the root README:
 
 | Guide | Description |
 |-------|-------------|
+| [Cheat Sheet](cheatsheet.md) | FerrumGate in 5 minutes — copy-paste commands for local evaluation only |
 | [Quickstart](quickstart.md) | FerrumGate in 10 minutes — local demo only; API/curl, ferrumctl, and MCP paths confirmed |
 | [Concepts](concepts.md) | Core concepts: intent, proposal, capability, provenance, lineage, adapters, R0–R3, architecture overview |
 | [API](api.md) | Endpoint inventory, auth, errors, execution lifecycle example, rate limiting |

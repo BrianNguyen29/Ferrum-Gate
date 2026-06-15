@@ -146,9 +146,27 @@ Adapters are responsible for prepare, execute, verify, and compensate steps with
 
 Risk level and rollback class are related but distinct: rollback class is an operational classification, while risk level is the policy-facing label that triggers approval gates.
 
----
+### Provenance vs Audit Log
 
-## Architecture at a glance
+FerrumGate records two related but distinct audit surfaces:
+
+| Surface | What it records | Query path | Trust boundary |
+|--------|----------------|------------|---------------|
+| **Provenance** | Intent-to-execution lifecycle events (PolicyEvaluated, CapabilityMinted, ActionProposalSubmitted, SideEffectPrepared, ToolCallPrepared, ToolCallExecuted, SideEffectVerified, Terminal states) | `POST /v1/provenance/query`, `GET /v1/provenance/lineage/{execution_id}` | Gateway-issued; chain enforced by store-backed transitions |
+| **Audit log** | Administrative mutations (token creation, policy activation, approval resolution) + their SHA-256 hash chain and Merkle roots | `GET /v1/admin/audit/verify`, `ferrumctl admin audit verify` | Append-only by design; tamper-evident via `previous_hash` linkage and recomputation checks |
+
+**Key distinction:**
+- **Provenance** answers *"What happened for this specific execution?"* — scoped to one intent's lifecycle.
+- **Audit log** answers *"What administrative changes were made to the system?"* — scoped to operator-level mutations.
+
+**What is NOT claimed:**
+- This is **not** a WORM (Write Once Read Many) storage system.
+- This is **not** a compliance-certified audit trail (SOC 2, ISO 27001, etc.).
+- A privileged attacker with full database access can still rewrite history if they recompute the entire chain. External anchoring or WORM sinks would be required for stronger guarantees; these are not yet implemented.
+
+See [`docs/architecture/tamper-evident-audit-design.md`](../architecture/tamper-evident-audit-design.md) for the SHA-256/Merkle/Ed25519 design.
+
+---
 
 ```
 ┌─────────┐     ┌──────────┐     ┌─────────┐     ┌──────────┐

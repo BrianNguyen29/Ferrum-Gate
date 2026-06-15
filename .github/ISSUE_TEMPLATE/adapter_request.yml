@@ -1,0 +1,34 @@
+name: Adapter Request
+description: Request a new adapter or bounded side-effect domain
+title: "[adapter] "
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What side-effect domain do you want to govern? Why?
+    validations:
+      required: true
+  - type: textarea
+    id: risk-class
+    attributes:
+      label: Proposed risk/rollback class
+      description: Is the action reversible (R1), recoverable (R2), or destructive (R3)? What would rollback or compensation look like?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: What should the adapter NOT do? What boundaries should it enforce?
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have reviewed the existing adapter reference and this is not already covered.
+          required: true
+        - label: I understand that new adapters require rollback contracts and provenance integration.
+          required: true

@@ -1,0 +1,38 @@
+name: Security Concern
+description: Report a security concern or vulnerability
+title: "[security] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For sensitive issues, please open a [private GitHub Security Advisory](https://github.com/BrianNguyen29/Ferrum-Gate/security/advisories) instead of a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Concise description of the concern or vulnerability.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What could an attacker do? What is the worst-case scenario?
+    validations:
+      required: true
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Suggested mitigation (if any)
+      description: Optional ideas for fixing or hardening.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: This is not a duplicate of an existing security issue.
+          required: true
+        - label: If this is a vulnerability, I will open a private advisory instead.
+          required: true

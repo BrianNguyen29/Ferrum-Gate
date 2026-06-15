@@ -1,0 +1,34 @@
+name: Bug Report
+description: Report a bug in FerrumGate
+title: "[bug] "
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide commands, config snippets, or a script that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust version, OS, store type (SQLite/PostgreSQL), and relevant env vars.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked the FAQ and existing issues before opening this report.
+          required: true
+        - label: I can reproduce this on the latest commit on main.
+          required: false
