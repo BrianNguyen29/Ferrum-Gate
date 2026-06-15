@@ -49,7 +49,6 @@ Skeleton or partial implementation; not ready for production use:
 
 These are planned future directions. They are **not** implemented and have no committed timeline.
 
-- **S3 adapter live network slice** — Wire AWS SDK or MinIO client to `ferrum-adapter-s3` execute/rollback/compensate.
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access.
 - **Quickstart split** — Separate "5-minute cheat sheet" (copy-paste commands) from "10-minute walkthrough" (full lifecycle explanation).

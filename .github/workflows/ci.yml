@@ -139,3 +139,45 @@ jobs:
             echo "PostgreSQL live tests did not report a non-empty, fully executed suite." >&2
             exit 1
           fi
+
+  s3-live-tests:
+    runs-on: ubuntu-latest
+    services:
+      minio:
+        image: minio/minio:RELEASE.2025-01-20T14-49-16Z
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          server /data
+          --console-address ":9001"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sSf http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              echo "[OK] MinIO is ready"
+              break
+            fi
+            sleep 1
+          done
+      - name: Check AWS CLI version
+        run: aws --version
+      - name: Create versioned bucket
+        run: |
+          aws configure set aws_access_key_id minioadmin
+          aws configure set aws_secret_access_key minioadmin
+          aws --endpoint-url http://localhost:9000 --region us-east-1 s3 mb s3://ferrum-test-bucket
+          aws --endpoint-url http://localhost:9000 --region us-east-1 s3api put-bucket-versioning \
+            --bucket ferrum-test-bucket \
+            --versioning-configuration Status=Enabled
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo test (S3 MinIO live, ignored tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p ferrum-adapter-s3 --test minio_integration -- --ignored --nocapture

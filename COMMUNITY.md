@@ -12,7 +12,7 @@ Ways to participate in FerrumGate without writing core Rust code.
 ## Discussion venues
 
 - GitHub Issues — for concrete, actionable items with templates above.
-- GitHub Discussions — for general questions, ideas, and non-actionable conversation.
+- GitHub Discussions — for general questions, ideas, and non-actionable conversation. Visit [GitHub Discussions](https://github.com/BrianNguyen29/Ferrum-Gate/discussions).
 
 ## Contribution norms
 

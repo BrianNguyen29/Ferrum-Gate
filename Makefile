@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -29,7 +29,8 @@ help:
 	@echo "make domainless-tier1-fast  - lightweight Tier 1 gate (docs/validate + syntax/dry-run/light checks, no heavy Docker drills)"
 	@echo "make domainless-tier1-gate  - full domainless Tier 1 gate (docs/validate + pg-local-batch + HA setup/failover/reconnect/teardown)"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
-	@echo "make stress         - stress tests against a running service (requires BASE_URL env var)"
+	@echo "make s3-test   - run S3 adapter MinIO integration tests (requires local MinIO at localhost:9000)"
+	@echo "make stress    - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
 	@echo "make site-build - build static site with Zola (optional; requires zola binary)"
 	@echo "make site-serve - serve static site locally with Zola (optional; requires zola binary)"
@@ -149,6 +150,22 @@ restore-drill:
 	@echo "Running local temp SQLite backup/restore drill..."
 	@bash scripts/run_local_restore_drill.sh
 
+s3-test:
+	@echo "Running S3 adapter MinIO integration tests..."
+	@if curl -sSf http://localhost:9000/minio/health/live >/dev/null 2>&1; then \
+		echo "[OK] MinIO detected at localhost:9000"; \
+		cargo test -p ferrum-adapter-s3 --test minio_integration -- --ignored; \
+	else \
+		echo "[SKIP] MinIO not running at localhost:9000."; \
+		echo "To run these tests, start MinIO with:"; \
+		echo "  docker run -d -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data --console-address \":9001\""; \
+		echo "Then create a versioned bucket:"; \
+		echo "  mc alias set local http://localhost:9000 minioadmin minioadmin"; \
+		echo "  mc mb local/ferrum-test-bucket"; \
+		echo "  mc version enable local/ferrum-test-bucket"; \
+		echo "Then re-run: make s3-test"; \
+		exit 1; \
+	fi
 stress:
 	@echo "Running stress tests against $$BASE_URL..."
 	@echo "Requires a running local or target service. Set BASE_URL, TOKEN, DURATION, WORKERS as needed."
