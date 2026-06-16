@@ -1,0 +1,38 @@
+# Global default
+* @BrianNguyen29
+
+# Core crates
+/crates/ferrum-gateway/ @BrianNguyen29
+/crates/ferrum-rollback/ @BrianNguyen29
+/crates/ferrum-store/ @BrianNguyen29
+/crates/ferrum-proto/ @BrianNguyen29
+
+# Adapters
+/crates/ferrum-adapter-fs/ @BrianNguyen29
+/crates/ferrum-adapter-git/ @BrianNguyen29
+/crates/ferrum-adapter-http/ @BrianNguyen29
+/crates/ferrum-adapter-maildraft/ @BrianNguyen29
+/crates/ferrum-adapter-s3/ @BrianNguyen29
+/crates/ferrum-adapter-sqlite/ @BrianNguyen29
+
+# Contracts and schemas
+/contracts/ @BrianNguyen29
+/schemas/ @BrianNguyen29
+/openapi/ @BrianNguyen29
+
+# Documentation
+docs/ @BrianNguyen29
+
+# Security, configuration, and policy
+SECURITY.md @BrianNguyen29
+configs/ @BrianNguyen29
+.github/workflows/ @BrianNguyen29
+
+# Infrastructure
+Makefile @BrianNguyen29
+scripts/ @BrianNguyen29
+Cargo.toml @BrianNguyen29
+Cargo.lock @BrianNguyen29
+
+# Helm chart
+deploy/helm/ @BrianNguyen29
