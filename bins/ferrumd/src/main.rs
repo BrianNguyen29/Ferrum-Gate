@@ -4,6 +4,7 @@ use ferrum_adapter_fs::{FsAdapter, FsBoundsConfig, PlannableFsAdapter};
 use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_http::{PlannableHttpAdapter, register_http_adapter};
 use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_adapter};
+#[cfg(feature = "s3")]
 use ferrum_adapter_s3::{PlannableS3Adapter, S3Adapter, S3Config};
 use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::InMemoryCapabilityService;
@@ -210,10 +211,12 @@ struct ServerSection {
     git_repo_roots: Vec<PathBuf>,
     #[serde(default)]
     sqlite_db_roots: Vec<PathBuf>,
+    #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
 }
 
+#[cfg(feature = "s3")]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct S3ConfigSection {
     allowed_bucket: String,
@@ -231,14 +234,17 @@ struct S3ConfigSection {
     secret_access_key: Option<String>,
 }
 
+#[cfg(feature = "s3")]
 fn default_s3_max_object_size() -> u64 {
     100 * 1024 * 1024
 }
 
+#[cfg(feature = "s3")]
 fn default_s3_require_versioning() -> bool {
     true
 }
 
+#[cfg(feature = "s3")]
 fn default_s3_region() -> String {
     "us-east-1".to_string()
 }
@@ -455,6 +461,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.sqlite_db_roots.clone()))
         .unwrap_or_default();
 
+    #[cfg(feature = "s3")]
     let s3_config = {
         let file_s3 = server.as_ref().and_then(|s| s.s3_config.as_ref());
         let allowed_bucket = get_env::<String>("FERRUMD_S3_ALLOWED_BUCKET")?
@@ -487,6 +494,8 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
             None
         }
     };
+    #[cfg(not(feature = "s3"))]
+    let _s3_config: Option<ferrum_adapter_s3::S3Config> = None;
 
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
@@ -682,6 +691,7 @@ fn resolve_config(args: &Args) -> Result<ServerConfig> {
         fs_workdir,
         git_repo_roots,
         sqlite_db_roots,
+        #[cfg(feature = "s3")]
         s3_config,
         oidc_config,
         agent_clock_skew_secs: 30,
@@ -793,23 +803,29 @@ async fn main() -> Result<()> {
         );
     }
     register_maildraft_adapter(&mut registry);
-    if let Some(ref s3_cfg) = config.s3_config {
-        if let Err(e) = s3_cfg.validate() {
-            tracing::warn!("S3 config invalid; adapter not registered: {}", e);
+    #[cfg(feature = "s3")]
+    {
+        if let Some(ref s3_cfg) = config.s3_config {
+            if let Err(e) = s3_cfg.validate() {
+                tracing::warn!("S3 config invalid; adapter not registered: {}", e);
+            } else {
+                registry.register(Arc::new(S3Adapter::new_with_config("s3", s3_cfg.clone())));
+                tracing::info!(
+                    "S3 adapter registered for bucket '{}'",
+                    s3_cfg.allowed_bucket
+                );
+            }
         } else {
-            registry.register(Arc::new(S3Adapter::new_with_config("s3", s3_cfg.clone())));
-            tracing::info!(
-                "S3 adapter registered for bucket '{}'",
-                s3_cfg.allowed_bucket
+            tracing::warn!(
+                "S3 adapter not registered because s3_config is not configured; \
+                 set FERRUMD_S3_ALLOWED_BUCKET or server.s3_config.allowed_bucket to enable bounded S3 mutations"
             );
         }
-    } else {
-        tracing::warn!(
-            "S3 adapter not registered because s3_config is not configured; \
-             set FERRUMD_S3_ALLOWED_BUCKET or server.s3_config.allowed_bucket to enable bounded S3 mutations"
-        );
     }
-    let s3_enabled = config.s3_config.is_some();
+    #[cfg(not(feature = "s3"))]
+    {
+        tracing::info!("S3 adapter not registered because s3 feature is not enabled");
+    }
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
     if sqlite_adapter_enabled {
@@ -820,7 +836,8 @@ async fn main() -> Result<()> {
         rollback_service.register_planner(Arc::new(PlannableGitAdapter));
     }
     rollback_service.register_planner(Arc::new(PlannableHttpAdapter));
-    if s3_enabled {
+    #[cfg(feature = "s3")]
+    {
         if let Some(ref s3_cfg) = config.s3_config {
             if s3_cfg.validate().is_ok() {
                 rollback_service.register_planner(Arc::new(PlannableS3Adapter));

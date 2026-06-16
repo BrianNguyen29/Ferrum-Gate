@@ -140,6 +140,67 @@ jobs:
             exit 1
           fi
 
+      - name: Boot ferrumd with PostgreSQL and probe health/readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG_FILE="$(mktemp)"
+          trap 'rm -f "$LOG_FILE"; kill "$FERRUMD_PID" 2>/dev/null || true' EXIT
+
+          cargo build --features postgres --package ferrumd
+
+          FERRUMD_BIN="./target/debug/ferrumd"
+          BIND_ADDR="127.0.0.1:8080"
+
+          nohup "$FERRUMD_BIN" \
+            --store-dsn "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test" \
+            --bind-addr "$BIND_ADDR" \
+            --auth-mode disabled \
+            --log-filter warn \
+            >"$LOG_FILE" 2>&1 &
+          FERRUMD_PID=$!
+          echo "[INFO] ferrumd started (PID $FERRUMD_PID) on $BIND_ADDR"
+
+          # Poll /v1/healthz
+          HEALTHY=false
+          for i in {1..30}; do
+            if curl -sf "http://$BIND_ADDR/v1/healthz" >/dev/null 2>&1; then
+              HEALTHY=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$HEALTHY" != "true" ]]; then
+            echo "[ERROR] /v1/healthz did not return 200 within 30s" >&2
+            echo "[INFO] Last 30 lines of ferrumd log:"
+            tail -n 30 "$LOG_FILE" || true
+            exit 1
+          fi
+          echo "[OK] /v1/healthz returned 200"
+
+          # Poll /v1/readyz/deep
+          READY=false
+          for i in {1..30}; do
+            if curl -sf "http://$BIND_ADDR/v1/readyz/deep" >/dev/null 2>&1; then
+              READY=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$READY" != "true" ]]; then
+            echo "[ERROR] /v1/readyz/deep did not return 200 within 30s" >&2
+            echo "[INFO] Last 30 lines of ferrumd log:"
+            tail -n 30 "$LOG_FILE" || true
+            exit 1
+          fi
+          echo "[OK] /v1/readyz/deep returned 200"
+
+          # Graceful shutdown
+          kill "$FERRUMD_PID" || true
+          wait "$FERRUMD_PID" || true
+
   s3-live-tests:
     runs-on: ubuntu-latest
     steps:
@@ -184,3 +245,40 @@ jobs:
       - name: Cleanup MinIO
         if: always()
         run: docker rm -f ferrum-minio || true
+
+  coverage-and-sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx
+      - name: Generate coverage (LCOV)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Generate coverage (text summary)
+        run: cargo llvm-cov --workspace --text --output-path coverage.txt
+      - name: Generate SBOM (CycloneDX JSON)
+        run: cargo cyclonedx --all --output-format json
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            lcov.info
+            coverage.txt
+          retention-days: 30
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: target/cyclonedx/*.json
+          retention-days: 30

@@ -9,6 +9,8 @@ license.workspace = true
 default = []
 # PostgreSQL runtime support — feature-gated and local/bounded, NOT production-ready/HA
 postgres = ["ferrum-store/postgres", "ferrum-gateway/postgres"]
+# S3 adapter support — feature-gated to reduce default dependency footprint
+s3 = ["ferrum-gateway/s3", "ferrum-adapter-s3/s3-client"]
 
 [dependencies]
 anyhow.workspace = true

@@ -27,3 +27,7 @@ ferrum-cap = { path = "../../crates/ferrum-cap" }
 ferrum-rollback = { path = "../../crates/ferrum-rollback" }
 ferrum-proto = { path = "../../crates/ferrum-proto" }
 tempfile.workspace = true
+
+[features]
+default = []
+s3 = ["ferrum-gateway/s3"]

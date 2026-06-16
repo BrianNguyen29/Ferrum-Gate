@@ -6,6 +6,7 @@ S3-compatible object adapter for FerrumGate with versioning-based rollback.
 
 Implemented (experimental). Live S3 execution is supported behind the `live` config flag.
 MinIO integration tests are gated (`#[ignored]`) and require a local Docker container.
+The `s3-live-tests` job in `.github/workflows/ci.yml` also runs these tests automatically in CI.
 
 ## Supported operations
 

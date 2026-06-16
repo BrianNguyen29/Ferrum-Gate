@@ -2,6 +2,7 @@
 
 > **Status**: Manual checklist — no automated CI integration. No real AWS credentials required.
 > **Scope**: Validate existing stdio MCP flow and S3 adapter live execution (gated behind `live: true` config) against a local MinIO instance.
+> **CI note**: The `s3-live-tests` job in `.github/workflows/ci.yml` also runs these MinIO integration tests automatically in CI. This checklist is useful for local manual validation.
 
 ---
 

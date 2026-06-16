@@ -296,6 +296,7 @@ impl StressServer {
                 fs_workdir: None,
                 git_repo_roots: Vec::new(),
                 sqlite_db_roots: Vec::new(),
+                #[cfg(feature = "s3")]
                 s3_config: None,
                 oidc_config: None,
                 agent_clock_skew_secs: 30,
@@ -325,6 +326,7 @@ impl StressServer {
                 fs_workdir: None,
                 git_repo_roots: Vec::new(),
                 sqlite_db_roots: Vec::new(),
+                #[cfg(feature = "s3")]
                 s3_config: None,
                 oidc_config: None,
                 agent_clock_skew_secs: 30,
