@@ -241,7 +241,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p ferrum-adapter-s3 --test minio_integration -- --ignored --nocapture
+          cargo test -p ferrum-adapter-s3 --features s3-client --test minio_integration -- --ignored --nocapture
       - name: Cleanup MinIO
         if: always()
         run: docker rm -f ferrum-minio || true
@@ -264,8 +264,8 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Generate coverage (text summary)
         run: cargo llvm-cov --workspace --text --output-path coverage.txt
-      - name: Generate SBOM (CycloneDX JSON)
-        run: cargo cyclonedx --all --output-format json
+      - name: Generate SBOM (CycloneDX)
+        run: cargo cyclonedx --all
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -280,5 +280,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom
-          path: target/cyclonedx/*.json
+          path: target/cyclonedx/*
           retention-days: 30
