@@ -264,6 +264,15 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Generate coverage (text summary)
         run: cargo llvm-cov --workspace --text --output-path coverage.txt
+      - name: Print coverage summary to log
+        run: cat coverage.txt
+      - name: Write coverage summary to GitHub step summary
+        run: |
+          echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          head -n 50 coverage.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Coverage is evidence-only in this job. No threshold is enforced yet." >> $GITHUB_STEP_SUMMARY
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --all
       - name: Upload coverage artifact

@@ -13,7 +13,7 @@
 - `ferrum-migrate` — SQLite-to-PostgreSQL migration support
 - `ferrum-stress` — machine-readable stress/smoke scenarios
 - `ferrum-tui` — terminal operator dashboard
-- `ferrum-mcp-server` — MCP stdio server (in `crates/ferrum-integrations-mcp/src/bin/ferrum-mcp-server.rs`)
+- `ferrum-mcp-server` — MCP stdio server (default, stable); HTTP transport is experimental and requires `--features http`
 
 ## Daily Commands (see `Makefile` for full list)
 ```
@@ -29,10 +29,11 @@ make pretarget # pre-target gate (config examples, restore drill, evidence skele
 - Check formatting without mutation: `cargo fmt --all -- --check`
 - Feature-gated package check: `cargo check --package ferrum-migrate --features postgres`
 - Layout/contract validation: `bash scripts/validate_repo_layout.sh && python3 scripts/check_contract_consistency.py`
+- Architecture decisions: see `docs/adr/README.md`
 
 ## CI / Local Gates
-- CI (`ci.yml`): `release-governance` (secrets + audit), `validate` (fmt/check/clippy/test + all-features + postgres-feature + promtool + Helm/docs/schema checks + release profile smoke + ferrum-stress smoke), `postgres-live-tests` (PostgreSQL 16 service container; store-level tests + full `ferrumd` boot with Postgres backend and health/readiness probes; **no skips allowed**), `coverage-and-sbom` (workspace coverage via `cargo-llvm-cov` as LCOV/text artifacts + CycloneDX JSON SBOM artifact uploaded; no external secrets, no threshold enforcement)
-- Manual gates (`.github/workflows/manual-gates.yml`): `workflow_dispatch` only — audit, pretarget, wal-drill, pg-batch, ha-drills, mcp-smoke. **Docker required for pg-batch and ha-drills.**
+- CI (`ci.yml`): `release-governance` (secrets + audit), `validate` (fmt/check/clippy/test + all-features + postgres-feature + promtool + Helm/docs/schema checks + release profile smoke + ferrum-stress smoke), `postgres-live-tests` (PostgreSQL 16 service container; store-level tests + full `ferrumd` boot with Postgres backend and health/readiness probes; **no skips allowed**), `coverage-and-sbom` (workspace coverage via `cargo-llvm-cov` as LCOV/text artifacts + CycloneDX JSON SBOM artifact uploaded; no external secrets, **no threshold enforcement yet**), `s3-live-tests` (MinIO container; S3 adapter integration tests with `--features s3-client`)
+- Manual gates (`.github/workflows/manual-gates.yml`): `workflow_dispatch` and **nightly schedule** — audit, pretarget, wal-drill, pg-batch, ha-drills, mcp-smoke. Drills use `continue-on-error: true` initially for visibility without blocking. **Docker required for pg-batch and ha-drills.**
 - Release profile blocks `unsafe-unbounded-adapters`; see `scripts/validate_release_feature_profile.sh`
 - Local profile evidence / manual gates **do not** constitute production-ready signoff (G2/pilot/RC-ready remain operator actions)
 

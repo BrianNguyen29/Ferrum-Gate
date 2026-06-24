@@ -5224,6 +5224,7 @@ mod tests {
 
     /// Start a real gateway server in a background thread with bearer auth enabled.
     /// Returns the socket address and a thread handle.
+    #[cfg(feature = "http")]
     fn start_test_gateway_server() -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
         let (tx, rx) = std::sync::mpsc::channel();
 
@@ -5251,6 +5252,7 @@ mod tests {
         (addr, handle)
     }
 
+    #[cfg(feature = "http")]
     /// Extract the first ToolContent text as parsed JSON.
     fn extract_first_text_json(result: &serde_json::Value) -> serde_json::Value {
         let text = result.get("content").unwrap().as_array().unwrap()[0]
@@ -5265,6 +5267,7 @@ mod tests {
     ///
     /// Steps: compile → evaluate → mint → authorize → prepare → execute → verify.
     /// Uses a real in-process gateway server with bearer auth and in-memory SQLite.
+    #[cfg(feature = "http")]
     #[test]
     fn test_d1_slice6_full_lifecycle_real_gateway_smoke() {
         let (addr, _server_thread) = start_test_gateway_server();
@@ -5490,6 +5493,7 @@ mod tests {
     /// isolation. Uses a relaxed rate limiter (burst 1000, 1000 req/s)
     /// so the test is gated by gateway/SQLite concurrency rather than
     /// the default MCP policy.
+    #[cfg(feature = "http")]
     #[test]
     fn test_d1_10_2_concurrent_lifecycle_load() {
         let (addr, _server_thread) = start_test_gateway_server();
