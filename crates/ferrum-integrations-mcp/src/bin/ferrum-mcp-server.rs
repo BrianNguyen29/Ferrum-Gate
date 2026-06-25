@@ -44,6 +44,8 @@ use axum::{
 };
 use clap::{Parser, ValueEnum};
 #[cfg(feature = "http")]
+use constant_time_eq::constant_time_eq;
+#[cfg(feature = "http")]
 use ferrum_integrations_mcp::tool_registry;
 use ferrum_integrations_mcp::{
     ActorIdentity, ClientConfig, FerrumGatewayClient, JsonRpcResponse, RateLimiter,
@@ -225,6 +227,10 @@ struct AppState {
     client: FerrumGatewayClient,
     actor: ActorIdentity,
     rate_limiter: RateLimiter,
+    /// Bearer token for HTTP POST /mcp auth (experimental).
+    /// When Some, all POST /mcp requests must include a matching
+    /// `Authorization: Bearer <token>` header.
+    auth_token: Option<String>,
 }
 
 #[cfg(feature = "http")]
@@ -251,10 +257,25 @@ async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 
 #[cfg(feature = "http")]
 /// `POST /mcp` — accept a single JSON-RPC message and return synchronous `application/json`.
+/// Requires a valid bearer token when `auth_token` is configured; fails closed otherwise.
 async fn mcp_post_handler(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     body: String,
 ) -> Result<axum::Json<JsonRpcResponse>, StatusCode> {
+    if let Some(expected) = &state.auth_token {
+        let auth = headers.get("Authorization").and_then(|v| v.to_str().ok());
+        match auth {
+            Some(header) if header.starts_with("Bearer ") => {
+                let provided = &header[7..];
+                if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+            }
+            _ => return Err(StatusCode::UNAUTHORIZED),
+        }
+    }
+
     let state = Arc::clone(&state);
     let response = tokio::task::spawn_blocking(move || match parse_request(&body) {
         Ok(request) => dispatch_with_client(
@@ -301,10 +322,17 @@ async fn run_http(bind: &str) -> Result<(), Box<dyn std::error::Error>> {
     let actor = ActorIdentity::resolve(None);
     let rate_limiter = RateLimiter::default_mcp();
 
+    // Experimental HTTP transport: read bearer token from env.
+    // Fails closed if the env var is not set.
+    let auth_token = std::env::var("FERRUM_MCP_HTTP_BEARER_TOKEN")
+        .ok()
+        .or_else(|| std::env::var("FERRUM_GATEWAY_BEARER_TOKEN").ok());
+
     let state = Arc::new(AppState {
         client,
         actor,
         rate_limiter,
+        auth_token,
     });
 
     let app = Router::new()
@@ -507,6 +535,7 @@ mod tests {
             client,
             actor,
             rate_limiter,
+            auth_token: Some("test-mcp-token".to_string()),
         });
         // Leak a clone so the Arc refcount never reaches zero inside async tests,
         // preventing `reqwest::blocking::Client` from being dropped in an async
@@ -585,6 +614,7 @@ mod tests {
                     .method("POST")
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
             )
@@ -614,6 +644,7 @@ mod tests {
                     .method("POST")
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
             )
@@ -643,6 +674,7 @@ mod tests {
                     .method("POST")
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
             )
@@ -700,6 +732,7 @@ mod tests {
                     .method("POST")
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
             )
@@ -729,6 +762,7 @@ mod tests {
                     .method("POST")
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
             )
@@ -767,5 +801,56 @@ mod tests {
                 "Each tool input_schema.type must be 'object'"
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Auth hardening tests (POST /mcp)
+    // -------------------------------------------------------------------------
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_post_unauthenticated_rejected() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_post_wrong_token_rejected() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer wrong-token")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -47,38 +47,46 @@ jobs:
           cache-targets: false
 
       - name: Gate — audit
+        id: gate-audit
         if: ${{ inputs.gate == 'audit' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         run: bash scripts/run_security_audit.sh
 
       - name: Gate — pretarget
+        id: gate-pretarget
         if: ${{ inputs.gate == 'pretarget' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         run: bash scripts/run_pre_target_gate.sh
 
       - name: Gate — secret-scan
+        id: gate-secret-scan
         if: ${{ inputs.gate == 'secret-scan' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         run: bash scripts/run_secret_scan.sh
 
       - name: Gate — wal-drill
+        id: gate-wal-drill
         if: ${{ inputs.gate == 'wal-drill' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: bash scripts/run_wal_crash_recovery_drill.sh
 
       - name: Gate — pg-restart-drill
+        id: gate-pg-restart-drill
         if: ${{ inputs.gate == 'pg-restart-drill' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: bash scripts/run_pg_container_restart_drill.sh --dry-run
 
       - name: Gate — restore-drill
+        id: gate-restore-drill
         if: ${{ inputs.gate == 'restore-drill' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: bash scripts/run_local_restore_drill.sh
 
       - name: Gate — mcp-smoke
+        id: gate-mcp-smoke
         if: ${{ inputs.gate == 'mcp-smoke' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: bash scripts/run_mcp_lifecycle_smoke.sh
 
       - name: Gate — pg-batch (requires Docker)
+        id: gate-pg-batch
         if: ${{ inputs.gate == 'pg-batch' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: |
@@ -86,6 +94,7 @@ jobs:
           make pg-local-batch
 
       - name: Gate — ha-drills (requires Docker)
+        id: gate-ha-drills
         if: ${{ inputs.gate == 'ha-drills' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         continue-on-error: true
         run: |
@@ -105,6 +114,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Write job summary
+        if: always()
         run: |
           echo "## FerrumGate v1 — Manual Gate (${{ inputs.gate || 'scheduled' }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -117,8 +127,66 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Selected gate: **${{ inputs.gate || 'all (scheduled)' }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Gate Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Gate | Outcome |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| audit | ${{ steps.gate-audit.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| pretarget | ${{ steps.gate-pretarget.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| secret-scan | ${{ steps.gate-secret-scan.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| wal-drill | ${{ steps.gate-wal-drill.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| pg-restart-drill | ${{ steps.gate-pg-restart-drill.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| restore-drill | ${{ steps.gate-restore-drill.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| mcp-smoke | ${{ steps.gate-mcp-smoke.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| pg-batch | ${{ steps.gate-pg-batch.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ha-drills | ${{ steps.gate-ha-drills.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "This does NOT constitute:" >> $GITHUB_STEP_SUMMARY
           echo "- G2 evidence (G2.1-G2.8 remain pending operator action)" >> $GITHUB_STEP_SUMMARY
           echo "- Target readiness (no real target values were used)" >> $GITHUB_STEP_SUMMARY
           echo "- Pilot authorization (operator signoff required)" >> $GITHUB_STEP_SUMMARY
           echo "- Production-ready (RC-ready/conditional)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Write nightly summary artifact
+        if: always() && github.event_name == 'schedule'
+        run: |
+          mkdir -p /tmp/manual-gate-summary
+          cat <<EOF > /tmp/manual-gate-summary/nightly-summary.md
+          # FerrumGate Nightly Manual Gates Summary
+
+          **Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          **Run ID:** ${{ github.run_id }}
+          **Repository:** ${{ github.repository }}
+          **Commit:** ${{ github.sha }}
+
+          ## Gate Results
+
+          | Gate | Outcome |
+          |------|---------|
+          | audit | ${{ steps.gate-audit.outcome || 'skipped' }} |
+          | pretarget | ${{ steps.gate-pretarget.outcome || 'skipped' }} |
+          | secret-scan | ${{ steps.gate-secret-scan.outcome || 'skipped' }} |
+          | wal-drill | ${{ steps.gate-wal-drill.outcome || 'skipped' }} |
+          | pg-restart-drill | ${{ steps.gate-pg-restart-drill.outcome || 'skipped' }} |
+          | restore-drill | ${{ steps.gate-restore-drill.outcome || 'skipped' }} |
+          | mcp-smoke | ${{ steps.gate-mcp-smoke.outcome || 'skipped' }} |
+          | pg-batch | ${{ steps.gate-pg-batch.outcome || 'skipped' }} |
+          | ha-drills | ${{ steps.gate-ha-drills.outcome || 'skipped' }} |
+
+          ## Notes
+
+          - Drills marked with ":continue-on-error: true" may report "failure" in the artifact
+            but do NOT fail the overall workflow. This is intentional for nightly visibility.
+          - This summary is **evidence-only** and does not constitute formal compliance or
+            production-ready signoff.
+          - Operator review is required for G2 evidence and pilot readiness.
+          EOF
+
+      - name: Upload nightly summary artifact
+        if: always() && github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-manual-gate-summary
+          path: /tmp/manual-gate-summary/nightly-summary.md
+          retention-days: 7
+          if-no-files-found: ignore

@@ -75,7 +75,20 @@ validate_changelog() {
     return 1
   fi
 
-  log_ok "CHANGELOG.md contains section for $TARGET_VERSION"
+  # Verify the section has some non-trivial content (at least one bullet or paragraph line)
+  local section_content
+  section_content=$(sed -n "/^## v\?$TARGET_VERSION/,/^## /p" "$REPO_ROOT/CHANGELOG.md" | tail -n +2 | head -n -1)
+  if [[ -z "$(echo "$section_content" | grep -vE '^\s*$')" ]]; then
+    log_err "CHANGELOG.md section for $TARGET_VERSION appears empty"
+    return 1
+  fi
+
+  # Warn if no release date is present (expected format: YYYY-MM-DD)
+  if ! echo "$section_content" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+    log_warn "CHANGELOG.md section for $TARGET_VERSION has no release date (YYYY-MM-DD)"
+  fi
+
+  log_ok "CHANGELOG.md contains populated section for $TARGET_VERSION"
 }
 
 # --- version consistency ---
@@ -135,15 +148,21 @@ check_pretarget() {
   make pretarget
 }
 
-# --- SBOM generation (optional) ---
+# --- SBOM generation (mandatory in execute mode) ---
 generate_sbom() {
   if command -v cargo-cyclonedx >/dev/null 2>&1 || cargo install --list | grep -q cargo-cyclonedx; then
     log_info "Generating SBOM with cargo-cyclonedx..."
     cargo cyclonedx --all
     log_ok "SBOM generated in target/cyclonedx/"
   else
-    log_warn "cargo-cyclonedx not found; skipping SBOM generation"
-    log_warn "Install with: cargo install cargo-cyclonedx"
+    if [[ "$DRY_RUN" == false ]]; then
+      log_err "cargo-cyclonedx not found; SBOM is mandatory in --execute mode"
+      log_info "Install with: cargo install cargo-cyclonedx"
+      return 1
+    else
+      log_warn "cargo-cyclonedx not found; skipping SBOM generation (dry-run)"
+      log_warn "Install with: cargo install cargo-cyclonedx"
+    fi
   fi
 }
 
@@ -180,11 +199,10 @@ main() {
   run_check "make pretarget" check_pretarget
   run_check "release profile smoke" check_release_smoke
   run_check "roadmap presence" validate_roadmap
-
   if [[ "$DRY_RUN" == true ]]; then
-    log_info "Dry-run: skipping SBOM generation"
+    run_check "SBOM generation (dry-run)" generate_sbom
   else
-    generate_sbom || log_warn "SBOM generation failed (non-fatal)"
+    run_check "SBOM generation (mandatory)" generate_sbom
   fi
 
   echo ""

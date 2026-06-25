@@ -56,6 +56,8 @@ The server uses **line-delimited JSON** over stdio. Each line is a single JSON-R
 | **Resumability** | Not implemented | — | ❌ No — future / not committed |
 
 > **MCP transport maturity**: stdio is the default and stable transport. Streamable HTTP / SSE transport and resumability are experimental or not yet implemented and are not production-ready.
+>
+> **HTTP auth requirement**: When using the experimental HTTP transport (`--transport http`), `POST /mcp` requires a bearer token configured via the `FERRUM_MCP_HTTP_BEARER_TOKEN` environment variable (or falls back to `FERRUM_GATEWAY_BEARER_TOKEN`). Requests without a valid `Authorization: Bearer <token>` header are rejected with HTTP 401.
 
 ## Tools list
 

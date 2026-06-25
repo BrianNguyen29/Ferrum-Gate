@@ -22,9 +22,10 @@ Before tagging a release, verify:
 - [ ] `make validate` passes (layout, contracts, MCP tools, evidence templates)
 - [ ] `make audit` passes (cargo-deny / cargo-audit)
 - [ ] `make pretarget` passes (config examples, restore drill, evidence skeleton, bearer-auth smoke)
-- [ ] `CHANGELOG.md` is updated with the new version section
+- [ ] `CHANGELOG.md` is updated with the new version section (must include release date and non-trivial content)
 - [ ] Version strings in `Cargo.toml` workspace packages are bumped if needed
 - [ ] `docs/ROADMAP.md` status table is updated if any items changed status
+- [ ] SBOM is generated (`cargo cyclonedx --all`) and attached to the release
 
 ## Release automation (preflight)
 
@@ -49,12 +50,12 @@ The script validates:
 
 ### Manual GitHub workflow
 
-A `workflow_dispatch` workflow is available at `.github/workflows/release.yml` for CI-level preflight. It does **not** create tags, push, or publish crates. Optionally generates and uploads a CycloneDX SBOM artifact.
+A `workflow_dispatch` workflow is available at `.github/workflows/release.yml` for CI-level preflight. It does **not** create tags, push, or publish crates. It **mandatorily** generates and uploads a CycloneDX SBOM artifact.
 
 Steps:
 1. Go to **Actions → release → Run workflow**.
 2. Enter the target version (must match `Cargo.toml` workspace version).
-3. Choose whether to generate the SBOM artifact.
+3. The workflow will run all preflight checks and generate the SBOM artifact.
 4. Download the SBOM artifact after the run completes.
 
 ## Creating a release
@@ -68,10 +69,11 @@ Steps:
    git push origin v0.1.1
    ```
 5. Create a GitHub Release from the tag, copying the relevant `CHANGELOG.md` section into the release notes.
-6. **Attach the SBOM artifact** to the GitHub Release:
+6. **Attach the SBOM artifact** to the GitHub Release (mandatory):
    - If generated via CI, download the artifact from the workflow run and upload it to the release.
    - Or generate locally: `cargo install cargo-cyclonedx && cargo cyclonedx --all`.
    - The SBOM files are located in `target/cyclonedx/`.
+   - Releases without an SBOM artifact are not considered complete.
 
 ## Crate publishing
 
@@ -84,6 +86,12 @@ cargo publish -p ferrum-proto
 ```
 
 > **Note:** Do not publish internal-only crates (`ferrum-testkit`, `ferrum-integration-tests`) to crates.io. They are workspace-internal only.
+
+## Release automation next steps (proposed, not implemented)
+
+- **Automated crate publishing** — A CI job that publishes crates in dependency order after a release tag is pushed. Requires crates.io API token management, dry-run validation, and rollback handling. See `docs/ROADMAP.md` for timeline.
+- **Automated GitHub Release creation** — A workflow that creates the GitHub Release from the tag, copies the `CHANGELOG.md` section, and attaches the SBOM artifact. Currently manual.
+- **Release branch automation** — Automated creation of a release branch, version bump PR, and tag push. Not yet implemented; manual process is documented above.
 
 ## Supported versions
 

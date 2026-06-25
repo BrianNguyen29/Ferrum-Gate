@@ -209,6 +209,7 @@ enabling autoscaling or multiple replicas.
 ## Capability TTL
 - Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)
 - Default TTL: Configured per-request via `requested_ttl_secs`
+- **Contract default**: The agent contract specifies `ttl_default = 15s` as a design expectation; the runtime does not enforce a default and requires `requested_ttl_secs` per request.
 - Expired capabilities return `CapabilityExpired` error
 
 ## Rate-limit configuration

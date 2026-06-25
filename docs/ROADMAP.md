@@ -52,14 +52,18 @@ These are planned future directions. They are **not** implemented and have no co
 
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
 - **MCP resumability** — Session resumability. Not implemented; no committed timeline.
-- **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access.
+- **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access. See ADR 009.
 - **Quickstart split** — Separate "5-minute cheat sheet" (copy-paste commands) from "10-minute walkthrough" (full lifecycle explanation).
+- **Audit fail-closed** — Optional mode where audit-store failure blocks the action. See ADR 007.
+- **R3 approval timeout / second factor** — Auto-deny stale approvals and optional MFA for high-risk actions. See ADR 008.
 
 ## Later (future priorities, not implemented)
 
 These require broader design decisions or additional evidence before they can be committed.
 
-- **WORM export** — Write-once-read-many sink integration and portable `ferrumctl audit export` bundle for stronger tamper resistance. Depends on external anchoring design.
+- **WORM export** — Write-once-read-many sink integration and portable `ferrumctl audit export` bundle for stronger tamper resistance. Depends on external anchoring design. See ADR 009.
+- **Behavioral anomaly detection** — Lightweight statistical profiling of actor behavior to flag unusual agency patterns. See ADR 010.
+- **Performance regression gate** — Automated CI gate that blocks changes regressing established baselines. See ADR 011.
 - **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
 - **GCS / Azure Blob adapters** — Object-store adapters. Require rollback/ compensation contracts and local validation.
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.

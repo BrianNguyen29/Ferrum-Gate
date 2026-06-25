@@ -8,7 +8,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 - **Intent-scoped execution** with policy evaluation, capability minting, rollback prepare/verify/compensate, and provenance chain.
 - **Local pilot and controlled evaluation** with SQLite or PostgreSQL.
 - **MCP stdio server** as the default, stable integration surface.
-- **Bounded adapters** for filesystem, HTTP, Git, SQLite, and mail draft side effects.
+- **Bounded adapters** for filesystem, HTTP, Git, SQLite, mail draft, and S3 (experimental) side effects.
 - **Operator tooling**: `ferrumctl`, `ferrum-tui`, `ferrum-stress`, `ferrum-migrate`.
 
 ## Operator-owned

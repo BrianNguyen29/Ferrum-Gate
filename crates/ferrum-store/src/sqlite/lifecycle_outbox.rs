@@ -1007,7 +1007,7 @@ mod tests {
             execution.execution_id,
             Some(contract.contract_id),
             Some(ferrum_proto::ExecutionState::Authorized),
-            ferrum_proto::ExecutionState::Prepared,
+            ferrum_proto::ExecutionState::Running,
             Some(RollbackState::PendingPrepare),
             Some(RollbackState::Prepared),
             ProvenanceEventKind::SideEffectPrepared,
@@ -1435,7 +1435,7 @@ mod tests {
         .await
         .unwrap();
 
-        execution.state = ferrum_proto::ExecutionState::Prepared;
+        execution.state = ferrum_proto::ExecutionState::Running;
         contract.state = RollbackState::Prepared;
         let err = repo
             .record_lifecycle_transition(&execution, Some(&contract), &outbox)
@@ -1485,7 +1485,7 @@ mod tests {
             .await
             .unwrap();
 
-        execution.state = ferrum_proto::ExecutionState::Prepared;
+        execution.state = ferrum_proto::ExecutionState::Running;
         contract.state = RollbackState::Prepared;
         let err = repo
             .record_lifecycle_transition(&execution, Some(&contract), &outbox)
@@ -1532,7 +1532,7 @@ mod tests {
             .await
             .unwrap();
 
-        execution.state = ferrum_proto::ExecutionState::Prepared;
+        execution.state = ferrum_proto::ExecutionState::Running;
         contract.state = RollbackState::Prepared;
         let err = repo
             .record_lifecycle_transition(&execution, Some(&contract), &outbox)
@@ -1579,7 +1579,7 @@ mod tests {
             .await
             .unwrap();
 
-        execution.state = ferrum_proto::ExecutionState::Prepared;
+        execution.state = ferrum_proto::ExecutionState::Running;
         contract.state = RollbackState::Prepared;
         repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
             .await
@@ -1647,9 +1647,9 @@ mod tests {
             .await
             .unwrap();
 
-        first_execution.state = ferrum_proto::ExecutionState::Prepared;
+        first_execution.state = ferrum_proto::ExecutionState::Running;
         first_contract.state = RollbackState::Prepared;
-        second_execution.state = ferrum_proto::ExecutionState::Prepared;
+        second_execution.state = ferrum_proto::ExecutionState::Running;
         second_contract.state = RollbackState::Prepared;
         store
             .lifecycle_outbox()

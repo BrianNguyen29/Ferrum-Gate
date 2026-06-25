@@ -227,9 +227,61 @@ async fn main() -> Result<()> {
 
     let reconciliation_report = reconcile_lifecycle_outbox_before_startup(&store).await?;
 
+    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let worker_handle = if config.lifecycle_reconciliation_enabled {
+        let store_clone = Arc::clone(&store);
+        let shutdown = Arc::clone(&shutdown_notify);
+        let interval_secs = config.lifecycle_reconciliation_interval_secs;
+        let batch_limit = config.lifecycle_reconciliation_batch_limit;
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match ferrum_store::reconcile_lifecycle_outbox(&store_clone, batch_limit)
+                            .await
+                        {
+                            Ok(report) => {
+                                if report.scanned > 0 {
+                                    tracing::info!(
+                                        scanned = report.scanned,
+                                        already_reconciled = report.already_reconciled,
+                                        repaired_missing_provenance = report.repaired_missing_provenance,
+                                        needs_operator_review = report.needs_operator_review,
+                                        "periodic lifecycle outbox reconciliation completed"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    %error,
+                                    "periodic lifecycle outbox reconciliation failed"
+                                );
+                            }
+                        }
+                    }
+                    _ = shutdown.notified() => {
+                        tracing::info!("lifecycle reconciler shutting down");
+                        break;
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     let runtime = GatewayRuntime::new(pdp, cap, rollback, store, vec![])
         .with_lifecycle_reconciliation_report(reconciliation_report);
-    run_http_server(config, runtime).await
+    let result = run_http_server(config, runtime).await;
+
+    if let Some(handle) = worker_handle {
+        shutdown_notify.notify_waiters();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    result
 }
 
 #[cfg(test)]

@@ -86,7 +86,7 @@ Entrypoint và công cụ:
 ## Trạng thái dự án
 
 - **Stable** — intent lifecycle, policy evaluation, capability minting, rollback prepare/verify/compensate, SQLite write queue, provenance chain, bearer/scoped/OIDC/agent auth. MCP stdio server là default và stable.
-- **Implemented** — filesystem, HTTP, Git, SQLite, mail draft adapter; `ferrumctl` CLI; `ferrum-stress`; `ferrum-tui`; Prometheus metrics; rate limiting; Helm chart.
+- **Implemented** — filesystem, HTTP, Git, SQLite, mail draft adapter; S3 adapter (experimental); `ferrumctl` CLI; `ferrum-stress`; `ferrum-tui`; Prometheus metrics; rate limiting; Helm chart.
 - **Beta** — PostgreSQL runtime (local và CI live-tested). Production HA/multi-node topology thuộc trách nhiệm của operator, không được cung cấp bởi repo này.
 - **Experimental** — MCP Streamable HTTP / SSE transport.
 - **Not implemented / out of scope** — multi-tenancy, managed service, gửi email, compliance certification, MCP resumability.

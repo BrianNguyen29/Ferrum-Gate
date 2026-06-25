@@ -23,6 +23,7 @@ chrono = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+constant_time_eq = { workspace = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 clap = { workspace = true }

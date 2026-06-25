@@ -7,11 +7,6 @@ on:
         description: 'Target version (e.g., 0.1.0) — must match Cargo.toml workspace version'
         required: true
         default: '0.1.0'
-      generate_sbom:
-        description: 'Generate SBOM artifact (requires cargo-cyclonedx)'
-        required: false
-        default: true
-        type: boolean
 
 jobs:
   release-preflight:
@@ -27,15 +22,13 @@ jobs:
       - name: Run release preflight script
         run: |
           set -euo pipefail
-          bash scripts/prepare_release.sh --dry-run --version "${{ github.event.inputs.version }}"
+          bash scripts/prepare_release.sh --execute --version "${{ github.event.inputs.version }}"
       - name: Install cargo-cyclonedx
-        if: github.event.inputs.generate_sbom == 'true'
         run: cargo install cargo-cyclonedx
       - name: Generate SBOM (CycloneDX)
-        if: github.event.inputs.generate_sbom == 'true'
         run: cargo cyclonedx --all
       - name: Upload SBOM artifact
-        if: github.event.inputs.generate_sbom == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sbom-release
@@ -46,7 +39,7 @@ jobs:
           echo "## Release Preflight" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Version: ${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- SBOM generated: ${{ github.event.inputs.generate_sbom }}" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM generated: mandatory (always uploaded)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "This workflow does **not** create tags, push, or publish crates." >> $GITHUB_STEP_SUMMARY
           echo "Manual steps after preflight passes:" >> $GITHUB_STEP_SUMMARY

@@ -272,7 +272,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           head -n 50 coverage.txt >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Coverage is evidence-only in this job. No threshold is enforced yet." >> $GITHUB_STEP_SUMMARY
+          echo "Coverage is evidence-only in this job. No hard threshold is enforced yet." >> $GITHUB_STEP_SUMMARY
+          echo "Next step: when coverage stabilizes, enable the hard threshold gate via scripts/check_coverage_threshold.py --hard." >> $GITHUB_STEP_SUMMARY
       - name: Coverage soft threshold warning
         shell: bash
         run: |
@@ -294,12 +295,16 @@ jobs:
 
           if coverage is not None and coverage < 40.0:
               print(f"::warning::Workspace coverage {coverage:.2f}% is below the soft threshold of 40%")
+              print(f"::warning::When coverage stabilizes, enable hard threshold via scripts/check_coverage_threshold.py --hard")
               sys.exit(0)
           elif coverage is not None:
               print(f"Coverage {coverage:.2f}% meets soft threshold of 40%")
           else:
               print("::warning::Could not parse coverage percentage from coverage.txt")
           PY
+      - name: Critical-crate coverage threshold (soft, non-blocking)
+        run: |
+          python3 scripts/check_coverage_threshold.py coverage.txt || true
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --all
       - name: Upload coverage artifact

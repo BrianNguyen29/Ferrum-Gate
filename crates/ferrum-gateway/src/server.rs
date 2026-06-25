@@ -40,6 +40,12 @@ use tower_http::trace::TraceLayer;
 
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
 
+/// Maximum number of entries in the agent nonce replay cache.
+/// When the cache exceeds this limit, oldest entries are evicted
+/// after TTL cleanup. This prevents unbounded growth under
+/// high-volume agent traffic.
+const NONCE_CACHE_MAX_ENTRIES: usize = 10_000;
+
 /// Rate-limiting key that buckets authenticated requests by a principal
 /// identifier combined with IP, and anonymous requests by IP alone.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1379,6 +1385,8 @@ async fn verify_agent_request(
         let mut cache = state.nonce_cache.lock().unwrap();
         let now_instant = Instant::now();
         cache.retain(|_, &mut inserted| now_instant.duration_since(inserted) < nonce_ttl);
+        // Enforce max capacity to prevent unbounded growth
+        prune_nonce_cache_oldest(&mut cache, NONCE_CACHE_MAX_ENTRIES.saturating_sub(1));
         if cache.contains_key(nonce) {
             return Err(AgentAuthError::Unauthorized("replayed nonce".to_string()));
         }
@@ -1465,6 +1473,23 @@ async fn verify_agent_request(
     // Reconstruct request and proceed
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
+}
+
+/// Prune the oldest entries from the nonce cache until it is at or below
+/// `max_entries`. This is called after TTL cleanup to enforce a hard
+/// capacity bound and prevent unbounded growth.
+fn prune_nonce_cache_oldest(cache: &mut HashMap<String, Instant>, max_entries: usize) {
+    while cache.len() > max_entries {
+        let oldest = cache
+            .iter()
+            .min_by_key(|(_, instant)| *instant)
+            .map(|(k, _)| k.clone());
+        if let Some(key) = oldest {
+            cache.remove(&key);
+        } else {
+            break;
+        }
+    }
 }
 
 fn auth_error(message: &str) -> Response {
@@ -7473,6 +7498,26 @@ rules:
             .unwrap();
         let response2 = router.oneshot(req2).await.unwrap();
         assert_eq!(response2.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_nonce_cache_prune_oldest_enforces_max_capacity() {
+        let mut cache = HashMap::new();
+        let now = Instant::now();
+        // Insert 5 entries with staggered times
+        for i in 0..5 {
+            cache.insert(format!("nonce-{}", i), now - StdDuration::from_secs(i));
+        }
+        assert_eq!(cache.len(), 5);
+        // Prune to max 3
+        prune_nonce_cache_oldest(&mut cache, 3);
+        assert_eq!(cache.len(), 3);
+        // The oldest entries (nonce-4, nonce-3) should have been removed
+        assert!(!cache.contains_key("nonce-4"));
+        assert!(!cache.contains_key("nonce-3"));
+        assert!(cache.contains_key("nonce-2"));
+        assert!(cache.contains_key("nonce-1"));
+        assert!(cache.contains_key("nonce-0"));
     }
 
     #[tokio::test]

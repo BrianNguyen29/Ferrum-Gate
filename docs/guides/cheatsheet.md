@@ -23,14 +23,14 @@ FERRUMD_BIND_ADDR=127.0.0.1:18080 \
 ## Health check
 
 ```bash
-curl http://127.0.0.1:8080/v1/healthz
+curl http://127.0.0.1:18080/v1/healthz
 # → {"status":"ok"}
 ```
 
 ## Deep readiness (checks store/queue)
 
 ```bash
-curl http://127.0.0.1:8080/v1/readyz/deep
+curl http://127.0.0.1:18080/v1/readyz/deep
 # → 200 if healthy; 503 if degraded
 ```
 

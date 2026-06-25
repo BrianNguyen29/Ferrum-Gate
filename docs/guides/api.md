@@ -123,6 +123,42 @@ Set via config or env var `FERRUMD_BEARER_TOKEN`. Tokens are compared with const
 | `/v1/policy-bundles/{bundle_id}` | `DELETE` | bearer | Delete a policy bundle |
 | `/v1/policy-bundles/{bundle_id}/active` | `PUT` | bearer | Set bundle as active |
 
+### Admin
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/v1/admin/tokens` | `POST` | bearer | Create a scoped token |
+| `/v1/admin/tokens` | `GET` | bearer | List scoped tokens |
+| `/v1/admin/tokens/{token_id}` | `DELETE` | bearer | Revoke a scoped token |
+| `/v1/admin/tokens/{token_id}/rotate` | `POST` | bearer | Rotate a scoped token |
+| `/v1/admin/agents` | `POST` | bearer | Register an agent identity |
+| `/v1/admin/agents` | `GET` | bearer | List registered agents |
+| `/v1/admin/agents/{agent_id}` | `DELETE` | bearer | Revoke an agent identity |
+
+### Audit
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/v1/admin/audit-logs` | `GET` | bearer | List audit logs |
+| `/v1/admin/audit-logs/export` | `GET` | bearer | Export audit logs |
+| `/v1/admin/audit/verify` | `GET` | bearer | Verify audit log hash chain integrity |
+| `/v1/admin/audit/merkle-verify` | `GET` | bearer | Verify Merkle root for a time window |
+| `/v1/admin/audit/merkle-roots` | `GET` | bearer | List cached Merkle roots |
+| `/v1/admin/audit/checkpoints` | `POST` | bearer | Create a signed checkpoint |
+| `/v1/admin/audit/checkpoints` | `GET` | bearer | List signed checkpoints |
+| `/v1/admin/audit/checkpoints/{window_start}/verify` | `GET` | bearer | Verify a signed checkpoint |
+
+### Lifecycle outbox
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/v1/admin/lifecycle-outbox` | `GET` | bearer | List reconciliation records |
+| `/v1/admin/lifecycle-outbox/{outbox_id}` | `GET` | bearer | Get a reconciliation record |
+| `/v1/admin/lifecycle-outbox/{outbox_id}/retry` | `POST` | bearer | Retry reconciliation |
+| `/v1/admin/lifecycle-outbox/{outbox_id}/resolve` | `POST` | bearer | Mark resolved after operator review |
+
+> **Note:** Admin endpoints require the appropriate `admin:*` scope when using scoped-token authentication. See [`security-model.md`](./security-model.md) for scope details.
+
 ---
 
 ## Execution lifecycle example

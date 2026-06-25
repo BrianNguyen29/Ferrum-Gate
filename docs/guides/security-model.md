@@ -18,10 +18,10 @@
 | Threat | Current mitigation | Additional mitigation |
 |--------|--------------------|-----------------------|
 | Token theft | Token stored on VM only; rotation procedure exists; scoped tokens support expiry + revocation | OIDC/SSO and stronger operational policy |
-| Insider abuse | Operator trust plus RBAC + minimal audit log | Compliance-grade audit logging |
+| Insider abuse | Operator trust plus RBAC + minimal audit log | Compliance-grade audit logging; behavioral anomaly detection (ADR 010) |
 | Tenant data leak | N/A (single tenant) | tenant_id filtering + PG RLS |
 | Auth bypass | Constant-time token comparison plus scoped-token RBAC middleware | External identity integration |
-| Secret leak in logs | Output redaction in MCP; minimal audit log avoids secret material | Structured compliance-grade audit controls |
+| Secret leak in logs | Output redaction in MCP; minimal audit log avoids secret material | Structured compliance-grade audit controls; audit fail-closed (ADR 007) |
 
 ## Scoped token and RBAC implementation
 
@@ -44,6 +44,7 @@
 - Revoked token returns 401 (SEC-4).
 - Expired token returns 401 (SEC-5).
 - Audit log records actor, action, and result for current scope (SEC-6).
+- R3 approval requires explicit operator resolve (SEC-7); future: timeout auto-deny and optional second factor (ADR 008).
 - Tenant A cannot read tenant B data — not available by single-tenant design decision; no multi-tenant claim.
 
 ## Bearer auth hardening
@@ -92,9 +93,10 @@ ferrumctl admin audit list --limit 20
 
 ### Limitations
 
-- Append is **best-effort**; store errors do not fail the primary action.
-- No cryptographic signing or WORM storage.
+- Append is **best-effort**; store errors do not fail the primary action (see ADR 007 for a proposed fail-closed mode).
+- No cryptographic signing or WORM storage (see ADR 009 for a proposed WORM export bundle).
 - Not compliance-grade forensic audit.
+- No behavioral anomaly detection on audit patterns (see ADR 010 for a proposed profiling layer).
 
 ## Secret handling
 
@@ -157,6 +159,9 @@ Tenant
 - Add PostgreSQL RLS as defense-in-depth.
 - Evaluate OIDC/JWT/SSO integration.
 - Evaluate mTLS for service-to-service auth.
+- Evaluate audit fail-closed mode (ADR 007).
+- Evaluate R3 approval timeout and second-factor confirmation (ADR 008).
+- Evaluate behavioral anomaly detection (ADR 010).
 
 ## Related docs
 
