@@ -8,6 +8,8 @@
   - `AuditLogRepo::verify_chain()` for SQLite and PostgreSQL.
   - Gateway endpoint `GET /v1/admin/audit/verify` (requires `admin:audit` scope).
   - `ferrumctl audit verify` remote mode.
+  - `ferrumctl admin audit export --bundle <dir>`: portable `.jsonl` + `manifest.json` export using the existing admin export endpoint.
+  - `ferrumctl admin audit verify --bundle <dir>`: local bundle verification (hash chain, Merkle root, duplicate detection, tamper detection) without server access.
   - Legacy entries without hash fields are skipped during verification.
   - Recomputation check: stored `content_hash` is recomputed from canonical fields on verify.
   - Merkle root per hourly UTC-aligned window:
@@ -32,7 +34,7 @@
 - Not yet implemented:
   - External anchoring (e.g., blockchain, timestamp authority).
   - WORM sink integration.
-  - Local DB direct-verify mode in CLI (can be added later without server).
+  - ~~Local DB direct-verify mode in CLI~~ (Done via `verify --bundle`).
 
 ## Canonical Serialization
 
@@ -94,6 +96,34 @@ Calls `GET /v1/admin/audit/verify` and prints:
 - `VALID` if the chain is intact.
 - `INVALID` with error detail if tampering or a break is detected.
 
+### Bundle Export
+
+```bash
+ferrumctl admin audit export --bundle /tmp/audit-bundle
+```
+
+Fetches the full audit log from the server as NDJSON, writes `audit.jsonl` and `manifest.json` into the specified directory. The manifest includes:
+- Bundle version (`1`).
+- Export timestamp.
+- First and last entry `content_hash`.
+- Merkle root of the hashed entry chain.
+- Total entry count.
+
+### Bundle Verify
+
+```bash
+ferrumctl admin audit verify --bundle /tmp/audit-bundle
+```
+
+Reads the local bundle and verifies:
+- Hash chain continuity (`previous_hash` linkage).
+- Content hash recomputation (tamper detection per entry).
+- Merkle root recomputation.
+- No duplicate sequence numbers (`id`).
+- Entry count matches manifest.
+
+Prints `VALID` with manifest details, or a clear error on any failure. Does not require server access.
+
 ### Merkle Root Verify
 
 ```bash
@@ -151,9 +181,9 @@ Calls `GET /v1/admin/audit/checkpoints` and lists signed checkpoints with cursor
 
 1. ~~Merkle root per time window (e.g., hourly) for batch verification.~~ (Done)
 2. ~~Signed checkpoint with Ed25519 signature over Merkle root.~~ (Done)
-3. `ferrumctl audit export` producing a portable verification bundle.
+3. ~~`ferrumctl audit export` producing a portable verification bundle.~~ (Done)
 4. Optional external anchoring to a transparency log or blockchain.
-5. Local direct-verify mode for operators with file-system access to the SQLite database.
+5. ~~Local direct-verify mode for operators with file-system access to the SQLite database.~~ (Done via `verify --bundle`).
 
 ## Notes
 

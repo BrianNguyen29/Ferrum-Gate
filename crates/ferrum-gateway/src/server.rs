@@ -112,6 +112,20 @@ pub(crate) struct AppState {
     nonce_cache: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
+#[cfg(test)]
+impl AppState {
+    /// Test-only constructor that builds an AppState from a runtime and config.
+    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
+        Arc::new(AppState {
+            runtime,
+            server_config,
+            metrics: Arc::new(Metrics::new()),
+            jwks_cache: None,
+            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+}
+
 /// Metrics state for the /v1/metrics endpoint.
 /// Tracks health/metrics request counters, store health gauge, and bounded
 /// governance error counters for all governance API endpoints.
@@ -196,6 +210,8 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_agents_create: AtomicU64,
     pub(crate) governance_success_v1_agents_list: AtomicU64,
     pub(crate) governance_success_v1_agents_revoke: AtomicU64,
+    // Audit fail-closed rejection counter
+    pub(crate) audit_fail_closed_rejections: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -299,6 +315,7 @@ impl Metrics {
             governance_success_v1_agents_create: AtomicU64::new(0),
             governance_success_v1_agents_list: AtomicU64::new(0),
             governance_success_v1_agents_revoke: AtomicU64::new(0),
+            audit_fail_closed_rejections: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -1195,7 +1212,7 @@ async fn auth_middleware(
                 Some(c) => c,
                 None => {
                     tracing::error!("oidc config missing");
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AuthFailed,
@@ -1213,7 +1230,7 @@ async fn auth_middleware(
             {
                 Ok(()) => next.run(request).await,
                 Err(OidcAuthError::Unauthorized(msg)) => {
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AuthFailed,
@@ -1226,7 +1243,7 @@ async fn auth_middleware(
                     auth_error(&msg)
                 }
                 Err(OidcAuthError::Forbidden(msg)) => {
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AuthFailed,
@@ -1236,7 +1253,7 @@ async fn auth_middleware(
                         Some(serde_json::json!({"reason": msg})),
                     )
                     .await;
-                    forbidden_error(&msg)
+                    (StatusCode::FORBIDDEN, msg).into_response()
                 }
             }
         }
@@ -1303,7 +1320,7 @@ async fn auth_middleware(
             match verify_agent_request(&state, request, next, &method, &path).await {
                 Ok(response) => response,
                 Err(AgentAuthError::Unauthorized(msg)) => {
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AgentAuthFailed,
@@ -2051,6 +2068,10 @@ pub async fn test_runtime_with_bridges(bridges: Vec<Arc<dyn RuntimeBridge>>) -> 
 }
 
 #[cfg(test)]
+#[path = "server_git_rollback_tests.rs"]
+mod git_rollback_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{KeyMaterial, OidcConfig};
@@ -2364,7 +2385,7 @@ mod tests {
         // Verify the response indicates degraded status
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 3);
+        assert_eq!(deep.components.len(), 4);
         // First component: store (unhealthy)
         assert_eq!(deep.components[0].component, "store");
         assert!(!deep.components[0].healthy);
@@ -2376,7 +2397,7 @@ mod tests {
                 .unwrap()
                 .contains("store unavailable")
         );
-        // Second component: write_queue (healthy since queue depth is 0 in test)
+        // Second component: write_queue (healthy)
         assert_eq!(deep.components[1].component, "write_queue");
         assert!(deep.components[1].healthy);
         assert!(deep.components[1].error.is_none());
@@ -2384,6 +2405,10 @@ mod tests {
         assert_eq!(deep.components[2].component, "pool");
         assert!(deep.components[2].healthy);
         assert!(deep.components[2].error.is_none());
+        // Fourth component: lifecycle_outbox (healthy since no drift in test)
+        assert_eq!(deep.components[3].component, "lifecycle_outbox");
+        assert!(deep.components[3].healthy);
+        assert!(deep.components[3].error.is_none());
     }
 
     #[tokio::test]
@@ -2410,7 +2435,7 @@ mod tests {
         // Verify all components are present
         assert_eq!(deep.status, "ok");
         assert!(deep.healthy);
-        assert_eq!(deep.components.len(), 3);
+        assert_eq!(deep.components.len(), 4);
 
         // First component: store
         assert_eq!(deep.components[0].component, "store");
@@ -2429,6 +2454,10 @@ mod tests {
         assert_eq!(deep.components[2].component, "pool");
         assert!(deep.components[2].healthy);
         assert!(deep.components[2].error.is_none());
+        // Fourth component: lifecycle_outbox (healthy since no drift in test)
+        assert_eq!(deep.components[3].component, "lifecycle_outbox");
+        assert!(deep.components[3].healthy);
+        assert!(deep.components[3].error.is_none());
     }
 
     /// A test-only StoreFacade that wraps a real store but allows controlling queue depth.
@@ -2541,7 +2570,7 @@ mod tests {
 
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 3);
+        assert_eq!(deep.components.len(), 4);
 
         // First component: store (healthy)
         assert_eq!(deep.components[0].component, "store");
@@ -2563,6 +2592,10 @@ mod tests {
         assert_eq!(deep.components[2].component, "pool");
         assert!(deep.components[2].healthy);
         assert!(deep.components[2].error.is_none());
+        // Fourth component: lifecycle_outbox (healthy since no drift in test)
+        assert_eq!(deep.components[3].component, "lifecycle_outbox");
+        assert!(deep.components[3].healthy);
+        assert!(deep.components[3].error.is_none());
     }
 
     /// A test-only StoreFacade that wraps a real store and reports a fixed pool_status.
@@ -2820,129 +2853,165 @@ mod tests {
         assert!(pool_component["status"].as_str().unwrap().contains("ok"));
     }
 
-    #[test]
-    fn test_infer_git_adapter_key_git_repository() {
-        let scope = vec![ResourceSelector::GitRepository {
-            repo_path: "/tmp/test-repo".to_string(),
-            allowed_refs: vec!["main".to_string(), "develop".to_string()],
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-        }];
-        assert_eq!(infer_git_adapter_key(&scope), "git");
-    }
+    #[tokio::test]
+    async fn test_readyz_deep_returns_503_when_lifecycle_outbox_has_pending() {
+        let runtime = test_runtime().await;
 
-    #[test]
-    fn test_infer_git_adapter_key_no_git() {
-        let scope = vec![ResourceSelector::FilesystemPath {
-            path: "/tmp/file.txt".to_string(),
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-            content_hash: None,
-        }];
-        assert_eq!(infer_git_adapter_key(&scope), "noop");
-    }
-
-    #[test]
-    fn test_infer_git_adapter_key_empty_scope() {
-        let scope: Vec<ResourceSelector> = vec![];
-        assert_eq!(infer_git_adapter_key(&scope), "noop");
-    }
-
-    #[test]
-    fn test_infer_git_adapter_key_mixed_scope() {
-        let scope = vec![
-            ResourceSelector::FilesystemPath {
-                path: "/tmp/file.txt".to_string(),
-                mode: ferrum_proto::ResourceMode::ReadWrite,
-                content_hash: None,
+        // Insert minimal prerequisite records so the outbox FK constraint is satisfied
+        let intent_id = ferrum_proto::IntentId::new();
+        let principal_id = ferrum_proto::PrincipalId::new();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id,
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test".to_string(),
+            normalized_goal: "test".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
             },
-            ResourceSelector::GitRepository {
-                repo_path: "/tmp/test-repo".to_string(),
-                allowed_refs: vec!["main".to_string()],
-                mode: ferrum_proto::ResourceMode::ReadWrite,
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
             },
-        ];
-        assert_eq!(infer_git_adapter_key(&scope), "git");
-    }
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
 
-    #[test]
-    fn test_determine_rollback_target_from_bindings_git_ref() {
-        let scope = vec![ResourceSelector::GitRepository {
-            repo_path: "/opt/myrepo".to_string(),
-            allowed_refs: vec!["main".to_string()],
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-        }];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::GitRef {
-                repo_path,
-                before_ref,
-                after_ref,
-            } => {
-                assert_eq!(repo_path, "/opt/myrepo");
-                assert!(before_ref.is_none());
-                assert!(after_ref.is_none());
-            }
-            other => panic!("expected GitRef target, got {:?}", other),
-        }
-    }
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test_tool".to_string(),
+            server_name: "test_server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
 
-    #[test]
-    fn test_determine_rollback_target_from_bindings_generic_fallback() {
-        let scope = vec![ResourceSelector::FilesystemPath {
-            path: "/tmp/file.txt".to_string(),
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-            content_hash: None,
-        }];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::Generic {
-                namespace,
-                identifier,
-            } => {
-                assert_eq!(namespace, "unknown");
-                assert_eq!(identifier, "binding");
-            }
-            other => panic!("expected Generic fallback, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_determine_rollback_target_from_bindings_empty_scope() {
-        let scope: Vec<ResourceSelector> = vec![];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::Generic {
-                namespace,
-                identifier,
-            } => {
-                assert_eq!(namespace, "unknown");
-                assert_eq!(identifier, "binding");
-            }
-            other => panic!("expected Generic fallback, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_determine_rollback_target_from_bindings_first_git_wins() {
-        // When multiple git repos are in scope, returns the first one
-        let scope = vec![
-            ResourceSelector::GitRepository {
-                repo_path: "/repo/one".to_string(),
-                allowed_refs: vec![],
-                mode: ferrum_proto::ResourceMode::Read,
+        let capability_id = ferrum_proto::CapabilityId::new();
+        let now = chrono::Utc::now();
+        let capability = ferrum_proto::CapabilityLease {
+            capability_id,
+            intent_id,
+            proposal_id,
+            tool_binding: ferrum_proto::ToolBinding {
+                server_name: "test_server".to_string(),
+                tool_name: "test_tool".to_string(),
+                tool_version: None,
             },
-            ResourceSelector::GitRepository {
-                repo_path: "/repo/two".to_string(),
-                allowed_refs: vec![],
-                mode: ferrum_proto::ResourceMode::Read,
+            resource_bindings: vec![],
+            argument_constraints: vec![],
+            taint_budget: ferrum_proto::TaintBudget {
+                max_taint_score: 0,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
             },
-        ];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::GitRef { repo_path, .. } => {
-                assert_eq!(repo_path, "/repo/one");
-            }
-            other => panic!("expected GitRef target, got {:?}", other),
-        }
+            approval_binding: None,
+            issued_by: "test".to_string(),
+            policy_bundle_id: ferrum_proto::PolicyBundleId::new(),
+            tool_manifest_id: None,
+            manifest_hash: None,
+            status: ferrum_proto::CapabilityStatus::Active,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(5),
+            revoked_at: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .capabilities()
+            .insert(&capability)
+            .await
+            .unwrap();
+
+        let execution = ferrum_proto::ExecutionRecord {
+            execution_id: ferrum_proto::ExecutionId::new(),
+            intent_id,
+            proposal_id,
+            capability_id,
+            rollback_contract_id: None,
+            decision: ferrum_proto::Decision::Allow,
+            state: ferrum_proto::ExecutionState::Running,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime.store.executions().insert(&execution).await.unwrap();
+
+        // Insert a pending lifecycle outbox record to simulate drift
+        let outbox = ferrum_proto::LifecycleOutboxRecord::pending(
+            execution.execution_id,
+            None,
+            Some(ferrum_proto::ExecutionState::Running),
+            ferrum_proto::ExecutionState::Committed,
+            None,
+            None,
+            ferrum_proto::ProvenanceEventKind::SideEffectCommitted,
+            "test-pending".to_string(),
+        );
+        runtime
+            .store
+            .lifecycle_outbox()
+            .enqueue_lifecycle_transition(&outbox)
+            .await
+            .unwrap();
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let deep: DeepHealthResponse = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(deep.status, "degraded");
+        assert!(!deep.healthy);
+        assert_eq!(deep.components.len(), 4);
+
+        let lifecycle_component = deep
+            .components
+            .iter()
+            .find(|c| c.component == "lifecycle_outbox")
+            .unwrap();
+        assert!(!lifecycle_component.healthy);
+        assert!(lifecycle_component.status.contains("pending=1"));
     }
 
     #[tokio::test]
@@ -4451,6 +4520,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_mfa_required_returns_403() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/approvals/00000000-0000-0000-0000-000000000000/resolve")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaRequired);
+        assert!(err.message.contains("future work per ADR008"));
     }
 
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and

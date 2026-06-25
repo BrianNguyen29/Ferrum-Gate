@@ -6,6 +6,7 @@ use sha2::Digest;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
+mod audit_bundle;
 mod backup;
 mod client;
 
@@ -932,6 +933,10 @@ enum AdminAuditCommand {
         #[arg(long, value_name = "FORMAT", default_value = "ndjson")]
         format: ExportFormat,
 
+        /// Export as a portable bundle directory containing `audit.jsonl` and `manifest.json`.
+        #[arg(long, value_name = "DIR")]
+        bundle: Option<PathBuf>,
+
         /// Output file path (default: stdout).
         #[arg(long, value_name = "PATH")]
         output: Option<String>,
@@ -941,6 +946,10 @@ enum AdminAuditCommand {
         /// Output format: text (default) or json.
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: OutputFormat,
+
+        /// Verify a local bundle directory instead of the remote server.
+        #[arg(long, value_name = "DIR")]
+        bundle: Option<PathBuf>,
     },
     /// Compute or retrieve the Merkle root for an hourly audit window.
     MerkleVerify {
@@ -2898,42 +2907,91 @@ async fn main() -> Result<()> {
                         until,
                         format,
                         output,
+                        bundle,
                     } => {
-                        let format_str = match format {
-                            ExportFormat::Ndjson => "ndjson",
-                            ExportFormat::Json => "json",
-                            ExportFormat::Csv => "csv",
-                        };
-                        let body = client
-                            .export_audit_logs(
-                                action.as_deref(),
-                                resource_type.as_deref(),
-                                resource_id.as_deref(),
-                                since.as_deref(),
-                                until.as_deref(),
-                                format_str,
-                            )
-                            .await?;
-                        if let Some(path) = output {
-                            std::fs::write(&path, body)?;
-                            println!("Exported audit logs to {}", path);
+                        if let Some(bundle_dir) = bundle {
+                            let body = client
+                                .export_audit_logs(
+                                    action.as_deref(),
+                                    resource_type.as_deref(),
+                                    resource_id.as_deref(),
+                                    since.as_deref(),
+                                    until.as_deref(),
+                                    "ndjson",
+                                )
+                                .await?;
+                            let manifest = audit_bundle::export_bundle(&bundle_dir, &body)?;
+                            match format {
+                                ExportFormat::Json => {
+                                    println!("{}", serde_json::to_string_pretty(&manifest)?);
+                                }
+                                _ => {
+                                    println!("Exported audit bundle to {}", bundle_dir.display());
+                                    println!("Version:       {}", manifest.version);
+                                    println!("Entries:       {}", manifest.entry_count);
+                                    println!("First hash:    {}", manifest.first_hash);
+                                    println!("Last hash:     {}", manifest.last_hash);
+                                    println!("Merkle root:   {}", manifest.merkle_root);
+                                }
+                            }
                         } else {
-                            println!("{}", body);
+                            let format_str = match format {
+                                ExportFormat::Ndjson => "ndjson",
+                                ExportFormat::Json => "json",
+                                ExportFormat::Csv => "csv",
+                            };
+                            let body = client
+                                .export_audit_logs(
+                                    action.as_deref(),
+                                    resource_type.as_deref(),
+                                    resource_id.as_deref(),
+                                    since.as_deref(),
+                                    until.as_deref(),
+                                    format_str,
+                                )
+                                .await?;
+                            if let Some(path) = output {
+                                std::fs::write(&path, body)?;
+                                println!("Exported audit logs to {}", path);
+                            } else {
+                                println!("{}", body);
+                            }
                         }
                     }
-                    AdminAuditCommand::Verify { format } => {
-                        let response = client.verify_audit_chain().await?;
-                        match format {
-                            OutputFormat::Json => {
-                                println!("{}", serde_json::to_string_pretty(&response)?);
+                    AdminAuditCommand::Verify { format, bundle } => {
+                        if let Some(bundle_dir) = bundle {
+                            let manifest = audit_bundle::verify_bundle(&bundle_dir)?;
+                            match format {
+                                OutputFormat::Json => {
+                                    println!("{}", serde_json::to_string_pretty(&manifest)?);
+                                }
+                                _ => {
+                                    println!("Bundle verification: VALID");
+                                    println!("Version:       {}", manifest.version);
+                                    println!(
+                                        "Exported at:   {}",
+                                        manifest.exported_at.to_rfc3339()
+                                    );
+                                    println!("Entries:       {}", manifest.entry_count);
+                                    println!("First hash:    {}", manifest.first_hash);
+                                    println!("Last hash:     {}", manifest.last_hash);
+                                    println!("Merkle root:   {}", manifest.merkle_root);
+                                }
                             }
-                            _ => {
-                                if response.valid {
-                                    println!("Audit chain verification: VALID");
-                                } else {
-                                    println!("Audit chain verification: INVALID");
-                                    if let Some(ref err) = response.error {
-                                        println!("Error: {}", err);
+                        } else {
+                            let response = client.verify_audit_chain().await?;
+                            match format {
+                                OutputFormat::Json => {
+                                    println!("{}", serde_json::to_string_pretty(&response)?);
+                                }
+                                _ => {
+                                    if response.valid {
+                                        println!("Audit chain verification: VALID");
+                                    } else {
+                                        println!("Audit chain verification: INVALID");
+                                        if let Some(ref err) = response.error {
+                                            println!("Error: {}", err);
+                                        }
                                     }
                                 }
                             }
@@ -4800,6 +4858,58 @@ rules: []
                     assert_eq!(limit, 10);
                 }
                 _ => panic!("expected CheckpointList command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin audit bundle CLI parsing tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_admin_audit_export_bundle_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "export",
+            "--bundle",
+            "/tmp/audit-bundle",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::Export { bundle, .. } => {
+                    assert_eq!(bundle, Some(PathBuf::from("/tmp/audit-bundle")));
+                }
+                _ => panic!("expected Export command"),
+            },
+            _ => panic!("expected Audit command"),
+        }
+    }
+
+    #[test]
+    fn test_admin_audit_verify_bundle_parses() {
+        let cli = Cli::parse_from([
+            "ferrumctl",
+            "admin",
+            "audit",
+            "verify",
+            "--bundle",
+            "/tmp/audit-bundle",
+        ]);
+        let Command::Admin { sub } = cli.command else {
+            panic!("expected Admin command");
+        };
+        match sub {
+            AdminCommand::Audit { sub } => match sub {
+                AdminAuditCommand::Verify { bundle, .. } => {
+                    assert_eq!(bundle, Some(PathBuf::from("/tmp/audit-bundle")));
+                }
+                _ => panic!("expected Verify command"),
             },
             _ => panic!("expected Audit command"),
         }

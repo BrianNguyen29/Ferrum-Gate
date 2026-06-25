@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::{
-    audit::append_audit,
+    audit,
     monitoring::GovernanceRoute,
     response::{sanitized_api_error_response, sanitized_response},
     state::AppState,
@@ -186,8 +186,8 @@ pub(crate) async fn create_agent(
             state
                 .metrics
                 .increment_governance_success(GovernanceRoute::AgentsCreate);
-            append_audit(
-                &state.runtime.store,
+            if let Err(problem) = audit::append_audit_checked(
+                &state,
                 &req.agent_id,
                 AuditAction::AgentRegister,
                 AuditResourceType::Agent,
@@ -196,8 +196,12 @@ pub(crate) async fn create_agent(
                 Some(serde_json::json!({
                     "fingerprint": fingerprint,
                 })),
+                Some(GovernanceRoute::AgentsCreate),
             )
-            .await;
+            .await
+            {
+                return axum::response::IntoResponse::into_response(problem);
+            }
             let response = RegisterAgentResponse { agent };
             sanitized_response(&state.runtime.firewall, StatusCode::CREATED, &response)
         }
@@ -297,8 +301,8 @@ pub(crate) async fn revoke_agent(
             state
                 .metrics
                 .increment_governance_success(GovernanceRoute::AgentsRevoke);
-            append_audit(
-                &state.runtime.store,
+            if let Err(problem) = audit::append_audit_checked(
+                &state,
                 "unknown",
                 AuditAction::AgentRevoke,
                 AuditResourceType::Agent,
@@ -307,8 +311,12 @@ pub(crate) async fn revoke_agent(
                 Some(serde_json::json!({
                     "reason": req.reason,
                 })),
+                Some(GovernanceRoute::AgentsRevoke),
             )
-            .await;
+            .await
+            {
+                return axum::response::IntoResponse::into_response(problem);
+            }
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => {

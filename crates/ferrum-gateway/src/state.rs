@@ -400,6 +400,13 @@ pub struct ServerConfig {
     /// Maximum number of outbox records to reconcile per periodic batch.
     /// Default: 1000.
     pub lifecycle_reconciliation_batch_limit: u32,
+    /// When true, audit append failures block the action and return 503.
+    /// Default: false (best-effort).
+    pub audit_fail_closed: bool,
+    /// When true, approval resolve requires a second factor (MFA).
+    /// Default: false. No concrete verifier is wired yet; enabling this
+    /// returns 403/mfa_required until client factor transport is implemented.
+    pub approval_mfa_required: bool,
 }
 
 impl Default for ServerConfig {
@@ -432,6 +439,8 @@ impl Default for ServerConfig {
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: 60,
             lifecycle_reconciliation_batch_limit: 1000,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         }
     }
 }

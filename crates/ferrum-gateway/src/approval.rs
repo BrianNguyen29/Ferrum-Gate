@@ -27,7 +27,6 @@ use ferrum_proto::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::audit::append_audit;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
@@ -305,6 +304,20 @@ pub(crate) async fn resolve_approval(
             .record_governance_error(GovernanceRoute::ApprovalsResolve, e)
     })?;
 
+    // ADR008 Phase 1: MFA stub. When enabled, fail closed because no client
+    // factor transport is currently modeled (TOTP/WebAuthn are Phase 2+).
+    if state.server_config.approval_mfa_required {
+        return governance_err!(
+            state,
+            GovernanceRoute::ApprovalsResolve,
+            ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::MfaRequired,
+                "MFA is required for approval resolve, but client factor transport is not yet implemented (future work per ADR008)",
+            )
+        );
+    }
+
     // Fetch the approval from the store
     let approval = state
         .runtime
@@ -380,8 +393,8 @@ pub(crate) async fn resolve_approval(
         })?;
 
     // Audit log: approval resolved
-    append_audit(
-        &state.runtime.store,
+    if let Err(problem) = crate::audit::append_audit_checked(
+        &state,
         &request.actor.actor_id,
         AuditAction::ApprovalResolve,
         AuditResourceType::Approval,
@@ -391,8 +404,12 @@ pub(crate) async fn resolve_approval(
             "approved": request.approve,
             "reason": request.reason,
         })),
+        Some(GovernanceRoute::ApprovalsResolve),
     )
-    .await;
+    .await
+    {
+        return governance_err!(state, GovernanceRoute::ApprovalsResolve, problem);
+    }
 
     // Fetch the updated approval
     let updated_approval = state

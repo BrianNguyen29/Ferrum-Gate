@@ -1709,4 +1709,161 @@ mod tests {
             .unwrap();
         assert_eq!(second.status, LifecycleOutboxStatus::Reconciled);
     }
+
+    #[tokio::test]
+    async fn reconciler_repairs_missing_parent_edge_for_existing_event() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let (mut execution, mut contract) = seed_execution(&store).await;
+        let repo = store.lifecycle_outbox();
+        let outbox = outbox_for(&execution, &contract);
+        let parent_event = action_proposal_submitted_event(&execution);
+        let prepared_event = provenance_event(&execution, &contract);
+
+        store
+            .provenance()
+            .append_event(&parent_event)
+            .await
+            .unwrap();
+        store
+            .provenance()
+            .append_event(&prepared_event)
+            .await
+            .unwrap();
+
+        execution.state = ferrum_proto::ExecutionState::Running;
+        contract.state = RollbackState::Prepared;
+        repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap();
+        repo.mark_provenance_written(outbox.outbox_id, prepared_event.event_id)
+            .await
+            .unwrap();
+
+        let facade: Arc<dyn StoreFacade> = store.clone();
+        let report = crate::reconcile_lifecycle_outbox(&facade, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(report.scanned, 1);
+        assert_eq!(report.already_reconciled, 1);
+        let reconciled = repo.get(outbox.outbox_id).await.unwrap().unwrap();
+        assert_eq!(reconciled.status, LifecycleOutboxStatus::Reconciled);
+        let edges = store
+            .provenance()
+            .get_edges_to(prepared_event.event_id)
+            .await
+            .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].from_event_id, parent_event.event_id);
+    }
+
+    #[tokio::test]
+    async fn reconciler_repairs_missing_terminal_provenance_after_state_transition() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let (execution, contract) = seed_execution(&store).await;
+        let repo = store.lifecycle_outbox();
+
+        // Move execution to Running directly so we can test the terminal transition
+        store
+            .executions()
+            .update_state(
+                execution.execution_id,
+                ferrum_proto::ExecutionState::Running,
+            )
+            .await
+            .unwrap();
+
+        // Create the parent event for terminal provenance (SideEffectVerified -> SideEffectCommitted)
+        let verified_event = ProvenanceEvent {
+            event_id: EventId::new(),
+            kind: ProvenanceEventKind::SideEffectVerified,
+            occurred_at: chrono::Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::Gateway,
+                actor_id: "test".to_string(),
+                display_name: None,
+            },
+            object: ObjectRef {
+                object_type: ObjectType::SideEffect,
+                object_id: execution.execution_id.to_string(),
+                summary: None,
+            },
+            intent_id: Some(execution.intent_id),
+            proposal_id: Some(execution.proposal_id),
+            execution_id: Some(execution.execution_id),
+            capability_id: Some(execution.capability_id),
+            rollback_contract_id: Some(contract.contract_id),
+            policy_bundle_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            parent_edges: vec![],
+            hash_chain: HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: ferrum_proto::JsonMap::new(),
+            source_runtime_id: None,
+        };
+        store
+            .provenance()
+            .append_event(&verified_event)
+            .await
+            .unwrap();
+
+        // Transition to Committed terminal state
+        let committed_execution = ExecutionRecord {
+            state: ferrum_proto::ExecutionState::Committed,
+            ..execution.clone()
+        };
+        let committed_outbox = LifecycleOutboxRecord::pending(
+            execution.execution_id,
+            Some(contract.contract_id),
+            Some(ferrum_proto::ExecutionState::Running),
+            ferrum_proto::ExecutionState::Committed,
+            Some(RollbackState::PendingPrepare),
+            Some(RollbackState::PendingPrepare),
+            ProvenanceEventKind::SideEffectCommitted,
+            format!("commit:{}", execution.execution_id),
+        );
+        repo.record_lifecycle_transition(&committed_execution, Some(&contract), &committed_outbox)
+            .await
+            .unwrap();
+
+        let facade: Arc<dyn StoreFacade> = store.clone();
+        let report = crate::reconcile_lifecycle_outbox(&facade, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(report.scanned, 1);
+        assert_eq!(report.repaired_missing_provenance, 1);
+        let reconciled = repo.get(committed_outbox.outbox_id).await.unwrap().unwrap();
+        assert_eq!(reconciled.status, LifecycleOutboxStatus::Reconciled);
+        assert!(reconciled.provenance_event_id.is_some());
+
+        let event = store
+            .provenance()
+            .get_event(reconciled.provenance_event_id.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event.kind,
+            ProvenanceEventKind::SideEffectCommitted
+        ));
+        assert_eq!(
+            event.metadata.get("reconciled"),
+            Some(&serde_json::json!(true))
+        );
+        let edges = store
+            .provenance()
+            .get_edges_to(event.event_id)
+            .await
+            .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].from_event_id, verified_event.event_id);
+    }
 }

@@ -1,7 +1,7 @@
 # ADR 007 — Audit Fail-Closed Mode
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 

@@ -87,9 +87,10 @@ canonical RFC 3339 text.
 ## Reconciliation Rules
 
 > **Status:** Implemented. `reconcile_lifecycle_outbox` runs at startup before HTTP binding.
-> A periodic background reconciler is enabled via `lifecycle_reconciliation_enabled` (default false),
+> A periodic background reconciler is available via `lifecycle_reconciliation_enabled` (default false),
 > with configurable interval and batch limit. It coordinates with the HTTP server graceful shutdown
-> using a `tokio::sync::Notify` signal. Readiness degradation for pending drift remains deferred.
+> using a `tokio::sync::Notify` signal. Readiness degradation for pending drift is implemented in
+> `/v1/readyz/deep` via the `lifecycle_outbox` component.
 
 The reconciler is fail-closed:
 
@@ -111,7 +112,8 @@ The reconciler is fail-closed:
 
 > **Status:** Partially implemented. Handlers use atomic state+outbox writes for
 > prepare, execute, verify, commit, compensate, and cancel. Readiness degradation
-> and metrics integration for pending drift are deferred.
+> and metrics integration for pending drift are implemented. Crash-injection tests
+> are implemented for SQLite.
 
 Gateway lifecycle handlers should not directly treat a state write as complete.
 They should:
@@ -129,13 +131,13 @@ reviews, and the duration of the most recent batch.
 
 ## Migration Plan
 
-> **Status:** Partially implemented. Steps 1-4 are complete. Crash-injection tests are deferred.
+> **Status:** Implemented. Steps 1-5 are complete.
 
 1. ✅ Add SQLite and PostgreSQL `lifecycle_outbox` tables with a unique idempotency key.
 2. ✅ Add `LifecycleOutboxRepo` to `StoreFacade`.
 3. ✅ Convert prepare/execute/verify/commit/compensate/cancel handlers to use atomic state+outbox writes.
 4. ✅ Add bounded periodic background reconciler worker with graceful shutdown.
-5. Add crash-injection tests:
+5. ✅ Add crash-injection tests:
    - state committed, provenance missing;
    - provenance event present, edge missing;
    - terminal compensated/rolledback with recovered=false;
@@ -143,21 +145,10 @@ reviews, and the duration of the most recent batch.
 
 ## Deferred
 
-### Periodic background reconciler
-Implemented via `lifecycle_reconciliation_enabled` (default `false`),
-`lifecycle_reconciliation_interval_secs` (default `60`), and
-`lifecycle_reconciliation_batch_limit` (default `1000`). The worker spawns after
-startup pre-reconcile and runs bounded `reconcile_lifecycle_outbox` batches on a
-`tokio::time::interval`. It shuts down gracefully via `tokio::sync::Notify` when
-the HTTP server receives a shutdown signal, with a 5-second timeout for the current
-batch to complete.
-
 ### Readiness degradation for pending drift
-Deep readiness (`/v1/readyz/deep`) does not yet inspect `lifecycle_outbox` pending
-or expired-lease counts. This is deferred until the periodic reconciler is validated
-in production.
+Implemented in `/v1/readyz/deep` via the `lifecycle_outbox` component. Degrades when
+`needs_operator_review > 0` or `pending > 0`.
 
 ### Crash-injection tests
-Automated crash-injection tests that kill the process mid-transition and assert
-repair on restart are not yet implemented. They are the final validation gate for
-the outbox+reconciliation pipeline.
+Implemented for SQLite: `reconciler_repairs_missing_terminal_provenance_after_state_transition`
+and `reconciler_repairs_missing_parent_edge_for_existing_event`.

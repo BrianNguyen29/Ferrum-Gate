@@ -46,8 +46,14 @@ cargo run -p ferrum-integrations-mcp --bin ferrum-mcp-server
 # List intents
 ferrumctl intents list
 
-# Check audit log chain
+# Check audit log chain (remote)
 ferrumctl admin audit verify
+
+# Export portable audit bundle
+ferrumctl admin audit export --bundle /tmp/audit-bundle
+
+# Verify portable audit bundle locally
+ferrumctl admin audit verify --bundle /tmp/audit-bundle
 
 # Backup (SQLite)
 ferrumctl backup --output /tmp/ferrumgate-backup.sql

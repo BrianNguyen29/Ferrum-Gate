@@ -103,7 +103,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path as StdPath, PathBuf};
 use std::sync::Arc;
 
-use crate::audit::append_audit;
+use crate::audit;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
@@ -1349,8 +1349,8 @@ pub(crate) async fn cancel_execution(
     })?;
 
     // Audit log: execution canceled
-    append_audit(
-        &state.runtime.store,
+    if let Err(problem) = audit::append_audit_checked(
+        &state,
         "gateway",
         AuditAction::ExecutionCancel,
         AuditResourceType::Execution,
@@ -1359,8 +1359,12 @@ pub(crate) async fn cancel_execution(
         Some(serde_json::json!({
             "previous_state": format!("{:?}", previous_state),
         })),
+        Some(GovernanceRoute::ExecutionsCancel),
     )
-    .await;
+    .await
+    {
+        return governance_err!(state, GovernanceRoute::ExecutionsCancel, problem);
+    }
 
     // Emit SideEffectRolledBack provenance event for cancel operation.
     // Cancel triggers a rollback-like effect even if no contract exists.

@@ -99,6 +99,13 @@ jobs:
           assert root.tag == "testsuite"
           assert root.attrib["name"] == "ferrum-stress"
           PY
+      - name: Advisory perf regression gate (ADR 011)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running advisory perf gate (dry-run, non-blocking)..."
+          bash scripts/run_perf_gate.sh --dry-run --duration 5 --scenarios "health,intent-compile,sqlite-contention"
 
   postgres-live-tests:
     runs-on: ubuntu-latest

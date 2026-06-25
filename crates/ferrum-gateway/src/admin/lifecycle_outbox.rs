@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::{
-    audit::append_audit,
+    audit,
     response::{sanitized_api_error_response, sanitized_response},
     state::AppState,
 };
@@ -120,8 +120,8 @@ pub(crate) async fn retry_lifecycle_outbox(
         .flatten()
         .unwrap_or(record);
 
-    append_audit(
-        &state.runtime.store,
+    if let Err(problem) = audit::append_audit_checked(
+        &state,
         &req.actor_id,
         AuditAction::LifecycleOutboxRetry,
         AuditResourceType::LifecycleOutbox,
@@ -131,8 +131,12 @@ pub(crate) async fn retry_lifecycle_outbox(
             "reason": req.reason,
             "reconciliation_report": report,
         })),
+        None,
     )
-    .await;
+    .await
+    {
+        return axum::response::IntoResponse::into_response(problem);
+    }
 
     sanitized_response(
         &state.runtime.firewall,
@@ -172,16 +176,20 @@ pub(crate) async fn resolve_lifecycle_outbox(
         .await
     {
         Ok(Some(record)) => {
-            append_audit(
-                &state.runtime.store,
+            if let Err(problem) = audit::append_audit_checked(
+                &state,
                 &req.actor_id,
                 AuditAction::LifecycleOutboxResolve,
                 AuditResourceType::LifecycleOutbox,
                 &outbox_id.to_string(),
                 "success",
                 Some(serde_json::json!({ "reason": req.reason })),
+                None,
             )
-            .await;
+            .await
+            {
+                return axum::response::IntoResponse::into_response(problem);
+            }
             sanitized_response(
                 &state.runtime.firewall,
                 StatusCode::OK,

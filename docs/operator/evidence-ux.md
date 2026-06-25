@@ -154,6 +154,14 @@ ferrumctl readiness report --snapshot ./evidence/evidence-snapshot-...json --jso
 # 5. Verify audit chain integrity independently
 ferrumctl admin audit verify
 # Output: Audit chain verification: VALID (or INVALID with details)
+
+# 5b. Export a portable audit bundle for offline review
+ferrumctl admin audit export --bundle /tmp/audit-bundle
+# Writes audit.jsonl + manifest.json to the directory.
+
+# 5c. Verify a portable bundle locally (no server required)
+ferrumctl admin audit verify --bundle /tmp/audit-bundle
+# Checks hash chain, Merkle root, and tamper detection.
 ```
 
 ---

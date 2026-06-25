@@ -1,7 +1,7 @@
 # ADR 008 — R3 Approval Timeout and Second Factor
 
 ## Status
-Proposed
+Proposed (Phase 1 MFA stub completed; timeout auto-deny pending)
 
 ## Context
 
@@ -26,7 +26,7 @@ Propose two independent but complementary controls:
 - Introduce an optional `approval_mfa_required: bool` (config default `false`).
 - When enabled, the `POST /v1/approvals/{id}/resolve` endpoint requires a second factor in addition to the scoped token.
 - The second factor is **pluggable by design**: a TOTP code, a WebAuthn assertion, or an out-of-band cryptographic acknowledge (e.g., signed JWT from a separate identity provider).
-- Phase 1: document the interface (`MfaVerifier` trait) and provide a no-op implementation.
+- Phase 1 (completed): document the interface (`MfaVerifier` trait) and provide a no-op implementation. `approval_mfa_required` is parsed and wired; when enabled the endpoint returns `403 MfaRequired` because client factor transport is not yet modeled.
 - Phase 2: implement TOTP verification as the first concrete adapter.
 - Phase 3: operator-provided WebAuthn or IdP integration.
 
@@ -45,11 +45,11 @@ Both controls are opt-in to preserve backward compatibility.
 1. Approval timeout config is parsed, validated (min `60`, max `86400`), and applied.
 2. Pending approvals exceeding the timeout are transitioned to `timed_out` with an audit entry.
 3. Timeout rejections are reflected in the lifecycle outbox and CLI (`ferrumctl admin approvals`).
-4. `MfaVerifier` trait is defined with a `verify(actor_id, factor_payload) -> Result<(), MfaError>` interface.
-5. No-op and TOTP implementations exist behind a feature gate (`mfa-totp`).
-6. When `approval_mfa_required=true`, approval resolve returns `403` with `mfa_required` detail if the second factor is missing or invalid.
+4. `MfaVerifier` trait is defined with a `verify(actor_id, factor_payload) -> Result<(), MfaError>` interface. ✅ Phase 1
+5. No-op and TOTP implementations exist behind a feature gate (`mfa-totp`). (No-op complete; TOTP deferred to Phase 2)
+6. When `approval_mfa_required=true`, approval resolve returns `403` with `mfa_required` detail if the second factor is missing or invalid. ✅ Phase 1 (fails closed because client factor transport is not yet modeled)
 7. Documentation updated: `docs/guides/security-model.md`, `docs/operations/runbook.md`, and `docs/security/threat-model-stride.md`.
-8. Integration tests cover timeout and MFA rejection paths.
+8. Integration tests cover timeout and MFA rejection paths. ✅ Phase 1 MFA stub tests added
 
 ## Non-goals
 

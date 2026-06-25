@@ -44,7 +44,7 @@
 - Revoked token returns 401 (SEC-4).
 - Expired token returns 401 (SEC-5).
 - Audit log records actor, action, and result for current scope (SEC-6).
-- R3 approval requires explicit operator resolve (SEC-7); future: timeout auto-deny and optional second factor (ADR 008).
+- R3 approval requires explicit operator resolve (SEC-7); MFA stub implemented (ADR 008 Phase 1); timeout auto-deny pending.
 - Tenant A cannot read tenant B data — not available by single-tenant design decision; no multi-tenant claim.
 
 ## Bearer auth hardening
@@ -93,10 +93,11 @@ ferrumctl admin audit list --limit 20
 
 ### Limitations
 
-- Append is **best-effort**; store errors do not fail the primary action (see ADR 007 for a proposed fail-closed mode).
-- No cryptographic signing or WORM storage (see ADR 009 for a proposed WORM export bundle).
-- Not compliance-grade forensic audit.
-- No behavioral anomaly detection on audit patterns (see ADR 010 for a proposed profiling layer).
+- Append is **best-effort by default**; store errors do not fail the primary action.
+- Optional **fail-closed mode** (`audit_fail_closed = true`) makes audit append failures return `503 Service Unavailable` and block the action for critical mutating routes (token lifecycle, policy changes, approval resolution, execution cancel, agent lifecycle, lifecycle outbox operations). Auth-middleware audit logs remain best-effort even in fail-closed mode.
+- Enable via config/env: `audit_fail_closed = true` or `FERRUMD_AUDIT_FAIL_CLOSED=true`.
+- Metric emitted: `ferrumgate_audit_fail_closed_rejections_total`.
+- Not compliance-grade forensic audit on its own (see ADR 007 and ADR 009).
 
 ## Secret handling
 
@@ -160,7 +161,7 @@ Tenant
 - Evaluate OIDC/JWT/SSO integration.
 - Evaluate mTLS for service-to-service auth.
 - Evaluate audit fail-closed mode (ADR 007).
-- Evaluate R3 approval timeout and second-factor confirmation (ADR 008).
+- Evaluate R3 approval timeout auto-deny (ADR 008 Phase 2).
 - Evaluate behavioral anomaly detection (ADR 010).
 
 ## Related docs

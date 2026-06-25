@@ -98,6 +98,14 @@ pub struct Args {
     /// Maximum outbox records to reconcile per periodic batch (default: 1000).
     #[arg(long)]
     lifecycle_reconciliation_batch_limit: Option<u32>,
+
+    /// When true, audit append failures block the action and return 503 (default: false).
+    #[arg(long)]
+    audit_fail_closed: bool,
+
+    /// When true, approval resolve requires a second factor (MFA) (default: false).
+    #[arg(long)]
+    approval_mfa_required: bool,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -200,6 +208,10 @@ struct ServerSection {
     lifecycle_reconciliation_interval_secs: Option<u64>,
     #[serde(default)]
     lifecycle_reconciliation_batch_limit: Option<u32>,
+    #[serde(default)]
+    audit_fail_closed: Option<bool>,
+    #[serde(default)]
+    approval_mfa_required: Option<bool>,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
@@ -473,6 +485,22 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(1000);
 
+    let audit_fail_closed = if args.audit_fail_closed {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_AUDIT_FAIL_CLOSED")?
+            .or_else(|| server.as_ref().and_then(|s| s.audit_fail_closed))
+            .unwrap_or(false)
+    };
+
+    let approval_mfa_required = if args.approval_mfa_required {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_APPROVAL_MFA_REQUIRED")?
+            .or_else(|| server.as_ref().and_then(|s| s.approval_mfa_required))
+            .unwrap_or(false)
+    };
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -719,6 +747,8 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         lifecycle_reconciliation_enabled,
         lifecycle_reconciliation_interval_secs,
         lifecycle_reconciliation_batch_limit,
+        audit_fail_closed,
+        approval_mfa_required,
     };
 
     // Validate configuration
@@ -774,6 +804,8 @@ mod tests {
             "FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED",
             "FERRUMD_LIFECYCLE_RECONCILIATION_INTERVAL_SECS",
             "FERRUMD_LIFECYCLE_RECONCILIATION_BATCH_LIMIT",
+            "FERRUMD_AUDIT_FAIL_CLOSED",
+            "FERRUMD_APPROVAL_MFA_REQUIRED",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -837,6 +869,8 @@ sqlite_db_roots = ["/from/file/databases"]
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -913,6 +947,8 @@ allow_insecure_nonlocal_bind = false
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -958,6 +994,8 @@ auth_mode = "bearer"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1002,6 +1040,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1052,6 +1092,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1102,6 +1144,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).expect("expected config to be accepted");
@@ -1146,6 +1190,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).expect("expected config to be accepted");
@@ -1189,6 +1235,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1235,6 +1283,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1281,6 +1331,8 @@ rate_limit_burst = 100
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1327,6 +1379,8 @@ rate_limit_burst = 100
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1378,6 +1432,8 @@ rate_limit_burst = 100
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1424,6 +1480,8 @@ rate_limit_per_second = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1471,6 +1529,8 @@ rate_limit_burst = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1518,6 +1578,8 @@ rate_limit_burst = 20000
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1564,6 +1626,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1607,6 +1671,8 @@ log_format = "json"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1650,6 +1716,8 @@ log_format = "text"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1697,6 +1765,8 @@ log_format = "text"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1741,6 +1811,8 @@ log_format = "invalid"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -1784,6 +1856,8 @@ log_format = "compact"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1829,6 +1903,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1873,6 +1949,8 @@ write_queue_threshold = 500
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1917,6 +1995,8 @@ write_queue_threshold = 500
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -1965,6 +2045,8 @@ write_queue_threshold = 500
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2009,6 +2091,8 @@ write_queue_threshold = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -2056,6 +2140,8 @@ write_queue_threshold = 10001
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -2104,6 +2190,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2151,6 +2239,8 @@ pg_acquire_timeout_secs = 10
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2204,6 +2294,8 @@ pg_acquire_timeout_secs = 10
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2253,6 +2345,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2297,6 +2391,8 @@ pg_max_connections = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -2344,6 +2440,8 @@ pg_acquire_timeout_secs = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -2390,6 +2488,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2435,6 +2535,8 @@ pg_idle_in_transaction_timeout_ms = 7000
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2485,6 +2587,8 @@ pg_idle_in_transaction_timeout_ms = 7000
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2533,6 +2637,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2578,6 +2684,8 @@ pg_idle_in_transaction_timeout_ms = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2637,6 +2745,8 @@ fg-operators = "operator"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2731,6 +2841,8 @@ fg-admins = "admin"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2804,6 +2916,8 @@ audiences = ["ferrumgate-test"]
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let err = resolve_config(&args).err().expect("expected config error");
@@ -2858,6 +2972,8 @@ fg-admins = "admin"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let err = resolve_config(&args).err().expect("expected config error");
@@ -2914,6 +3030,8 @@ fg-admins = "admin"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -2978,6 +3096,8 @@ fg-admins = "admin"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -3024,6 +3144,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -3075,6 +3197,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -3119,6 +3243,8 @@ auth_mode = "disabled"
             lifecycle_reconciliation_enabled: true,
             lifecycle_reconciliation_interval_secs: Some(30),
             lifecycle_reconciliation_batch_limit: Some(2500),
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -3166,6 +3292,8 @@ lifecycle_reconciliation_batch_limit = 200
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let config = resolve_config(&args).unwrap();
@@ -3213,6 +3341,8 @@ lifecycle_reconciliation_interval_secs = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -3261,6 +3391,8 @@ lifecycle_reconciliation_batch_limit = 0
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: None,
             lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         };
 
         let error = resolve_config(&args).err().expect("expected config error");
@@ -3271,5 +3403,141 @@ lifecycle_reconciliation_batch_limit = 0
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_resolve_config_approval_mfa_required_defaults_to_false() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+        );
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+            lifecycle_reconciliation_enabled: false,
+            lifecycle_reconciliation_interval_secs: None,
+            lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert!(!config.approval_mfa_required);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_approval_mfa_required_from_env() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        let path = write_temp_config(
+            r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_mfa_required = false
+"#,
+        );
+
+        unsafe {
+            std::env::set_var("FERRUMD_APPROVAL_MFA_REQUIRED", "true");
+        }
+
+        let args = Args {
+            config: Some(path.clone()),
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+            lifecycle_reconciliation_enabled: false,
+            lifecycle_reconciliation_interval_secs: None,
+            lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert!(config.approval_mfa_required);
+
+        let _ = fs::remove_file(path);
+        clear_test_env();
+    }
+
+    #[test]
+    fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
+        let _guard = env_lock().lock().unwrap();
+        clear_test_env();
+
+        unsafe {
+            std::env::set_var("FERRUMD_APPROVAL_MFA_REQUIRED", "false");
+        }
+
+        let args = Args {
+            config: None,
+            bind_addr: None,
+            store_dsn: None,
+            auth_mode: None,
+            bearer_token: None,
+            allow_insecure_nonlocal_bind: false,
+            log_filter: None,
+            store_synchronous: None,
+            store_wal_autocheckpoint: None,
+            rate_limit_per_second: None,
+            rate_limit_burst: None,
+            log_format: None,
+            write_queue_threshold: None,
+            pg_max_connections: None,
+            pg_min_idle: None,
+            pg_acquire_timeout_secs: None,
+            pg_statement_timeout_ms: None,
+            pg_idle_in_transaction_timeout_ms: None,
+            lifecycle_reconciliation_enabled: false,
+            lifecycle_reconciliation_interval_secs: None,
+            lifecycle_reconciliation_batch_limit: None,
+            audit_fail_closed: false,
+            approval_mfa_required: true,
+        };
+
+        let config = resolve_config(&args).unwrap();
+        assert!(config.approval_mfa_required);
+
+        clear_test_env();
     }
 }

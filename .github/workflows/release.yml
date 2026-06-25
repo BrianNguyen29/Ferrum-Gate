@@ -23,6 +23,12 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/prepare_release.sh --execute --version "${{ github.event.inputs.version }}"
+      - name: Advisory perf regression gate (ADR 011)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "Running advisory perf gate (dry-run, non-blocking)..."
+          bash scripts/run_perf_gate.sh --dry-run --duration 5 --scenarios "health,intent-compile,sqlite-contention"
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx
       - name: Generate SBOM (CycloneDX)

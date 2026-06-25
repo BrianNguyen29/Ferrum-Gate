@@ -22,6 +22,7 @@ Before tagging a release, verify:
 - [ ] `make validate` passes (layout, contracts, MCP tools, evidence templates)
 - [ ] `make audit` passes (cargo-deny / cargo-audit)
 - [ ] `make pretarget` passes (config examples, restore drill, evidence skeleton, bearer-auth smoke)
+- [ ] `make perf-gate` passes (advisory performance regression check; see ADR 011)
 - [ ] `CHANGELOG.md` is updated with the new version section (must include release date and non-trivial content)
 - [ ] Version strings in `Cargo.toml` workspace packages are bumped if needed
 - [ ] `docs/ROADMAP.md` status table is updated if any items changed status
@@ -45,7 +46,7 @@ The script validates:
 - `CHANGELOG.md` contains a section for the target version
 - `Cargo.toml` workspace version matches the target version
 - All cargo checks, formatting, clippy, and tests pass
-- `make docs`, `make validate`, `make audit`, and `make pretarget` pass
+- `make docs`, `make validate`, `make audit`, `make pretarget`, and `make perf-gate` pass
 - Release profile smoke test passes
 
 ### Manual GitHub workflow

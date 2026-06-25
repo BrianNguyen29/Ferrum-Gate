@@ -38,6 +38,8 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub mod planner;
+pub mod snapshot;
+pub mod validation;
 pub use planner::PlannableFsAdapter;
 
 pub const ADAPTER_KIND: &str = "ferrum-adapter-fs";
@@ -186,26 +188,15 @@ impl FsAdapter {
 
     /// Validates that the given path exists and is a file.
     fn validate_path_exists(path: &str) -> Result<(), AdapterError> {
-        let p = Path::new(path);
-        if !p.exists() || !p.is_file() {
-            return Err(FsAdapterError::FilePathNotFound(path.to_string()).into());
-        }
-        Ok(())
+        validation::validate_path_exists(path)
     }
 
     /// Validates path depth against the configured maximum.
-    /// Returns an error if the path has more components than max_path_depth.
     fn validate_path_depth(path: &str, max_depth: usize) -> Result<(), FsAdapterError> {
-        let depth = Path::new(path).components().count();
-        if depth > max_depth {
-            return Err(FsAdapterError::PathDepthExceedsLimit(depth, max_depth));
-        }
-        Ok(())
+        validation::validate_path_depth(path, max_depth)
     }
 
     /// Validates that a path does not escape the sandbox via symlinks.
-    /// If sandbox_to_workdir is true, resolves all symlinks and checks the final
-    /// path stays within the workdir. Returns an error if escape is detected.
     fn validate_path_sandbox(
         path: &str,
         workdir: Option<&Path>,
@@ -372,14 +363,8 @@ impl FsAdapter {
     }
 
     /// Validates file size is within the configured limit.
-    /// Returns an error if file size exceeds max_file_size.
     fn validate_file_size(path: &str, max_size: u64) -> Result<(), FsAdapterError> {
-        let metadata = std::fs::metadata(path)?;
-        let size = metadata.len();
-        if size > max_size {
-            return Err(FsAdapterError::FileSizeExceedsLimit(size, max_size));
-        }
-        Ok(())
+        validation::validate_file_size(path, max_size)
     }
 
     /// Cross-filesystem move: copies source to destination then deletes source.
@@ -448,148 +433,44 @@ impl FsAdapter {
 
     /// Computes the SHA-256 hash of a file at the given path.
     fn compute_file_hash(path: &str) -> Result<String, FsAdapterError> {
-        let contents = Self::read_file_nofollow(path)?;
-        let mut hasher = Sha256::new();
-        hasher.update(&contents);
-        let result = hasher.finalize();
-        Ok(hex::encode(result))
+        snapshot::compute_file_hash(path)
     }
 
     /// Parses a mode string into a u32.
-    /// Handles both "0o755" (octal with prefix) and "755" (octal without prefix) formats.
     fn parse_mode_string(mode_str: &str) -> Result<u32, String> {
-        let mode_str = mode_str.trim();
-        if mode_str.is_empty() {
-            return Err("mode cannot be empty".to_string());
-        }
-
-        // Handle 0o prefix (e.g., "0o755")
-        if mode_str.starts_with("0o") || mode_str.starts_with("0O") {
-            let octal_part = &mode_str[2..];
-            u32::from_str_radix(octal_part, 8)
-                .map_err(|e| format!("invalid octal mode '{}': {}", mode_str, e))
-        } else if mode_str.starts_with("0x") || mode_str.starts_with("0X") {
-            // Handle hex prefix (e.g., "0x755")
-            u32::from_str_radix(&mode_str[2..], 16)
-                .map_err(|e| format!("invalid hex mode '{}': {}", mode_str, e))
-        } else {
-            // Assume octal (e.g., "755")
-            u32::from_str_radix(mode_str, 8)
-                .map_err(|e| format!("invalid octal mode '{}': {}", mode_str, e))
-        }
+        validation::parse_mode_string(mode_str)
     }
 
     /// Maps an IO error to FsAdapterError, converting Unix ELOOP to SymlinkNotAllowed.
     fn map_io_error_to_fs(err: std::io::Error, path: &str) -> FsAdapterError {
-        #[cfg(unix)]
-        {
-            use std::io::ErrorKind;
-            if err.kind() == ErrorKind::Other {
-                if let Some(code) = err.raw_os_error() {
-                    // ELOOP = too many symbolic links encountered
-                    if code == libc::ELOOP {
-                        return FsAdapterError::SymlinkNotAllowed(format!(
-                            "symbolic link in final component not allowed: {}",
-                            path
-                        ));
-                    }
-                }
-            }
-            // Handle NotFound as well since O_NOFOLLOW can cause it
-            if err.kind() == ErrorKind::NotFound {
-                return FsAdapterError::SymlinkNotAllowed(format!(
-                    "file does not exist or is a symlink (O_NOFOLLOW): {}",
-                    path
-                ));
-            }
-        }
-        FsAdapterError::Io(err)
+        snapshot::map_io_error_to_fs(err, path)
     }
 
     /// Reads a file without following symbolic links in the final component (Unix O_NOFOLLOW).
-    /// On Unix: uses OpenOptions with custom_flags(O_NOFOLLOW) to open the file.
-    /// On non-Unix: falls back to std::fs::read.
     fn read_file_nofollow(path: &str) -> Result<Vec<u8>, FsAdapterError> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(path)
-                .map_err(|e| Self::map_io_error_to_fs(e, path))?;
-            use std::io::Read;
-            let mut reader = file;
-            let mut contents = Vec::new();
-            reader
-                .read_to_end(&mut contents)
-                .map_err(|e| Self::map_io_error_to_fs(e, path))?;
-            Ok(contents)
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::read(path).map_err(FsAdapterError::Io)
-        }
+        snapshot::read_file_nofollow(path)
     }
 
     /// Writes to a file without following symbolic links in the final component (Unix O_NOFOLLOW).
-    /// On Unix: uses OpenOptions with custom_flags(O_NOFOLLOW) to create/truncate the file.
-    /// On non-Unix: falls back to std::fs::write.
     fn write_file_nofollow(path: &str, contents: &[u8]) -> Result<(), FsAdapterError> {
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(path)
-                .map_err(|e| Self::map_io_error_to_fs(e, path))?
-                .write_all(contents)
-                .map_err(|e| Self::map_io_error_to_fs(e, path))?;
-            Ok(())
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(path, contents).map_err(FsAdapterError::Io)
-        }
+        snapshot::write_file_nofollow(path, contents)
     }
 
     /// Computes a deterministic snapshot subdirectory path based on execution_id and target path.
-    ///
-    /// Path structure: `{snapshot_root}/{execution_id}/{path_hash}`
-    /// where `path_hash` is the first 16 hex chars of SHA-256 hash of the canonical target path.
     fn compute_snapshot_path(
         snapshot_root: &Path,
         execution_id: &ExecutionId,
         target_path: &str,
     ) -> PathBuf {
-        // Hash the target path for a compact, safe directory name
-        let mut hasher = Sha256::new();
-        hasher.update(target_path.as_bytes());
-        let hash = hex::encode(hasher.finalize());
-        let path_hash = &hash[..16]; // First 16 chars for brevity
-
-        snapshot_root
-            .join(execution_id.0.to_string())
-            .join(path_hash)
+        snapshot::compute_snapshot_path(snapshot_root, execution_id, target_path)
     }
 
     /// Captures a snapshot of the file at `target_path` to `snapshot_path`.
-    /// Returns the snapshot path on success.
     fn capture_snapshot(
         target_path: &str,
         snapshot_path: &Path,
     ) -> Result<PathBuf, FsAdapterError> {
-        // Ensure parent directory exists
-        if let Some(parent) = snapshot_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // Copy the file to snapshot location
-        std::fs::copy(target_path, snapshot_path)?;
-        Ok(snapshot_path.to_path_buf())
+        snapshot::capture_snapshot(target_path, snapshot_path)
     }
 
     /// Runs a single check spec and returns an error if it fails verification.

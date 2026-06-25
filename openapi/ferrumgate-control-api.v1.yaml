@@ -455,6 +455,8 @@ paths:
         Resolves a pending approval by granting or denying it.
         Only pending approvals can be resolved; terminal approvals return 409 Conflict.
         Expired approvals return 403 Forbidden.
+        When `approval_mfa_required` is enabled, returns 403 with `MfaRequired` because
+        client factor transport is not yet implemented (future work per ADR008).
       operationId: resolveApproval
       parameters:
         - $ref: '#/components/parameters/ApprovalId'
@@ -1582,6 +1584,7 @@ components:
             - Conflict
             - Internal
             - Unauthorized
+            - MfaRequired
         message:
           type: string
         correlation_id:

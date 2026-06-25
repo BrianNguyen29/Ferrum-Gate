@@ -26,18 +26,18 @@ use axum::{
 };
 use chrono::Utc;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, AuditAction, AuditResourceType, Decision,
-    DiffPolicyBundleVersionsResponse, EvaluateProposalResponse, EventId, HashChainRef,
-    ListPolicyBundleVersionsResponse, ObjectRef, ObjectType, PolicyBundleId, PolicyBundleResponse,
-    PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicySimulateRequest,
-    ProvenanceEvent, ProvenanceEventKind, RollbackPolicyBundleRequest,
-    RollbackPolicyBundleResponse, TrustContextSummary, parse_policy_bundle_yaml,
+    ActorRef, ActorType, ApiErrorCode, Decision, DiffPolicyBundleVersionsResponse,
+    EvaluateProposalResponse, EventId, HashChainRef, ListPolicyBundleVersionsResponse, ObjectRef,
+    ObjectType, PolicyBundleId, PolicyBundleResponse, PolicyBundleSimulateRequest,
+    PolicyBundleSimulateResponse, PolicySimulateRequest, ProvenanceEvent, ProvenanceEventKind,
+    RollbackPolicyBundleRequest, RollbackPolicyBundleResponse, TrustContextSummary,
+    parse_policy_bundle_yaml,
 };
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::audit::append_audit;
+use crate::audit;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::policy_eval::{
@@ -100,19 +100,23 @@ pub(crate) async fn create_policy_bundle(
         })?;
 
     // Audit log: policy bundle created
-    append_audit(
-        &state.runtime.store,
+    if let Err(problem) = audit::append_audit_checked(
+        &state,
         "gateway",
-        AuditAction::PolicyBundleCreate,
-        AuditResourceType::PolicyBundle,
+        ferrum_proto::AuditAction::PolicyBundleCreate,
+        ferrum_proto::AuditResourceType::PolicyBundle,
         &bundle.bundle_id,
         "success",
         Some(json!({
             "version": bundle.version,
             "content_hash": content_hash,
         })),
+        Some(GovernanceRoute::PolicyBundlesCreate),
     )
-    .await;
+    .await
+    {
+        return governance_err!(state, GovernanceRoute::PolicyBundlesCreate, problem);
+    }
 
     governance_ok!(
         state,
@@ -370,18 +374,22 @@ pub(crate) async fn set_policy_bundle_active(
         })?;
 
     // Audit log: policy bundle activated/deactivated
-    append_audit(
-        &state.runtime.store,
+    if let Err(problem) = audit::append_audit_checked(
+        &state,
         "gateway",
-        AuditAction::PolicyBundleActivate,
-        AuditResourceType::PolicyBundle,
+        ferrum_proto::AuditAction::PolicyBundleActivate,
+        ferrum_proto::AuditResourceType::PolicyBundle,
         &bundle_id,
         "success",
         Some(json!({
             "active": request.active,
         })),
+        Some(GovernanceRoute::PolicyBundlesSetActive),
     )
-    .await;
+    .await
+    {
+        return governance_err!(state, GovernanceRoute::PolicyBundlesSetActive, problem);
+    }
 
     // Emit provenance event for policy bundle activation/deactivation (POL-4)
     let policy_bundle_id = uuid::Uuid::parse_str(&bundle_id).ok().map(PolicyBundleId);
@@ -764,11 +772,11 @@ pub(crate) async fn rollback_policy_bundle(
         .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
 
     // Audit log: policy bundle rollback
-    append_audit(
-        &state.runtime.store,
+    if let Err(problem) = audit::append_audit_checked(
+        &state,
         request.actor.as_deref().unwrap_or("unknown"),
-        AuditAction::PolicyBundleRollback,
-        AuditResourceType::PolicyBundle,
+        ferrum_proto::AuditAction::PolicyBundleRollback,
+        ferrum_proto::AuditResourceType::PolicyBundle,
         &bundle_id,
         "success",
         Some(json!({
@@ -776,8 +784,12 @@ pub(crate) async fn rollback_policy_bundle(
             "new_version": new_version,
             "rolled_back_to_version": request.target_version,
         })),
+        Some(GovernanceRoute::PolicyBundlesRollback),
     )
-    .await;
+    .await
+    {
+        return governance_err!(state, GovernanceRoute::PolicyBundlesRollback, problem);
+    }
 
     // Emit provenance event
     let event = ProvenanceEvent {
