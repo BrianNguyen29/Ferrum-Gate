@@ -10,6 +10,7 @@ This directory records significant architecture decisions made in the FerrumGate
 | [003](003-store-split.md) | SQLite/PostgreSQL Store Split | Accepted |
 | [004](004-s3-feature-gate.md) | S3 Feature Gate and Live Mode Semantics | Accepted |
 | [005](005-mcp-transport-maturity.md) | MCP Transport Maturity Boundary | Accepted |
+| [006](006-archive-ledger-deferred-runtime.md) | Archive ferrum-ledger and Deferred Runtime Items | Accepted |
 
 ## Format
 

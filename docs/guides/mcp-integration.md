@@ -13,7 +13,7 @@ The MCP server does **not** implement its own policy or rollback logic. It calls
 ## Running the MCP server
 
 ```bash
-cargo run --bin ferrum-mcp-server
+cargo run -p ferrum-integrations-mcp --bin ferrum-mcp-server
 ```
 
 Or use the release binary:
@@ -50,12 +50,12 @@ The server uses **line-delimited JSON** over stdio. Each line is a single JSON-R
 
 | Transport | Status | Validation | Production-ready |
 |-----------|--------|------------|------------------|
-| **stdio** | Implemented | Local lifecycle and query_lineage validated | ✅ Yes (for local/self-hosted deployments) |
+| **stdio** | Stable (default) | Local lifecycle and query_lineage validated | ✅ Yes (for local/self-hosted deployments) |
 | **Streamable HTTP** | Skeleton | Not tested | ❌ No — experimental |
 | **SSE** | Skeleton | Not tested | ❌ No — experimental |
-| **Resumability** | Not implemented | — | ❌ No — planned |
+| **Resumability** | Not implemented | — | ❌ No — future / not committed |
 
-> **MCP transport maturity**: stdio transport is implemented and locally validated. Streamable HTTP / SSE transport and resumability are experimental and not yet production-ready.
+> **MCP transport maturity**: stdio is the default and stable transport. Streamable HTTP / SSE transport and resumability are experimental or not yet implemented and are not production-ready.
 
 ## Tools list
 

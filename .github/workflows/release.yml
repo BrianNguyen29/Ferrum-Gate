@@ -1,0 +1,55 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Target version (e.g., 0.1.0) — must match Cargo.toml workspace version'
+        required: true
+        default: '0.1.0'
+      generate_sbom:
+        description: 'Generate SBOM artifact (requires cargo-cyclonedx)'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  release-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny and cargo-audit
+        run: |
+          cargo install --locked cargo-deny
+          cargo install --locked cargo-audit
+      - name: Run release preflight script
+        run: |
+          set -euo pipefail
+          bash scripts/prepare_release.sh --dry-run --version "${{ github.event.inputs.version }}"
+      - name: Install cargo-cyclonedx
+        if: github.event.inputs.generate_sbom == 'true'
+        run: cargo install cargo-cyclonedx
+      - name: Generate SBOM (CycloneDX)
+        if: github.event.inputs.generate_sbom == 'true'
+        run: cargo cyclonedx --all
+      - name: Upload SBOM artifact
+        if: github.event.inputs.generate_sbom == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-release
+          path: target/cyclonedx/*
+          retention-days: 30
+      - name: Summary
+        run: |
+          echo "## Release Preflight" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: ${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM generated: ${{ github.event.inputs.generate_sbom }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This workflow does **not** create tags, push, or publish crates." >> $GITHUB_STEP_SUMMARY
+          echo "Manual steps after preflight passes:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Commit and tag locally." >> $GITHUB_STEP_SUMMARY
+          echo "2. Push tag to origin." >> $GITHUB_STEP_SUMMARY
+          echo "3. Create GitHub Release and attach the SBOM artifact." >> $GITHUB_STEP_SUMMARY

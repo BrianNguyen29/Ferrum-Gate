@@ -1,6 +1,10 @@
 # Execution/Provenance Outbox and Reconciliation
 
-Status: proposed implementation contract.
+Status: **partially implemented**. The store-level `LifecycleOutboxRepo` table and basic
+operator review commands (`ferrumctl admin lifecycle-outbox`) exist. The automatic
+reconciler worker, repair rules, crash-injection tests, and gateway-contract integration
+described below are **proposed / not yet implemented**.
+
 
 ## Problem
 
@@ -17,6 +21,8 @@ The runtime must detect and repair this drift without allowing side effects to
 advance silently.
 
 ## Store Contract
+
+> **Status:** Proposed / not yet implemented. The table schema and repo interface below describe the target design.
 
 Add a store-level `LifecycleOutboxRepo` with the following operations:
 
@@ -52,6 +58,8 @@ canonical RFC 3339 text.
 
 ## Reconciliation Rules
 
+> **Status:** Proposed / not yet implemented. The automatic reconciler worker and repair logic described below are not yet implemented.
+
 The reconciler is fail-closed:
 
 - If an execution is terminal but the matching terminal provenance event is absent,
@@ -70,6 +78,8 @@ The reconciler is fail-closed:
 
 ## Gateway Contract
 
+> **Status:** Proposed / not yet implemented. The gateway handler integration and readiness degradation described below are not yet implemented.
+
 Gateway lifecycle handlers should not directly treat a state write as complete.
 They should:
 
@@ -85,6 +95,8 @@ leases, expired leases, record failures, fencing conflicts, repairs, operator
 reviews, and the duration of the most recent batch.
 
 ## Migration Plan
+
+> **Status:** Proposed / not yet implemented. The phased migration and crash-injection tests described below are not yet implemented.
 
 1. Add SQLite and PostgreSQL `lifecycle_outbox` tables with a unique idempotency key.
 2. Add `LifecycleOutboxRepo` to `StoreFacade`.

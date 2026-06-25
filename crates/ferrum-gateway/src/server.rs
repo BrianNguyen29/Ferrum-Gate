@@ -34,11 +34,66 @@ use tower::ServiceBuilder;
 use ed25519_dalek::Verifier;
 
 use tower_governor::{
-    GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
+    GovernorError, GovernorLayer, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
 };
 use tower_http::trace::TraceLayer;
 
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
+
+/// Rate-limiting key that buckets authenticated requests by a principal
+/// identifier combined with IP, and anonymous requests by IP alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RateLimitKey {
+    PrincipalIp {
+        principal: String,
+        ip: std::net::IpAddr,
+    },
+    Ip(std::net::IpAddr),
+}
+
+/// Key extractor that uses principal identity when available, falling back to
+/// the client IP address.  This isolates authenticated traffic from anonymous
+/// traffic on the same IP (noisy-neighbor mitigation) while preserving the
+/// existing IP-based behavior for unauthenticated requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrincipalOrIpKeyExtractor;
+
+impl KeyExtractor for PrincipalOrIpKeyExtractor {
+    type Key = RateLimitKey;
+
+    fn extract<T>(&self, req: &axum::http::Request<T>) -> Result<Self::Key, GovernorError> {
+        let ip = tower_governor::key_extractor::SmartIpKeyExtractor.extract(req)?;
+
+        if let Some(agent_id) = req
+            .headers()
+            .get("X-Ferrum-Agent-Id")
+            .and_then(|v| v.to_str().ok())
+        {
+            if !agent_id.is_empty() {
+                return Ok(RateLimitKey::PrincipalIp {
+                    principal: format!("agent:{}", agent_id),
+                    ip,
+                });
+            }
+        }
+
+        if let Some(auth) = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+        {
+            if !auth.is_empty() {
+                let hash = blake3::hash(auth.as_bytes()).to_hex().to_string();
+                return Ok(RateLimitKey::PrincipalIp {
+                    principal: format!("auth:{}", hash),
+                    ip,
+                });
+            }
+        }
+
+        Ok(RateLimitKey::Ip(ip))
+    }
+}
 
 /// Shared state that includes both runtime and server config for auth.
 #[derive(Clone)]
@@ -735,11 +790,13 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
     let workload_router = build_workload_router(state.clone());
 
     // Rate limiting: configurable per IP via config
-    // P1: Use SmartIpKeyExtractor to align production with test helper.
-    // This supports x-real-ip / x-forwarded-for headers so workload
-    // generators can distribute traffic across distinct buckets.
+    // P3: Use PrincipalOrIpKeyExtractor to bucket authenticated requests by
+    // principal identity (agent id or auth header hash) combined with IP,
+    // falling back to IP for anonymous traffic.  This preserves the existing
+    // IP-based behavior for unauthenticated requests while mitigating
+    // noisy-neighbor issues on shared IPs.
     let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(SmartIpKeyExtractor)
+        .key_extractor(PrincipalOrIpKeyExtractor)
         .per_second(config.rate_limit_per_second)
         .burst_size(config.rate_limit_burst)
         .finish()
@@ -845,17 +902,20 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
 /// This is a test-only helper that allows configuring rate limits for integration tests.
 /// For production, rate limiting is applied in `run_http_server` with 2 req/s and burst 50.
 ///
-/// Uses SmartIpKeyExtractor which supports x-real-ip header for client IP identification,
-/// allowing tests to set the IP via header without needing MockConnectInfo.
+/// Uses PrincipalOrIpKeyExtractor which supports x-real-ip header for client IP identification
+/// and buckets authenticated requests by principal identity, falling back to IP for
+/// anonymous traffic.  This allows tests to set the IP via header without needing
+/// MockConnectInfo.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn build_router_with_governor(
     runtime: GatewayRuntime,
     per_second: u64,
     burst_size: u32,
 ) -> Router {
-    // Use SmartIpKeyExtractor to support x-real-ip header
+    // Use PrincipalOrIpKeyExtractor to support x-real-ip header and principal-aware
+    // rate limiting in tests.
     let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(SmartIpKeyExtractor)
+        .key_extractor(PrincipalOrIpKeyExtractor)
         .per_second(per_second)
         .burst_size(burst_size)
         .finish()
@@ -4615,6 +4675,197 @@ mod tests {
         assert!(
             got_429,
             "same x-real-ip should be limited across different workload routes"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // P3: PrincipalOrIpKeyExtractor principal-aware rate limiting
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_authenticated_and_anonymous_share_ip_but_separate_buckets() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust burst for anonymous traffic from IP 10.0.0.1
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Anonymous should be rate limited
+        let mut anon_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.0.0.1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                anon_limited = true;
+                break;
+            }
+        }
+        assert!(anon_limited, "anonymous should be rate limited");
+
+        // Authenticated request from same IP should still succeed (separate bucket)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("Authorization", "Bearer some-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "authenticated should have separate bucket from anonymous on same IP"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_distinct_auth_tokens_get_separate_buckets_same_ip() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust burst for principal A from IP 10.0.0.1
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("Authorization", "Bearer token-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Principal A should be rate limited
+        let mut principal_a_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.0.0.1")
+                        .header("Authorization", "Bearer token-a")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                principal_a_limited = true;
+                break;
+            }
+        }
+        assert!(principal_a_limited, "principal A should be rate limited");
+
+        // Principal B from same IP should still succeed (separate bucket)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("Authorization", "Bearer token-b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "principal B should have separate bucket from principal A"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_distinct_agent_ids_get_separate_buckets_same_ip() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust burst for agent A from IP 10.0.0.1
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("X-Ferrum-Agent-Id", "agent-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Agent A should be rate limited
+        let mut agent_a_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.0.0.1")
+                        .header("X-Ferrum-Agent-Id", "agent-a")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                agent_a_limited = true;
+                break;
+            }
+        }
+        assert!(agent_a_limited, "agent A should be rate limited");
+
+        // Agent B from same IP should still succeed (separate bucket)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("X-Ferrum-Agent-Id", "agent-b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "agent B should have separate bucket from agent A"
         );
     }
 

@@ -11,7 +11,8 @@ Current direction and near-term priorities for FerrumGate.
 | Core governance lifecycle | Stabilize intent → policy → capability → execution → verify → provenance | Stable |
 | SQLite performance | Write queue + PRAGMA tuning validated; operator tuning guide available | Stable |
 | PostgreSQL support | Runtime and CI live tests passing; HA topology remains operator-owned | Beta |
-| MCP integration | stdio tools validated; HTTP/SSE deferred | Experimental |
+| MCP stdio server | Default, stable; tools validated locally | Stable |
+| MCP HTTP/SSE transport | Streamable HTTP / SSE transport; not yet validated | Experimental |
 | AWS S3 adapter | Live execution (put/delete/get/copy) with versioning-based rollback; MinIO-gated integration tests; gateway/MCP wired | Implemented (experimental) |
 | Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
 | Multi-tenancy | Not on current roadmap | Not implemented |
@@ -43,13 +44,14 @@ Functional but may require operator tuning or have known caveats:
 
 Skeleton or partial implementation; not ready for production use:
 
-- **MCP Streamable HTTP / SSE transport and resumability.**
+- **MCP Streamable HTTP / SSE transport.**
 
 ## Next (future priorities, not implemented)
 
 These are planned future directions. They are **not** implemented and have no committed timeline.
 
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
+- **MCP resumability** — Session resumability. Not implemented; no committed timeline.
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access.
 - **Quickstart split** — Separate "5-minute cheat sheet" (copy-paste commands) from "10-minute walkthrough" (full lifecycle explanation).
 
@@ -57,7 +59,8 @@ These are planned future directions. They are **not** implemented and have no co
 
 These require broader design decisions or additional evidence before they can be committed.
 
-- **WORM export** — Write-once-read-many sink integration for stronger tamper resistance. Depends on external anchoring design.
+- **WORM export** — Write-once-read-many sink integration and portable `ferrumctl audit export` bundle for stronger tamper resistance. Depends on external anchoring design.
+- **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
 - **GCS / Azure Blob adapters** — Object-store adapters. Require rollback/ compensation contracts and local validation.
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.
 - **Production MCP HTTP/SSE** — After target-host smoke, load, and reconnect evidence exists.

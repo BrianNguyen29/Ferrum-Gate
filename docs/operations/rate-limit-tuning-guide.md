@@ -21,7 +21,14 @@ defaults are conservative.
 
 ## Root cause: why defaults fail high-throughput validation
 
-FerrumGate uses `tower_governor` with **per-IP** token-bucket rate limiting.
+FerrumGate uses `tower_governor` with **per-IP** token-bucket rate limiting
+as the baseline.  Since P3 the key extractor is also **principal-aware**:
+authenticated requests are bucketed by a derived principal identity (agent ID
+or a hash of the `Authorization` header) combined with the client IP,
+while anonymous requests fall back to IP-only bucketing.  This mitigates
+noisy-neighbor issues on shared IPs (e.g., NAT or reverse proxies) without
+weakening the existing IP-based protection for unauthenticated traffic.
+
 The built-in defaults are:
 
 ```toml
@@ -84,10 +91,15 @@ problem.
       `/v1/metrics`.
 
 4. **Revisit after topology changes**
-   - If you add more load-balancer IPs (NAT), the effective per-IP limit
-      becomes more restrictive because all traffic behind a single NAT IP
-      shares one bucket. In that case, raise limits or switch to a
-      header-based client identifier if supported by your infrastructure.
+    - If you add more load-balancer IPs (NAT), the effective per-IP limit
+       becomes more restrictive because all traffic behind a single NAT IP
+       shares one bucket.  However, authenticated traffic is isolated from
+       anonymous traffic on the same IP (principal-aware bucketing), so
+       authenticated clients are not affected by anonymous noisy neighbors.
+    - If authenticated clients still need higher limits, consider raising
+       the per-second/burst values or deploying additional gateway nodes.
+    - There is no operator-facing toggle for principal-aware mode; it is
+       always on and falls back to IP-only for anonymous requests.
 
 ---
 

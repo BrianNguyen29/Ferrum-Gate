@@ -37,7 +37,7 @@ curl http://127.0.0.1:8080/v1/readyz/deep
 ## Run the MCP server
 
 ```bash
-cargo run --bin ferrum-mcp-server
+cargo run -p ferrum-integrations-mcp --bin ferrum-mcp-server
 ```
 
 ## CLI quick checks

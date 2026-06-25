@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -35,6 +35,8 @@ help:
 	@echo "make site-build - build static site with Zola (optional; requires zola binary)"
 	@echo "make site-serve - serve static site locally with Zola (optional; requires zola binary)"
 	@echo "make site-check - check site scaffold presence (no zola required)"
+	@echo "make release-preflight - run conservative release preflight checks (dry-run, no push/publish)"
+	@echo "make release-preflight-execute - run release preflight with SBOM generation (still no push/publish)"
 	@echo "make slo-sustained-dry-run - safe dry-run rehearsal for SLO sustained observation"
 
 check:
@@ -264,3 +266,11 @@ site-check:
 			fi; \
 		fi; \
 	done
+
+release-preflight:
+	@echo "Running release preflight (dry-run, no push/publish)..."
+	@bash scripts/prepare_release.sh --dry-run
+
+release-preflight-execute:
+	@echo "Running release preflight with SBOM generation (still no push/publish)..."
+	@bash scripts/prepare_release.sh --execute

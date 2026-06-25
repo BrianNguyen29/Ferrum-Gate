@@ -854,6 +854,7 @@ paths:
           application/json:
             schema:
               type: object
+              description: TODO - schema not yet specified
       responses:
         '200':
           description: Simulation result
@@ -861,6 +862,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -879,6 +881,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -897,6 +900,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -915,6 +919,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -931,6 +936,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
     post:
@@ -942,6 +948,7 @@ paths:
           application/json:
             schema:
               type: object
+              description: TODO - schema not yet specified
       responses:
         '201':
           description: Token created
@@ -949,6 +956,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -967,6 +975,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -985,6 +994,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1001,6 +1011,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
     post:
@@ -1012,6 +1023,7 @@ paths:
           application/json:
             schema:
               type: object
+              description: TODO - schema not yet specified
       responses:
         '201':
           description: Agent registered
@@ -1019,6 +1031,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1037,6 +1050,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1053,6 +1067,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
 
@@ -1069,6 +1084,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1087,6 +1103,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1105,6 +1122,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1121,6 +1139,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
 
@@ -1150,6 +1169,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
 
@@ -1164,6 +1184,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
 
@@ -1178,6 +1199,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
 
@@ -1192,6 +1214,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
       security:
         - BearerAuth: []
     post:
@@ -1203,6 +1226,7 @@ paths:
           application/json:
             schema:
               type: object
+              description: TODO - schema not yet specified
       responses:
         '201':
           description: Checkpoint created
@@ -1210,6 +1234,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1228,6 +1253,7 @@ paths:
             application/json:
               schema:
                 type: object
+                description: TODO - schema not yet specified
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1418,7 +1444,7 @@ components:
           type: string
           nullable: true
         trusted_context:
-          type: object
+          $ref: '#/components/schemas/TrustContext'
         raw_inputs:
           type: array
           items:
@@ -1426,7 +1452,7 @@ components:
         requested_resource_scope:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceScopeItem'
         requested_risk_tier:
           type: string
           enum:
@@ -1570,15 +1596,15 @@ components:
         allowed_outcomes:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/OutcomeConstraint'
         forbidden_outcomes:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/OutcomeConstraint'
         resource_scope:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceScopeItem'
         risk_tier:
           type: string
           enum:
@@ -1601,9 +1627,9 @@ components:
             - R2Compensatable
             - R3IrreversibleHighConsequence
         time_budget:
-          type: object
+          $ref: '#/components/schemas/TimeBudget'
         trust_context:
-          type: object
+          $ref: '#/components/schemas/TrustContext'
         derived_from_event_ids:
           type: array
           items:
@@ -1721,17 +1747,17 @@ components:
           type: string
           format: uuid
         tool_binding:
-          type: object
+          $ref: '#/components/schemas/ToolBinding'
         resource_bindings:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceBinding'
         argument_constraints:
           type: array
           items:
             type: object
         taint_budget:
-          type: object
+          $ref: '#/components/schemas/TaintBudget'
         approval_binding:
           type: object
           nullable: true
@@ -1777,17 +1803,17 @@ components:
           type: string
           format: uuid
         tool_binding:
-          type: object
+          $ref: '#/components/schemas/ToolBinding'
         resource_bindings:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceBinding'
         argument_constraints:
           type: array
           items:
             type: object
         taint_budget:
-          type: object
+          $ref: '#/components/schemas/TaintBudget'
         approval_binding:
           type: object
           nullable: true
@@ -1991,18 +2017,19 @@ components:
           type: string
         target:
           type: object
+          description: "Adapter-specific target descriptor. TODO - tighten when adapter targets are stabilized."
         prepare_checks:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/RollbackCheck'
         verify_checks:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/RollbackCheck'
         compensation_plan:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/CompensationStep'
         auto_commit:
           type: boolean
         state:
@@ -2046,7 +2073,7 @@ components:
           format: uuid
           nullable: true
         requested_by:
-          type: object
+          $ref: '#/components/schemas/Actor'
         reason:
           type: string
         action_digest:
@@ -2070,7 +2097,7 @@ components:
       required: [actor, approve]
       properties:
         actor:
-          type: object
+          $ref: '#/components/schemas/Actor'
         approve:
           type: boolean
         reason:
@@ -2199,9 +2226,9 @@ components:
           type: string
           format: date-time
         actor:
-          type: object
+          $ref: '#/components/schemas/ProvenanceActor'
         object:
-          type: object
+          $ref: '#/components/schemas/ProvenanceObject'
         intent_id:
           type: string
           format: uuid
@@ -2239,7 +2266,7 @@ components:
           items:
             $ref: '#/components/schemas/ProvenanceEdge'
         hash_chain:
-          type: object
+          $ref: '#/components/schemas/HashChain'
         metadata:
           type: object
         source_runtime_id:
@@ -2765,3 +2792,464 @@ components:
               enum: [unknown]
             extra:
               type: object
+
+    ResourceMode:
+      type: string
+      enum:
+        - Read
+        - Write
+        - ReadWrite
+        - Draft
+        - Execute
+        - Admin
+
+    HttpMethod:
+      type: string
+      enum:
+        - Get
+        - Post
+        - Put
+        - Patch
+        - Delete
+
+    TrustContext:
+      type: object
+      required:
+        - input_labels
+        - sensitivity_labels
+        - taint_score
+        - contains_external_metadata
+        - contains_tool_output
+        - contains_untrusted_text
+      properties:
+        input_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Trusted
+              - UserProvided
+              - InternalPolicy
+              - InternalSystem
+              - ExternalWeb
+              - ExternalEmail
+              - ExternalRepoText
+              - ExternalToolMetadata
+              - ExternalToolOutput
+              - OCRExtracted
+              - Untrusted
+        sensitivity_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Public
+              - Internal
+              - Confidential
+              - Secret
+              - Credential
+              - Pii
+        taint_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        contains_external_metadata:
+          type: boolean
+        contains_tool_output:
+          type: boolean
+        contains_untrusted_text:
+          type: boolean
+
+    TimeBudget:
+      type: object
+      required:
+        - max_duration_ms
+        - max_steps
+        - max_retries_per_step
+      properties:
+        max_duration_ms:
+          type: integer
+          minimum: 1
+        max_steps:
+          type: integer
+          minimum: 1
+        max_retries_per_step:
+          type: integer
+          minimum: 0
+
+    OutcomeConstraint:
+      type: object
+      required:
+        - id
+        - description
+        - effect_type
+        - required
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        effect_type:
+          type: string
+          enum:
+            - ReadOnlyAnalysis
+            - DraftCreation
+            - FileMutation
+            - GitMutation
+            - DatabaseMutation
+            - ExternalApiCall
+            - ExternalCommunication
+            - Scheduling
+            - AdministrativeChange
+        required:
+          type: boolean
+
+    ToolBinding:
+      type: object
+      required:
+        - server_name
+        - tool_name
+      properties:
+        server_name:
+          type: string
+        tool_name:
+          type: string
+        tool_version:
+          type: string
+          nullable: true
+
+    TaintBudget:
+      type: object
+      required:
+        - max_taint_score
+        - allow_external_tool_output
+        - allow_external_metadata
+        - allow_untrusted_text
+      properties:
+        max_taint_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        allow_external_tool_output:
+          type: boolean
+        allow_external_metadata:
+          type: boolean
+        allow_untrusted_text:
+          type: boolean
+
+    Actor:
+      type: object
+      required:
+        - actor_type
+        - actor_id
+      properties:
+        actor_type:
+          type: string
+        actor_id:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+
+    ProvenanceActor:
+      type: object
+      required:
+        - actor_type
+        - actor_id
+      properties:
+        actor_type:
+          type: string
+          enum:
+            - User
+            - Agent
+            - PolicyEngine
+            - Gateway
+            - Adapter
+            - Operator
+            - System
+        actor_id:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+
+    ProvenanceObject:
+      type: object
+      required:
+        - object_type
+        - object_id
+      properties:
+        object_type:
+          type: string
+        object_id:
+          type: string
+        summary:
+          type: string
+          nullable: true
+
+    HashChain:
+      type: object
+      properties:
+        content_hash:
+          type: string
+          nullable: true
+        manifest_hash:
+          type: string
+          nullable: true
+        policy_bundle_hash:
+          type: string
+          nullable: true
+        previous_ledger_hash:
+          type: string
+          nullable: true
+
+    RollbackCheck:
+      type: object
+      required:
+        - check_type
+        - config
+      properties:
+        check_type:
+          type: string
+          enum:
+            - FileExists
+            - FileHashMatches
+            - GitRefMatches
+            - SqlRowCountRange
+            - HttpStatusExpected
+            - EmailDraftExists
+            - JsonPredicate
+            - S3ObjectExists
+            - S3VersionIdMatches
+        config:
+          type: object
+
+    CompensationStep:
+      type: object
+      required:
+        - order
+        - adapter_key
+        - operation
+        - args
+        - idempotency_key
+      properties:
+        order:
+          type: integer
+          minimum: 0
+        adapter_key:
+          type: string
+        operation:
+          type: string
+        args:
+          type: object
+        idempotency_key:
+          type: string
+
+    ResourceScopeItem:
+      type: object
+      oneOf:
+        - required:
+            - kind
+            - path
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - FilesystemPath
+            path:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+            content_hash:
+              type: string
+              nullable: true
+        - required:
+            - kind
+            - repo_path
+            - allowed_refs
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - GitRepository
+            repo_path:
+              type: string
+            allowed_refs:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - db_path
+            - tables
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - SqliteDatabase
+            db_path:
+              type: string
+            tables:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - method
+            - base_url
+            - path_prefix
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - HttpEndpoint
+            method:
+              $ref: '#/components/schemas/HttpMethod'
+            base_url:
+              type: string
+            path_prefix:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - recipient_allowlist
+            - subject_prefix_allowlist
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - EmailDraft
+            recipient_allowlist:
+              type: array
+              items:
+                type: string
+            subject_prefix_allowlist:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - server_name
+            - tool_name
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - McpTool
+            server_name:
+              type: string
+            tool_name:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+
+    ResourceBinding:
+      type: object
+      oneOf:
+        - required:
+            - kind
+            - path
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - File
+            path:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+            required_hash:
+              type: string
+              nullable: true
+        - required:
+            - kind
+            - repo_path
+            - allowed_refs
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - Git
+            repo_path:
+              type: string
+            allowed_refs:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - db_path
+            - tables
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - Sqlite
+            db_path:
+              type: string
+            tables:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - method
+            - base_url
+            - path_prefix
+            - header_allowlist
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - Http
+            method:
+              $ref: '#/components/schemas/HttpMethod'
+            base_url:
+              type: string
+            path_prefix:
+              type: string
+            header_allowlist:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - recipients
+            - allow_send
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - EmailDraft
+            recipients:
+              type: array
+              items:
+                type: string
+            allow_send:
+              type: boolean
+            mode:
+              $ref: '#/components/schemas/ResourceMode'

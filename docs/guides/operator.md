@@ -288,6 +288,8 @@ ferrumctl admin tokens rotate <TOKEN_ID> --reason "rotation" --expires-in-days 3
 
 ## Incident response
 
+> For the full incident runbook, see [`docs/operations/runbook.md`](../../docs/operations/runbook.md).
+
 1. **Check health**: `/v1/healthz` and `/v1/readyz` are public; `/v1/readyz/deep` requires bearer auth when auth is enabled.
 2. **Check metrics**: `/v1/metrics` requires bearer auth when auth is enabled.
 3. **Check logs**: `journalctl -u ferrumgate -n 500`

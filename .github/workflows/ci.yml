@@ -273,6 +273,33 @@ jobs:
           head -n 50 coverage.txt >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Coverage is evidence-only in this job. No threshold is enforced yet." >> $GITHUB_STEP_SUMMARY
+      - name: Coverage soft threshold warning
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          import sys
+
+          with open("coverage.txt", encoding="utf-8") as fh:
+              content = fh.read()
+
+          coverage = None
+          total_match = re.search(r'TOTAL\s+.*?([\d.]+)%', content, re.MULTILINE)
+          if total_match:
+              coverage = float(total_match.group(1))
+          else:
+              matches = re.findall(r'([\d.]+)%', content)
+              if matches:
+                  coverage = float(matches[-1])
+
+          if coverage is not None and coverage < 40.0:
+              print(f"::warning::Workspace coverage {coverage:.2f}% is below the soft threshold of 40%")
+              sys.exit(0)
+          elif coverage is not None:
+              print(f"Coverage {coverage:.2f}% meets soft threshold of 40%")
+          else:
+              print("::warning::Could not parse coverage percentage from coverage.txt")
+          PY
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --all
       - name: Upload coverage artifact
