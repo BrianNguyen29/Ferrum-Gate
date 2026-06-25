@@ -17,6 +17,7 @@ Before tagging a release, verify:
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo check --workspace --all-features` passes
 - [ ] `cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres` passes
+- [ ] `cargo check -p ferrumd --features s3` passes
 - [ ] `make docs` passes (link validation)
 - [ ] `make validate` passes (layout, contracts, MCP tools, evidence templates)
 - [ ] `make audit` passes (cargo-deny / cargo-audit)

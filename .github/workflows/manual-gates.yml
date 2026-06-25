@@ -1,7 +1,7 @@
 name: manual-gates
 
-# Manual-only workflow for expensive local gates.
-# Triggered exclusively via workflow_dispatch; does NOT run on push or pull_request.
+# Manual and scheduled workflow for expensive local gates.
+# Triggered via workflow_dispatch or nightly schedule; does NOT run on push or pull_request.
 # This avoids burning CI minutes on long-running or resource-heavy checks.
 #
 # NOT G2. NOT production-ready. NOT target evidence.
@@ -25,10 +25,12 @@ on:
           - pg-batch
           - ha-drills
           - all
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   manual-gate:
-    name: Manual Gate (${{ inputs.gate }})
+    name: Manual Gate (${{ inputs.gate || 'scheduled' }})
     runs-on: ubuntu-latest
 
     steps:
@@ -45,53 +47,75 @@ jobs:
           cache-targets: false
 
       - name: Gate — audit
-        if: ${{ inputs.gate == 'audit' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'audit' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         run: bash scripts/run_security_audit.sh
 
       - name: Gate — pretarget
-        if: ${{ inputs.gate == 'pretarget' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'pretarget' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         run: bash scripts/run_pre_target_gate.sh
 
       - name: Gate — secret-scan
-        if: ${{ inputs.gate == 'secret-scan' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'secret-scan' || inputs.gate == 'all' || github.event_name == 'schedule' }}
         run: bash scripts/run_secret_scan.sh
 
       - name: Gate — wal-drill
-        if: ${{ inputs.gate == 'wal-drill' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'wal-drill' || inputs.gate == 'all' || github.event_name == 'schedule' }}
+        continue-on-error: true
         run: bash scripts/run_wal_crash_recovery_drill.sh
 
       - name: Gate — pg-restart-drill
-        if: ${{ inputs.gate == 'pg-restart-drill' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'pg-restart-drill' || inputs.gate == 'all' || github.event_name == 'schedule' }}
+        continue-on-error: true
         run: bash scripts/run_pg_container_restart_drill.sh --dry-run
 
       - name: Gate — restore-drill
-        if: ${{ inputs.gate == 'restore-drill' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'restore-drill' || inputs.gate == 'all' || github.event_name == 'schedule' }}
+        continue-on-error: true
         run: bash scripts/run_local_restore_drill.sh
 
       - name: Gate — mcp-smoke
-        if: ${{ inputs.gate == 'mcp-smoke' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'mcp-smoke' || inputs.gate == 'all' || github.event_name == 'schedule' }}
+        continue-on-error: true
         run: bash scripts/run_mcp_lifecycle_smoke.sh
 
       - name: Gate — pg-batch (requires Docker)
-        if: ${{ inputs.gate == 'pg-batch' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'pg-batch' || inputs.gate == 'all' || github.event_name == 'schedule' }}
+        continue-on-error: true
         run: |
           echo "Running pg-batch. Ensure Docker is available and the daemon is running."
           make pg-local-batch
 
       - name: Gate — ha-drills (requires Docker)
-        if: ${{ inputs.gate == 'ha-drills' || inputs.gate == 'all' }}
+        if: ${{ inputs.gate == 'ha-drills' || inputs.gate == 'all' || github.event_name == 'schedule' }}
+        continue-on-error: true
         run: |
           echo "Running ha-drills. Ensure Docker is available and the daemon is running."
           make ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown
 
+      - name: Upload drill logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-gate-logs
+          path: |
+            target/debug/ferrumd_pg_drill.log
+            /tmp/ferrumgate-*.log
+            /tmp/ferrumgate-*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Write job summary
         run: |
-          echo "## FerrumGate v1 — Manual Gate (${{ inputs.gate }})" >> $GITHUB_STEP_SUMMARY
+          echo "## FerrumGate v1 — Manual Gate (${{ inputs.gate || 'scheduled' }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**This is a manual-only workflow.**" >> $GITHUB_STEP_SUMMARY
-          echo "It does NOT run on push or pull_request." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            echo "**Triggered by nightly schedule.**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**This is a manual workflow.**" >> $GITHUB_STEP_SUMMARY
+            echo "It does NOT run on push or pull_request." >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Selected gate: **${{ inputs.gate }}**" >> $GITHUB_STEP_SUMMARY
+          echo "Selected gate: **${{ inputs.gate || 'all (scheduled)' }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "This does NOT constitute:" >> $GITHUB_STEP_SUMMARY
           echo "- G2 evidence (G2.1-G2.8 remain pending operator action)" >> $GITHUB_STEP_SUMMARY

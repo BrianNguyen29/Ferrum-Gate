@@ -267,10 +267,16 @@ pub struct S3RollbackMetadata {
 ///
 /// Provides validation, planning, and live S3 network execution with
 /// versioning-based rollback semantics.
+///
+/// The `s3-client` feature enables the AWS SDK for live S3 calls.
+/// Without it, the adapter falls back to shape-only validation.
 pub struct S3Adapter {
     key: &'static str,
     config: S3Config,
+    #[cfg(feature = "s3-client")]
     client: std::sync::Mutex<Option<aws_sdk_s3::Client>>,
+    #[cfg(not(feature = "s3-client"))]
+    _no_client: (),
 }
 
 impl S3Adapter {
@@ -281,7 +287,10 @@ impl S3Adapter {
         Self {
             key,
             config: S3Config::default(),
+            #[cfg(feature = "s3-client")]
             client: std::sync::Mutex::new(None),
+            #[cfg(not(feature = "s3-client"))]
+            _no_client: (),
         }
     }
 
@@ -290,7 +299,10 @@ impl S3Adapter {
         Self {
             key,
             config,
+            #[cfg(feature = "s3-client")]
             client: std::sync::Mutex::new(None),
+            #[cfg(not(feature = "s3-client"))]
+            _no_client: (),
         }
     }
 
@@ -348,6 +360,7 @@ impl S3Adapter {
 
     /// Validates that versioning is required (and would be confirmed for a live client).
     /// In this slice, we enforce the config flag but do not make a live HEAD request.
+    #[cfg(feature = "s3-client")]
     async fn validate_versioning_requirement_live(
         &self,
         bucket: &str,
@@ -388,6 +401,15 @@ impl S3Adapter {
         Ok(())
     }
 
+    /// No-op fallback when `s3-client` feature is disabled.
+    #[cfg(not(feature = "s3-client"))]
+    async fn validate_versioning_requirement_live(
+        &self,
+        _bucket: &str,
+    ) -> Result<(), S3AdapterError> {
+        Ok(())
+    }
+
     /// Normalizes a validation error with phase context.
     fn phase_wrap_validation(phase: &'static str, msg: String) -> AdapterError {
         AdapterError::Validation(format!("[{}] {}", phase, msg))
@@ -415,6 +437,7 @@ impl S3Adapter {
     /// When `live` is true, `aws_config::from_env()` is used, which supports
     /// explicit credentials, environment variables, and the AWS default
     /// credential chain (including IAM roles).
+    #[cfg(feature = "s3-client")]
     async fn client(&self) -> Result<aws_sdk_s3::Client, AdapterError> {
         if !self.config.live {
             return Err(AdapterError::Validation(
@@ -458,6 +481,7 @@ impl S3Adapter {
     /// Runs a single check spec and returns an error if it fails.
     ///
     /// For live checks, uses the S3 client when available.
+    #[cfg(feature = "s3-client")]
     async fn run_check_live(
         &self,
         check: &ferrum_proto::CheckSpec,
@@ -550,6 +574,43 @@ impl S3Adapter {
             ))),
         }
     }
+
+    /// Shape-only fallback when `s3-client` feature is disabled.
+    #[cfg(not(feature = "s3-client"))]
+    async fn run_check_live(
+        &self,
+        check: &ferrum_proto::CheckSpec,
+        bucket: &str,
+        key: &str,
+        _phase: &'static str,
+    ) -> Result<(), AdapterError> {
+        match check.check_type {
+            CheckType::S3ObjectExists | CheckType::S3VersionIdMatches => {
+                // Validate 'bucket' and 'key' fields if present
+                if let Some(serde_json::Value::String(check_bucket)) = check.config.get("bucket") {
+                    if check_bucket != bucket {
+                        return Err(AdapterError::Validation(format!(
+                            "S3ObjectExists check bucket mismatch: check targets '{}', expected '{}'",
+                            check_bucket, bucket
+                        )));
+                    }
+                }
+                if let Some(serde_json::Value::String(check_key)) = check.config.get("key") {
+                    if check_key != key {
+                        return Err(AdapterError::Validation(format!(
+                            "S3ObjectExists check key mismatch: check targets '{}', expected '{}'",
+                            check_key, key
+                        )));
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(AdapterError::Unsupported(format!(
+                "unsupported check type: {:?}",
+                check.check_type
+            ))),
+        }
+    }
 }
 
 #[async_trait]
@@ -619,6 +680,7 @@ impl RollbackAdapter for S3Adapter {
         );
 
         // Capture before_version_id via live HeadObject if client available
+        #[cfg(feature = "s3-client")]
         let before_version_id = if let Ok(client) = self.client().await {
             match client.head_object().bucket(bucket).key(key).send().await {
                 Ok(resp) => resp.version_id().map(String::from),
@@ -630,6 +692,8 @@ impl RollbackAdapter for S3Adapter {
         } else {
             version_id.map(String::from)
         };
+        #[cfg(not(feature = "s3-client"))]
+        let before_version_id = version_id.map(String::from);
         if let Some(ref vid) = before_version_id {
             metadata.insert(
                 "before_version_id".to_string(),
@@ -758,6 +822,7 @@ impl RollbackAdapter for S3Adapter {
                 );
 
                 // Live execution: try PutObject if client available
+                #[cfg(feature = "s3-client")]
                 let after_version_id = if let Ok(client) = self.client().await {
                     let body = aws_sdk_s3::primitives::ByteStream::from(content.clone());
                     match client
@@ -797,6 +862,15 @@ impl RollbackAdapter for S3Adapter {
                     );
                     None
                 };
+                #[cfg(not(feature = "s3-client"))]
+                let after_version_id = {
+                    metadata.insert("after_version_id".to_string(), serde_json::Value::Null);
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                    None
+                };
 
                 Ok(ExecuteReceipt {
                     external_id: after_version_id,
@@ -824,6 +898,7 @@ impl RollbackAdapter for S3Adapter {
                 );
 
                 // Live execution: try DeleteObject if client available
+                #[cfg(feature = "s3-client")]
                 let delete_marker_version_id = if let Ok(client) = self.client().await {
                     match client.delete_object().bucket(bucket).key(key).send().await {
                         Ok(resp) => {
@@ -863,6 +938,18 @@ impl RollbackAdapter for S3Adapter {
                     );
                     None
                 };
+                #[cfg(not(feature = "s3-client"))]
+                let delete_marker_version_id = {
+                    metadata.insert(
+                        "delete_marker_version_id".to_string(),
+                        serde_json::Value::Null,
+                    );
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                    None
+                };
 
                 Ok(ExecuteReceipt {
                     external_id: delete_marker_version_id,
@@ -890,7 +977,9 @@ impl RollbackAdapter for S3Adapter {
                 );
 
                 // Live execution: try GetObject if client available
+                #[cfg(feature = "s3-client")]
                 let mut result_digest = None;
+                #[cfg(feature = "s3-client")]
                 if let Ok(client) = self.client().await {
                     match client.get_object().bucket(bucket).key(key).send().await {
                         Ok(resp) => {
@@ -927,6 +1016,15 @@ impl RollbackAdapter for S3Adapter {
                         }
                     }
                 } else {
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                }
+                #[cfg(not(feature = "s3-client"))]
+                let result_digest = None;
+                #[cfg(not(feature = "s3-client"))]
+                {
                     metadata.insert(
                         "execution_groundwork".to_string(),
                         serde_json::Value::Bool(true),
@@ -982,6 +1080,7 @@ impl RollbackAdapter for S3Adapter {
                 );
 
                 // Live execution: try CopyObject if client available
+                #[cfg(feature = "s3-client")]
                 let after_version_id = if let Ok(client) = self.client().await {
                     let copy_source = format!("{}/{}", bucket, key);
                     match client
@@ -1014,6 +1113,15 @@ impl RollbackAdapter for S3Adapter {
                         }
                     }
                 } else {
+                    metadata.insert("after_version_id".to_string(), serde_json::Value::Null);
+                    metadata.insert(
+                        "execution_groundwork".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                    None
+                };
+                #[cfg(not(feature = "s3-client"))]
+                let after_version_id = {
                     metadata.insert("after_version_id".to_string(), serde_json::Value::Null);
                     metadata.insert(
                         "execution_groundwork".to_string(),
@@ -1094,6 +1202,7 @@ impl S3Adapter {
     ///
     /// When `live: true`, the adapter attempts a live S3 delete of the captured
     /// after version or delete marker; if the live delete fails, `recovered` is false.
+    #[cfg(feature = "s3-client")]
     async fn rollback_or_compensate(
         &self,
         contract: &RollbackContract,
@@ -1209,6 +1318,65 @@ impl S3Adapter {
                     adapter_metadata: JsonMap::new(),
                 })
             }
+            _ => Err(AdapterError::Unsupported(format!(
+                "[{}] unsupported action type for rollback/compensate: {:?}",
+                phase, contract.action_type
+            ))),
+        }
+    }
+
+    /// Fallback when `s3-client` feature is disabled: no live delete possible.
+    #[cfg(not(feature = "s3-client"))]
+    async fn rollback_or_compensate(
+        &self,
+        contract: &RollbackContract,
+        phase: &'static str,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        let (bucket, key, _version_id) = Self::extract_s3_target(&contract.target)?;
+
+        if let Err(e) = self.validate_bucket_allowlist(bucket) {
+            return Err(Self::phase_wrap_validation(phase, e.to_string()));
+        }
+        if let Err(e) = Self::validate_object_key(key) {
+            return Err(Self::phase_wrap_validation(phase, e.to_string()));
+        }
+
+        match contract.action_type {
+            ActionType::S3PutObject | ActionType::S3DeleteObject | ActionType::S3CopyObject => {
+                let mut metadata = JsonMap::new();
+                metadata.insert(
+                    "adapter_kind".to_string(),
+                    serde_json::Value::String(ADAPTER_KIND.to_string()),
+                );
+                metadata.insert(
+                    "phase".to_string(),
+                    serde_json::Value::String(phase.to_string()),
+                );
+                metadata.insert("recovered".to_string(), serde_json::Value::Bool(false));
+                metadata.insert(
+                    "reason".to_string(),
+                    serde_json::Value::String(
+                        "S3 rollback/compensate requires s3-client feature for live delete"
+                            .to_string(),
+                    ),
+                );
+                metadata.insert(
+                    "bucket".to_string(),
+                    serde_json::Value::String(bucket.to_string()),
+                );
+                metadata.insert(
+                    "object_key".to_string(),
+                    serde_json::Value::String(key.to_string()),
+                );
+                Ok(RecoveryReceipt {
+                    recovered: false,
+                    adapter_metadata: metadata,
+                })
+            }
+            ActionType::S3GetObject => Ok(RecoveryReceipt {
+                recovered: true,
+                adapter_metadata: JsonMap::new(),
+            }),
             _ => Err(AdapterError::Unsupported(format!(
                 "[{}] unsupported action type for rollback/compensate: {:?}",
                 phase, contract.action_type
@@ -1517,6 +1685,11 @@ mod tests {
         let contract = make_test_contract(ActionType::S3PutObject);
         let receipt = adapter.rollback(&contract).await.unwrap();
         assert!(!receipt.recovered);
+        let expected_reason = if cfg!(feature = "s3-client") {
+            "S3 rollback/compensate did not delete a version; client unavailable or no after_version_id/delete_marker_version_id"
+        } else {
+            "S3 rollback/compensate requires s3-client feature for live delete"
+        };
         assert_eq!(
             receipt
                 .adapter_metadata
@@ -1524,7 +1697,7 @@ mod tests {
                 .unwrap()
                 .as_str()
                 .unwrap(),
-            "S3 rollback/compensate did not delete a version; client unavailable or no after_version_id/delete_marker_version_id"
+            expected_reason
         );
     }
 

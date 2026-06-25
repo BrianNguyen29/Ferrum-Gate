@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = ["stdio"]
+stdio = []
+http = ["dep:axum", "dep:tower"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,8 +23,8 @@ chrono = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-axum = { workspace = true }
-tower = { workspace = true }
+axum = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
 clap = { workspace = true }
 
 [dev-dependencies]

@@ -34,6 +34,7 @@
 //! - OAuth/auth implementation for MCP HTTP
 //! - Real external MCP client compatibility claim
 
+#[cfg(feature = "http")]
 use axum::{
     Router,
     extract::State,
@@ -42,14 +43,18 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Parser, ValueEnum};
+#[cfg(feature = "http")]
+use ferrum_integrations_mcp::tool_registry;
 use ferrum_integrations_mcp::{
     ActorIdentity, ClientConfig, FerrumGatewayClient, JsonRpcResponse, RateLimiter,
-    dispatch_with_client, parse_request, tool_registry,
+    dispatch_with_client, parse_request,
 };
 #[allow(unused_imports)]
 use ferrum_integrations_mcp::{JsonRpcRequest, dispatch};
 use std::io::{self, BufRead, Write};
+#[cfg(feature = "http")]
 use std::net::SocketAddr;
+#[cfg(feature = "http")]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -73,9 +78,9 @@ struct Cli {
 /// Transport mode selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Transport {
-    /// Line-based stdio JSON-RPC transport.
+    /// Line-based stdio JSON-RPC transport (stable, default).
     Stdio,
-    /// Streamable HTTP transport skeleton.
+    /// Streamable HTTP transport skeleton (experimental, requires `http` feature).
     Http,
 }
 
@@ -211,9 +216,10 @@ fn run_stdio() {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP Transport (Phase 6.1)
+// HTTP Transport (Phase 6.1) — gated behind `http` feature
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "http")]
 /// Shared application state for HTTP handlers.
 struct AppState {
     client: FerrumGatewayClient,
@@ -221,6 +227,7 @@ struct AppState {
     rate_limiter: RateLimiter,
 }
 
+#[cfg(feature = "http")]
 /// `GET /health` — basic health probe.
 async fn health_handler() -> impl IntoResponse {
     (
@@ -229,6 +236,7 @@ async fn health_handler() -> impl IntoResponse {
     )
 }
 
+#[cfg(feature = "http")]
 /// `GET /ready` — shallow readiness with tool count and basic config.
 async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let tool_count = tool_registry().len();
@@ -241,6 +249,7 @@ async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     (StatusCode::OK, axum::Json(response))
 }
 
+#[cfg(feature = "http")]
 /// `POST /mcp` — accept a single JSON-RPC message and return synchronous `application/json`.
 async fn mcp_post_handler(
     State(state): State<Arc<AppState>>,
@@ -262,6 +271,7 @@ async fn mcp_post_handler(
     Ok(axum::Json(response))
 }
 
+#[cfg(feature = "http")]
 /// `GET /mcp` — SSE streaming placeholder. Returns 405 per Phase 6.1 boundary.
 async fn mcp_get_handler() -> impl IntoResponse {
     (
@@ -273,6 +283,7 @@ async fn mcp_get_handler() -> impl IntoResponse {
     )
 }
 
+#[cfg(feature = "http")]
 /// Run the HTTP transport server.
 async fn run_http(bind: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = match FerrumGatewayClient::from_env() {
@@ -324,8 +335,18 @@ async fn main() {
             std::process::exit(0);
         }
         Transport::Http => {
-            if let Err(e) = run_http(&cli.bind).await {
-                eprintln!("HTTP server error: {}", e);
+            #[cfg(feature = "http")]
+            {
+                if let Err(e) = run_http(&cli.bind).await {
+                    eprintln!("HTTP server error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                eprintln!(
+                    "HTTP transport requires the `http` feature. Build with --features http to enable it."
+                );
                 std::process::exit(1);
             }
         }
@@ -335,9 +356,6 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use http_body_util::BodyExt;
-    use tower::ServiceExt;
 
     #[test]
     fn test_cli_defaults() {
@@ -472,9 +490,10 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // HTTP transport tests (Phase 6.1)
+    // HTTP transport tests (Phase 6.1) — gated behind `http` feature
     // -------------------------------------------------------------------------
 
+    #[cfg(feature = "http")]
     fn test_app() -> Router {
         // Create the blocking client on a dedicated thread to avoid
         // "cannot create a runtime in an async context" panic.
@@ -501,8 +520,13 @@ mod tests {
             .with_state(state)
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_health() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let response = app
             .oneshot(
@@ -520,8 +544,13 @@ mod tests {
         assert_eq!(json["status"], "ok");
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_ready() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let response = app
             .oneshot(
@@ -541,8 +570,13 @@ mod tests {
         assert_eq!(json["transport"], "http");
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_mcp_post_initialize() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
         let response = app
@@ -565,8 +599,13 @@ mod tests {
         assert_eq!(json["jsonrpc"], "2.0");
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_mcp_post_ping() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":42}"#;
         let response = app
@@ -589,8 +628,13 @@ mod tests {
         assert_eq!(json["id"], 42);
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_mcp_post_invalid_json() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let body_json = "not valid json";
         let response = app
@@ -612,8 +656,13 @@ mod tests {
         assert_eq!(json["error"]["code"], -32700);
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_mcp_get_returns_405() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let response = app
             .oneshot(
@@ -636,8 +685,13 @@ mod tests {
     // Phase 6.5 HTTP Transport Compatibility Tests
     // -------------------------------------------------------------------------
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_mcp_post_tools_list_returns_200_with_expected_count() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = app
@@ -660,8 +714,13 @@ mod tests {
         assert_eq!(tools.len(), 19);
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_mcp_post_tools_list_entries_have_required_fields() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
         let app = test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = app

@@ -154,7 +154,7 @@ s3-test:
 	@echo "Running S3 adapter MinIO integration tests..."
 	@if curl -sSf http://localhost:9000/minio/health/live >/dev/null 2>&1; then \
 		echo "[OK] MinIO detected at localhost:9000"; \
-		cargo test -p ferrum-adapter-s3 --test minio_integration -- --ignored; \
+		cargo test -p ferrum-adapter-s3 --features s3-client --test minio_integration -- --ignored; \
 	else \
 		echo "[SKIP] MinIO not running at localhost:9000."; \
 		echo "To run these tests, start MinIO with:"; \
