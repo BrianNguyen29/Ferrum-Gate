@@ -3549,8 +3549,13 @@ mod tests {
         d.update(&body_bytes);
         let request_digest = format!("{:x}", d.finalize());
 
-        let contract =
-            create_replay_contract(&url, payload, "idem-key-12345", &request_digest, &[200]);
+        let contract = create_replay_contract(
+            &url,
+            payload,
+            "test-idem-placeholder-001",
+            &request_digest,
+            &[200],
+        );
 
         let result = adapter.compensate(&contract).await;
         assert!(
@@ -3568,7 +3573,7 @@ mod tests {
         );
         assert_eq!(
             receipt.adapter_metadata.get("idempotency_key").unwrap(),
-            &serde_json::Value::String("idem-key-12345".to_string())
+            &serde_json::Value::String("test-idem-placeholder-001".to_string())
         );
         assert_eq!(
             receipt.adapter_metadata.get("response_status").unwrap(),
@@ -4797,7 +4802,7 @@ mod tests {
         let contract = create_replay_contract_with_method(
             &url,
             payload,
-            "put-idem-key-12345",
+            "test-idem-placeholder-002",
             &request_digest,
             &[200],
             HttpMethod::Put,
@@ -4819,7 +4824,7 @@ mod tests {
         );
         assert_eq!(
             receipt.adapter_metadata.get("idempotency_key").unwrap(),
-            &serde_json::Value::String("put-idem-key-12345".to_string())
+            &serde_json::Value::String("test-idem-placeholder-002".to_string())
         );
         assert_eq!(
             receipt.adapter_metadata.get("replay_method").unwrap(),

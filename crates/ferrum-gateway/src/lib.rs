@@ -9,6 +9,7 @@ mod execution;
 mod intents;
 mod lineage;
 mod macros;
+mod mfa;
 mod monitoring;
 mod policy;
 mod policy_eval;
@@ -19,5 +20,6 @@ mod response;
 mod server;
 mod state;
 
+pub use mfa::*;
 pub use server::*;
 pub use state::*;

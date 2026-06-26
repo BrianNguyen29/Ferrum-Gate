@@ -455,6 +455,8 @@ paths:
         Resolves a pending approval by granting or denying it.
         Only pending approvals can be resolved; terminal approvals return 409 Conflict.
         Expired approvals return 403 Forbidden.
+        When `approval_mfa_required` is enabled, returns 403 with `MfaRequired` because
+        client factor transport is not yet implemented (future work per ADR008).
       operationId: resolveApproval
       parameters:
         - $ref: '#/components/parameters/ApprovalId'
@@ -853,14 +855,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/PolicyBundleSimulateRequest'
       responses:
         '200':
           description: Simulation result
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/PolicyBundleSimulateResponse'
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -878,7 +880,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/ListPolicyBundleVersionsResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -890,13 +892,25 @@ paths:
       operationId: diffPolicyBundle
       parameters:
         - $ref: '#/components/parameters/BundleId'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: Source version number
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: Target version number
       responses:
         '200':
           description: Diff result
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/DiffPolicyBundleVersionsResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -908,13 +922,19 @@ paths:
       operationId: rollbackPolicyBundle
       parameters:
         - $ref: '#/components/parameters/BundleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackPolicyBundleRequest'
       responses:
         '200':
           description: Rollback result
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/RollbackPolicyBundleResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -924,13 +944,47 @@ paths:
     get:
       summary: List admin tokens
       operationId: listAdminTokens
+      parameters:
+        - name: actor_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by actor ID
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by token role
+        - name: active_only
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Return only non-revoked, non-expired tokens
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of tokens to return
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
       responses:
         '200':
           description: Token list
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/TokenListResponse'
       security:
         - BearerAuth: []
     post:
@@ -941,14 +995,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/CreateTokenRequest'
       responses:
         '201':
           description: Token created
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/CreateTokenResponse'
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -960,13 +1014,15 @@ paths:
       operationId: deleteAdminToken
       parameters:
         - $ref: '#/components/parameters/TokenId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeTokenRequest'
       responses:
-        '200':
+        '204':
           description: Token deleted
-          content:
-            application/json:
-              schema:
-                type: object
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -978,13 +1034,19 @@ paths:
       operationId: rotateAdminToken
       parameters:
         - $ref: '#/components/parameters/TokenId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateTokenRequest'
       responses:
-        '200':
+        '201':
           description: Token rotated
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/CreateTokenResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -994,13 +1056,35 @@ paths:
     get:
       summary: List agents
       operationId: listAgents
+      parameters:
+        - name: active_only
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Return only non-revoked agents
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of agents to return
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
       responses:
         '200':
           description: Agent list
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AgentListResponse'
       security:
         - BearerAuth: []
     post:
@@ -1011,14 +1095,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/RegisterAgentRequest'
       responses:
         '201':
           description: Agent registered
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/RegisterAgentResponse'
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1030,13 +1114,15 @@ paths:
       operationId: deleteAgent
       parameters:
         - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeAgentRequest'
       responses:
-        '200':
+        '204':
           description: Agent deleted
-          content:
-            application/json:
-              schema:
-                type: object
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1046,13 +1132,35 @@ paths:
     get:
       summary: List lifecycle outbox records
       operationId: listLifecycleOutbox
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - needs_operator_review
+              - pending
+              - provenance_written
+              - reconciled
+          default: needs_operator_review
+          description: Filter by outbox status
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of records to return
       responses:
         '200':
           description: Outbox records
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/LifecycleOutboxListResponse'
       security:
         - BearerAuth: []
 
@@ -1068,7 +1176,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/LifecycleOutboxRecord'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1080,13 +1188,19 @@ paths:
       operationId: retryLifecycleOutbox
       parameters:
         - $ref: '#/components/parameters/OutboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LifecycleOutboxRetryRequest'
       responses:
         '200':
           description: Retry accepted
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/LifecycleOutboxRetryResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1098,13 +1212,19 @@ paths:
       operationId: resolveLifecycleOutbox
       parameters:
         - $ref: '#/components/parameters/OutboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LifecycleOutboxResolveRequest'
       responses:
         '200':
           description: Resolve accepted
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/LifecycleOutboxResolveResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1114,13 +1234,84 @@ paths:
     get:
       summary: List audit logs
       operationId: listAuditLogs
+      parameters:
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - TokenCreate
+              - TokenRevoke
+              - TokenRotate
+              - PolicyBundleCreate
+              - PolicyBundleActivate
+              - PolicyBundleRollback
+              - ApprovalResolve
+              - ExecutionCancel
+              - AuthFailed
+              - AgentRegister
+              - AgentRevoke
+              - AgentAuthFailed
+              - LifecycleOutboxRetry
+              - LifecycleOutboxResolve
+          description: Filter by audit action
+        - name: resource_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - Token
+              - PolicyBundle
+              - Approval
+              - Execution
+              - Auth
+              - Agent
+              - LifecycleOutbox
+          description: Filter by resource type
+        - name: resource_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by resource ID (exact match)
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of audit log entries to return
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Filter entries created at or after this time (RFC 3339)
+        - name: until
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Filter entries created at or before this time (RFC 3339)
       responses:
         '200':
           description: Audit logs
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditLogListResponse'
       security:
         - BearerAuth: []
 
@@ -1149,7 +1340,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditLogVerifyResponse'
       security:
         - BearerAuth: []
 
@@ -1157,13 +1348,21 @@ paths:
     get:
       summary: Verify merkle tree
       operationId: verifyMerkle
+      parameters:
+        - name: window_start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: UTC-aligned hourly window start (RFC 3339)
       responses:
         '200':
           description: Merkle verification result
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditMerkleVerifyResponse'
       security:
         - BearerAuth: []
 
@@ -1171,13 +1370,29 @@ paths:
     get:
       summary: List merkle roots
       operationId: listMerkleRoots
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of merkle roots to return
       responses:
         '200':
           description: Merkle roots
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditMerkleRootListResponse'
       security:
         - BearerAuth: []
 
@@ -1185,13 +1400,29 @@ paths:
     get:
       summary: List audit checkpoints
       operationId: listAuditCheckpoints
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of checkpoints to return
       responses:
         '200':
           description: Checkpoints
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditCheckpointListResponse'
       security:
         - BearerAuth: []
     post:
@@ -1202,14 +1433,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: '#/components/schemas/CreateCheckpointRequest'
       responses:
         '201':
           description: Checkpoint created
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditCheckpointVerifyResponse'
         '400':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1227,7 +1458,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: '#/components/schemas/AuditCheckpointVerifyResponse'
         '404':
           $ref: '#/components/responses/ApiError'
       security:
@@ -1353,6 +1584,7 @@ components:
             - Conflict
             - Internal
             - Unauthorized
+            - MfaRequired
         message:
           type: string
         correlation_id:
@@ -1418,7 +1650,7 @@ components:
           type: string
           nullable: true
         trusted_context:
-          type: object
+          $ref: '#/components/schemas/TrustContext'
         raw_inputs:
           type: array
           items:
@@ -1426,7 +1658,7 @@ components:
         requested_resource_scope:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceScopeItem'
         requested_risk_tier:
           type: string
           enum:
@@ -1570,15 +1802,15 @@ components:
         allowed_outcomes:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/OutcomeConstraint'
         forbidden_outcomes:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/OutcomeConstraint'
         resource_scope:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceScopeItem'
         risk_tier:
           type: string
           enum:
@@ -1601,9 +1833,9 @@ components:
             - R2Compensatable
             - R3IrreversibleHighConsequence
         time_budget:
-          type: object
+          $ref: '#/components/schemas/TimeBudget'
         trust_context:
-          type: object
+          $ref: '#/components/schemas/TrustContext'
         derived_from_event_ids:
           type: array
           items:
@@ -1721,17 +1953,17 @@ components:
           type: string
           format: uuid
         tool_binding:
-          type: object
+          $ref: '#/components/schemas/ToolBinding'
         resource_bindings:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceBinding'
         argument_constraints:
           type: array
           items:
             type: object
         taint_budget:
-          type: object
+          $ref: '#/components/schemas/TaintBudget'
         approval_binding:
           type: object
           nullable: true
@@ -1777,17 +2009,17 @@ components:
           type: string
           format: uuid
         tool_binding:
-          type: object
+          $ref: '#/components/schemas/ToolBinding'
         resource_bindings:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/ResourceBinding'
         argument_constraints:
           type: array
           items:
             type: object
         taint_budget:
-          type: object
+          $ref: '#/components/schemas/TaintBudget'
         approval_binding:
           type: object
           nullable: true
@@ -1991,18 +2223,19 @@ components:
           type: string
         target:
           type: object
+          description: "Adapter-specific target descriptor. TODO - tighten when adapter targets are stabilized."
         prepare_checks:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/RollbackCheck'
         verify_checks:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/RollbackCheck'
         compensation_plan:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/CompensationStep'
         auto_commit:
           type: boolean
         state:
@@ -2046,7 +2279,7 @@ components:
           format: uuid
           nullable: true
         requested_by:
-          type: object
+          $ref: '#/components/schemas/Actor'
         reason:
           type: string
         action_digest:
@@ -2070,7 +2303,7 @@ components:
       required: [actor, approve]
       properties:
         actor:
-          type: object
+          $ref: '#/components/schemas/Actor'
         approve:
           type: boolean
         reason:
@@ -2199,9 +2432,9 @@ components:
           type: string
           format: date-time
         actor:
-          type: object
+          $ref: '#/components/schemas/ProvenanceActor'
         object:
-          type: object
+          $ref: '#/components/schemas/ProvenanceObject'
         intent_id:
           type: string
           format: uuid
@@ -2239,7 +2472,7 @@ components:
           items:
             $ref: '#/components/schemas/ProvenanceEdge'
         hash_chain:
-          type: object
+          $ref: '#/components/schemas/HashChain'
         metadata:
           type: object
         source_runtime_id:
@@ -2765,3 +2998,1349 @@ components:
               enum: [unknown]
             extra:
               type: object
+
+    ResourceMode:
+      type: string
+      enum:
+        - Read
+        - Write
+        - ReadWrite
+        - Draft
+        - Execute
+        - Admin
+
+    HttpMethod:
+      type: string
+      enum:
+        - Get
+        - Post
+        - Put
+        - Patch
+        - Delete
+
+    TrustContext:
+      type: object
+      required:
+        - input_labels
+        - sensitivity_labels
+        - taint_score
+        - contains_external_metadata
+        - contains_tool_output
+        - contains_untrusted_text
+      properties:
+        input_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Trusted
+              - UserProvided
+              - InternalPolicy
+              - InternalSystem
+              - ExternalWeb
+              - ExternalEmail
+              - ExternalRepoText
+              - ExternalToolMetadata
+              - ExternalToolOutput
+              - OCRExtracted
+              - Untrusted
+        sensitivity_labels:
+          type: array
+          items:
+            type: string
+            enum:
+              - Public
+              - Internal
+              - Confidential
+              - Secret
+              - Credential
+              - Pii
+        taint_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        contains_external_metadata:
+          type: boolean
+        contains_tool_output:
+          type: boolean
+        contains_untrusted_text:
+          type: boolean
+
+    TimeBudget:
+      type: object
+      required:
+        - max_duration_ms
+        - max_steps
+        - max_retries_per_step
+      properties:
+        max_duration_ms:
+          type: integer
+          minimum: 1
+        max_steps:
+          type: integer
+          minimum: 1
+        max_retries_per_step:
+          type: integer
+          minimum: 0
+
+    OutcomeConstraint:
+      type: object
+      required:
+        - id
+        - description
+        - effect_type
+        - required
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        effect_type:
+          type: string
+          enum:
+            - ReadOnlyAnalysis
+            - DraftCreation
+            - FileMutation
+            - GitMutation
+            - DatabaseMutation
+            - ExternalApiCall
+            - ExternalCommunication
+            - Scheduling
+            - AdministrativeChange
+        required:
+          type: boolean
+
+    ToolBinding:
+      type: object
+      required:
+        - server_name
+        - tool_name
+      properties:
+        server_name:
+          type: string
+        tool_name:
+          type: string
+        tool_version:
+          type: string
+          nullable: true
+
+    TaintBudget:
+      type: object
+      required:
+        - max_taint_score
+        - allow_external_tool_output
+        - allow_external_metadata
+        - allow_untrusted_text
+      properties:
+        max_taint_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        allow_external_tool_output:
+          type: boolean
+        allow_external_metadata:
+          type: boolean
+        allow_untrusted_text:
+          type: boolean
+
+    Actor:
+      type: object
+      required:
+        - actor_type
+        - actor_id
+      properties:
+        actor_type:
+          type: string
+        actor_id:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+
+    ProvenanceActor:
+      type: object
+      required:
+        - actor_type
+        - actor_id
+      properties:
+        actor_type:
+          type: string
+          enum:
+            - User
+            - Agent
+            - PolicyEngine
+            - Gateway
+            - Adapter
+            - Operator
+            - System
+        actor_id:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+
+    ProvenanceObject:
+      type: object
+      required:
+        - object_type
+        - object_id
+      properties:
+        object_type:
+          type: string
+        object_id:
+          type: string
+        summary:
+          type: string
+          nullable: true
+
+    HashChain:
+      type: object
+      properties:
+        content_hash:
+          type: string
+          nullable: true
+        manifest_hash:
+          type: string
+          nullable: true
+        policy_bundle_hash:
+          type: string
+          nullable: true
+        previous_ledger_hash:
+          type: string
+          nullable: true
+
+    RollbackCheck:
+      type: object
+      required:
+        - check_type
+        - config
+      properties:
+        check_type:
+          type: string
+          enum:
+            - FileExists
+            - FileHashMatches
+            - GitRefMatches
+            - SqlRowCountRange
+            - HttpStatusExpected
+            - EmailDraftExists
+            - JsonPredicate
+            - S3ObjectExists
+            - S3VersionIdMatches
+        config:
+          type: object
+
+    CompensationStep:
+      type: object
+      required:
+        - order
+        - adapter_key
+        - operation
+        - args
+        - idempotency_key
+      properties:
+        order:
+          type: integer
+          minimum: 0
+        adapter_key:
+          type: string
+        operation:
+          type: string
+        args:
+          type: object
+        idempotency_key:
+          type: string
+
+    ResourceScopeItem:
+      type: object
+      oneOf:
+        - required:
+            - kind
+            - path
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - FilesystemPath
+            path:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+            content_hash:
+              type: string
+              nullable: true
+        - required:
+            - kind
+            - repo_path
+            - allowed_refs
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - GitRepository
+            repo_path:
+              type: string
+            allowed_refs:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - db_path
+            - tables
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - SqliteDatabase
+            db_path:
+              type: string
+            tables:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - method
+            - base_url
+            - path_prefix
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - HttpEndpoint
+            method:
+              $ref: '#/components/schemas/HttpMethod'
+            base_url:
+              type: string
+            path_prefix:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - recipient_allowlist
+            - subject_prefix_allowlist
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - EmailDraft
+            recipient_allowlist:
+              type: array
+              items:
+                type: string
+            subject_prefix_allowlist:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - server_name
+            - tool_name
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - McpTool
+            server_name:
+              type: string
+            tool_name:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+
+    ResourceBinding:
+      type: object
+      oneOf:
+        - required:
+            - kind
+            - path
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - File
+            path:
+              type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+            required_hash:
+              type: string
+              nullable: true
+        - required:
+            - kind
+            - repo_path
+            - allowed_refs
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - Git
+            repo_path:
+              type: string
+            allowed_refs:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - db_path
+            - tables
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - Sqlite
+            db_path:
+              type: string
+            tables:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - method
+            - base_url
+            - path_prefix
+            - header_allowlist
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - Http
+            method:
+              $ref: '#/components/schemas/HttpMethod'
+            base_url:
+              type: string
+            path_prefix:
+              type: string
+            header_allowlist:
+              type: array
+              items:
+                type: string
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+        - required:
+            - kind
+            - recipients
+            - allow_send
+            - mode
+          properties:
+            kind:
+              type: string
+              enum:
+                - EmailDraft
+            recipients:
+              type: array
+              items:
+                type: string
+            allow_send:
+              type: boolean
+            mode:
+              $ref: '#/components/schemas/ResourceMode'
+
+    TokenRole:
+      type: string
+      enum:
+        - Admin
+        - Operator
+        - PolicyAuthor
+        - Auditor
+        - Agent
+        - ReadOnly
+
+    ScopedTokenMeta:
+      type: object
+      required:
+        - token_id
+        - actor_id
+        - role
+        - scopes
+        - expires_at
+        - created_at
+      properties:
+        token_id:
+          type: string
+        actor_id:
+          type: string
+        role:
+          $ref: '#/components/schemas/TokenRole'
+        scopes:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_reason:
+          type: string
+          nullable: true
+        rotated_from:
+          type: string
+          nullable: true
+
+    CreateTokenRequest:
+      type: object
+      required:
+        - actor_id
+        - role
+        - expires_at
+      properties:
+        actor_id:
+          type: string
+        role:
+          $ref: '#/components/schemas/TokenRole'
+        scopes:
+          type: array
+          items:
+            type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+
+    CreateTokenResponse:
+      type: object
+      required:
+        - token
+        - token_value
+      properties:
+        token:
+          $ref: '#/components/schemas/ScopedTokenMeta'
+        token_value:
+          type: string
+          description: The opaque bearer token value. Returned exactly once.
+
+    TokenListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScopedTokenMeta'
+        next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+
+    RevokeTokenRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+
+    RotateTokenRequest:
+      type: object
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+
+    AgentRecord:
+      type: object
+      required:
+        - agent_id
+        - public_key
+        - key_fingerprint
+        - allowed_scopes
+        - created_at
+      properties:
+        agent_id:
+          type: string
+        public_key:
+          type: string
+          description: Base64-encoded Ed25519 raw 32-byte public key.
+        key_fingerprint:
+          type: string
+          description: Base64url-encoded SHA-256 of public_key.
+        allowed_scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    RegisterAgentRequest:
+      type: object
+      required:
+        - agent_id
+        - public_key
+      properties:
+        agent_id:
+          type: string
+        public_key:
+          type: string
+          description: Base64-encoded Ed25519 raw 32-byte public key.
+        scopes:
+          type: array
+          items:
+            type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    RegisterAgentResponse:
+      type: object
+      required:
+        - agent
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentRecord'
+
+    AgentListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentRecord'
+        next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+
+    RevokeAgentRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+
+    LifecycleOutboxStatus:
+      type: string
+      enum:
+        - PendingProvenance
+        - ProvenanceWritten
+        - Reconciled
+        - NeedsOperatorReview
+
+    ProvenanceObligation:
+      type: object
+      required:
+        - event_kind
+        - parent_kind
+        - edge_type
+        - event_id
+      properties:
+        event_kind:
+          type: string
+          enum:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+            - PolicyBundleActivated
+            - PolicyBundleDeactivated
+            - PolicyBundleRolledBack
+        parent_kind:
+          type: string
+          enum:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+            - PolicyBundleActivated
+            - PolicyBundleDeactivated
+            - PolicyBundleRolledBack
+          nullable: true
+        edge_type:
+          type: string
+          enum:
+            - DerivedFrom
+            - AuthorizedBy
+            - ApprovedBy
+            - TaintedBy
+            - UsesManifest
+            - EvaluatedByPolicy
+            - Caused
+            - Compensates
+            - Verifies
+            - References
+          nullable: true
+        event_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    LifecycleOutboxRecord:
+      type: object
+      required:
+        - outbox_id
+        - execution_id
+        - new_execution_state
+        - intended_provenance_kind
+        - idempotency_key
+        - status
+        - attempt_count
+        - created_at
+        - updated_at
+        - metadata
+      properties:
+        outbox_id:
+          type: string
+          format: uuid
+        execution_id:
+          type: string
+          format: uuid
+        rollback_contract_id:
+          type: string
+          format: uuid
+          nullable: true
+        previous_execution_state:
+          type: string
+          enum:
+            - Proposed
+            - Authorized
+            - Prepared
+            - Running
+            - AwaitingApproval
+            - AwaitingVerification
+            - Committed
+            - Compensated
+            - RolledBack
+            - Denied
+            - Quarantined
+            - Failed
+            - Canceled
+          nullable: true
+        new_execution_state:
+          type: string
+          enum:
+            - Proposed
+            - Authorized
+            - Prepared
+            - Running
+            - AwaitingApproval
+            - AwaitingVerification
+            - Committed
+            - Compensated
+            - RolledBack
+            - Denied
+            - Quarantined
+            - Failed
+            - Canceled
+        previous_rollback_state:
+          type: string
+          enum:
+            - PendingPrepare
+            - Prepared
+            - ExecutedAwaitingVerify
+            - Verified
+            - Committed
+            - CompensationPending
+            - Compensated
+            - RolledBack
+            - Failed
+            - Expired
+          nullable: true
+        new_rollback_state:
+          type: string
+          enum:
+            - PendingPrepare
+            - Prepared
+            - ExecutedAwaitingVerify
+            - Verified
+            - Committed
+            - CompensationPending
+            - Compensated
+            - RolledBack
+            - Failed
+            - Expired
+          nullable: true
+        intended_provenance_kind:
+          type: string
+          enum:
+            - UserGoalReceived
+            - IntentCompiled
+            - IntentRevoked
+            - ActionProposalSubmitted
+            - PolicyEvaluated
+            - CapabilityMinted
+            - CapabilityRevoked
+            - ApprovalRequested
+            - ApprovalGranted
+            - ApprovalDenied
+            - ToolCallPrepared
+            - ToolCallIntercepted
+            - ToolCallExecuted
+            - ToolOutputReceived
+            - ToolOutputSanitized
+            - DlpBlocked
+            - SideEffectPrepared
+            - SideEffectVerified
+            - SideEffectCommitted
+            - SideEffectCompensated
+            - SideEffectRolledBack
+            - Quarantined
+            - ErrorRaised
+            - ExternalEventReceived
+            - PolicyBundleActivated
+            - PolicyBundleDeactivated
+            - PolicyBundleRolledBack
+        idempotency_key:
+          type: string
+        status:
+          $ref: '#/components/schemas/LifecycleOutboxStatus'
+        provenance_event_id:
+          type: string
+          format: uuid
+          nullable: true
+        provenance_obligations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvenanceObligation'
+        attempt_count:
+          type: integer
+          minimum: 0
+        last_error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+
+    LifecycleOutboxListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LifecycleOutboxRecord'
+        total:
+          type: integer
+
+    LifecycleOutboxRetryRequest:
+      type: object
+      required:
+        - actor_id
+      properties:
+        actor_id:
+          type: string
+        reason:
+          type: string
+          nullable: true
+
+    LifecycleOutboxRetryResponse:
+      type: object
+      required:
+        - record
+        - reconciliation_report
+      properties:
+        record:
+          $ref: '#/components/schemas/LifecycleOutboxRecord'
+        reconciliation_report:
+          type: object
+
+    LifecycleOutboxResolveRequest:
+      type: object
+      required:
+        - actor_id
+        - reason
+      properties:
+        actor_id:
+          type: string
+        reason:
+          type: string
+
+    LifecycleOutboxResolveResponse:
+      type: object
+      required:
+        - record
+      properties:
+        record:
+          $ref: '#/components/schemas/LifecycleOutboxRecord'
+
+    AuditAction:
+      type: string
+      enum:
+        - TokenCreate
+        - TokenRevoke
+        - TokenRotate
+        - PolicyBundleCreate
+        - PolicyBundleActivate
+        - PolicyBundleRollback
+        - ApprovalResolve
+        - ExecutionCancel
+        - AuthFailed
+        - AgentRegister
+        - AgentRevoke
+        - AgentAuthFailed
+        - LifecycleOutboxRetry
+        - LifecycleOutboxResolve
+
+    AuditResourceType:
+      type: string
+      enum:
+        - Token
+        - PolicyBundle
+        - Approval
+        - Execution
+        - Auth
+        - Agent
+        - LifecycleOutbox
+
+    AuditLogEntry:
+      type: object
+      required:
+        - id
+        - actor_id
+        - action
+        - resource_type
+        - resource_id
+        - result
+        - created_at
+      properties:
+        id:
+          type: integer
+        actor_id:
+          type: string
+        action:
+          $ref: '#/components/schemas/AuditAction'
+        resource_type:
+          $ref: '#/components/schemas/AuditResourceType'
+        resource_id:
+          type: string
+        result:
+          type: string
+        metadata:
+          type: object
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        content_hash:
+          type: string
+          nullable: true
+        previous_hash:
+          type: string
+          nullable: true
+
+    AuditLogListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+        next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+
+    AuditLogVerifyResponse:
+      type: object
+      required:
+        - valid
+        - total_entries
+        - hashed_entries
+      properties:
+        valid:
+          type: boolean
+        total_entries:
+          type: integer
+        hashed_entries:
+          type: integer
+        error:
+          type: string
+          nullable: true
+
+    AuditMerkleRoot:
+      type: object
+      required:
+        - window_start
+        - root
+        - entry_count
+        - computed_at
+      properties:
+        window_start:
+          type: string
+          format: date-time
+        root:
+          type: string
+        entry_count:
+          type: integer
+        computed_at:
+          type: string
+          format: date-time
+
+    AuditMerkleVerifyResponse:
+      type: object
+      required:
+        - valid
+        - window_start
+        - root
+        - entry_count
+      properties:
+        valid:
+          type: boolean
+        window_start:
+          type: string
+          format: date-time
+        root:
+          type: string
+        entry_count:
+          type: integer
+        error:
+          type: string
+          nullable: true
+
+    AuditMerkleRootListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditMerkleRoot'
+        next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+
+    AuditCheckpoint:
+      type: object
+      required:
+        - window_start
+        - merkle_root
+        - entry_count
+        - signer_id
+        - signer_key_fingerprint
+        - signed_at
+        - signature
+        - public_key
+      properties:
+        window_start:
+          type: string
+          format: date-time
+        merkle_root:
+          type: string
+        entry_count:
+          type: integer
+        signer_id:
+          type: string
+        signer_key_fingerprint:
+          type: string
+        signed_at:
+          type: string
+          format: date-time
+        signature:
+          type: string
+          description: Base64-encoded Ed25519 signature.
+        public_key:
+          type: string
+          description: Base64-encoded Ed25519 public key.
+
+    CreateCheckpointRequest:
+      type: object
+      required:
+        - window_start
+        - merkle_root
+        - entry_count
+        - signer_id
+        - signer_key_fingerprint
+        - signed_at
+        - signature
+        - public_key
+      properties:
+        window_start:
+          type: string
+          format: date-time
+        merkle_root:
+          type: string
+        entry_count:
+          type: integer
+        signer_id:
+          type: string
+        signer_key_fingerprint:
+          type: string
+        signed_at:
+          type: string
+          format: date-time
+        signature:
+          type: string
+        public_key:
+          type: string
+
+    AuditCheckpointListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditCheckpoint'
+        next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+
+    AuditCheckpointVerifyResponse:
+      type: object
+      required:
+        - valid
+        - window_start
+      properties:
+        valid:
+          type: boolean
+        window_start:
+          type: string
+          format: date-time
+        error:
+          type: string
+          nullable: true
+        checkpoint:
+          $ref: '#/components/schemas/AuditCheckpoint'
+          nullable: true
+        current_root:
+          type: string
+          nullable: true
+        current_entry_count:
+          type: integer
+          nullable: true
+
+    PolicyBundleVersion:
+      type: object
+      required:
+        - id
+        - bundle_id
+        - version
+        - content
+        - active
+        - created_at
+      properties:
+        id:
+          type: string
+        bundle_id:
+          type: string
+        version:
+          type: integer
+        content:
+          $ref: '#/components/schemas/PolicyBundle'
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    ListPolicyBundleVersionsResponse:
+      type: object
+      required:
+        - versions
+        - total
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyBundleVersion'
+        total:
+          type: integer
+
+    DiffPolicyBundleVersionsResponse:
+      type: object
+      required:
+        - bundle_id
+        - from_version
+        - to_version
+        - diff
+      properties:
+        bundle_id:
+          type: string
+        from_version:
+          type: integer
+        to_version:
+          type: integer
+        diff:
+          type: object
+
+    PolicyBundleSimulateRequest:
+      type: object
+      required:
+        - bundle_yaml
+        - proposal
+      properties:
+        bundle_yaml:
+          type: string
+        proposal:
+          $ref: '#/components/schemas/ActionProposal'
+        intent:
+          $ref: '#/components/schemas/IntentEnvelope'
+          nullable: true
+
+    PolicyBundleSimulateResponse:
+      type: object
+      required:
+        - decision
+        - reason
+        - matched_rule_ids
+        - warnings
+      properties:
+        decision:
+          type: string
+          enum:
+            - Allow
+            - Deny
+            - Quarantine
+            - RequireApproval
+            - AllowDraftOnly
+        reason:
+          type: string
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    RollbackPolicyBundleRequest:
+      type: object
+      required:
+        - target_version
+      properties:
+        target_version:
+          type: integer
+        actor:
+          type: string
+          nullable: true
+
+    RollbackPolicyBundleResponse:
+      type: object
+      required:
+        - bundle_id
+        - new_version
+        - previous_version
+        - rolled_back_to_version
+      properties:
+        bundle_id:
+          type: string
+        new_version:
+          type: integer
+        previous_version:
+          type: integer
+        rolled_back_to_version:
+          type: integer

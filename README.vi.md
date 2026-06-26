@@ -76,6 +76,7 @@ Entrypoint và công cụ:
 
 - `ferrumd` — gateway daemon
 - `ferrumctl` — CLI cho health, readiness, audit, policy, approvals, lifecycle outbox, backup/restore
+- `ferrum-mcp-server` — MCP stdio server (mặc định, stable)
 - `ferrum-migrate` — hỗ trợ migration SQLite sang PostgreSQL
 - `ferrum-stress` — stress/smoke scenarios có output machine-readable
 - `ferrum-tui` — terminal dashboard cho operator
@@ -84,11 +85,11 @@ Entrypoint và công cụ:
 
 ## Trạng thái dự án
 
-- **Stable** — intent lifecycle, policy evaluation, capability minting, rollback prepare/verify/compensate, SQLite write queue, provenance chain, bearer/scoped/OIDC/agent auth.
-- **Implemented** — filesystem, HTTP, Git, SQLite, mail draft adapter; `ferrumctl` CLI; `ferrum-stress`; `ferrum-tui`; Prometheus metrics; rate limiting; Helm chart.
+- **Stable** — intent lifecycle, policy evaluation, capability minting, rollback prepare/verify/compensate, SQLite write queue, provenance chain, bearer/scoped/OIDC/agent auth. MCP stdio server là default và stable.
+- **Implemented** — filesystem, HTTP, Git, SQLite, mail draft adapter; S3 adapter (experimental); `ferrumctl` CLI; `ferrum-stress`; `ferrum-tui`; Prometheus metrics; rate limiting; Helm chart.
 - **Beta** — PostgreSQL runtime (local và CI live-tested). Production HA/multi-node topology thuộc trách nhiệm của operator, không được cung cấp bởi repo này.
-- **Experimental** — MCP Streamable HTTP / SSE transport và resumability.
-- **Not implemented / out of scope** — multi-tenancy, managed service, gửi email, compliance certification.
+- **Experimental** — MCP Streamable HTTP / SSE transport.
+- **Not implemented / out of scope** — multi-tenancy, managed service, gửi email, compliance certification, MCP resumability.
 
 > **Lưu ý trung thực:** FerrumGate không phải sản phẩm HA turnkey hay chứng nhận compliance. Operator vẫn chịu trách nhiệm về deployment topology, TLS, secrets, backup, database HA và production acceptance testing.
 

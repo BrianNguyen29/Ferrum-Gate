@@ -10,7 +10,6 @@ members = [
   "crates/ferrum-firewall",
   "crates/ferrum-store",
   "crates/ferrum-graph",
-  "crates/ferrum-ledger",
   "crates/ferrum-adapter-fs",
   "crates/ferrum-adapter-git",
   "crates/ferrum-adapter-sqlite",

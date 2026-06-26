@@ -10,10 +10,13 @@ use ferrum_proto::{
     ApiError, ApiErrorCode, AuditAction, AuditLogEntry, AuditLogListResponse,
     AuditMerkleRootListResponse, AuditMerkleVerifyResponse, AuditResourceType,
 };
+use ferrum_store::StoreError;
 use ferrum_store::StoreFacade;
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::monitoring::GovernanceRoute;
+use crate::problem::ApiProblem;
 use crate::response::{sanitized_api_error_response, sanitized_response};
 use crate::state::AppState;
 
@@ -914,7 +917,8 @@ pub(crate) async fn export_audit_logs(
     }
 }
 
-/// Append an audit log entry. Errors are logged but not propagated.
+/// Append an audit log entry. Returns the store error so callers can decide
+/// whether to fail closed based on configuration.
 pub(crate) async fn append_audit(
     store: &Arc<dyn StoreFacade>,
     actor_id: &str,
@@ -923,7 +927,7 @@ pub(crate) async fn append_audit(
     resource_id: &str,
     result: &str,
     metadata: Option<serde_json::Value>,
-) {
+) -> Result<(), StoreError> {
     let entry = AuditLogEntry {
         id: 0,
         actor_id: actor_id.to_string(),
@@ -936,7 +940,292 @@ pub(crate) async fn append_audit(
         content_hash: None,
         previous_hash: None,
     };
-    if let Err(e) = store.audit_log().append(&entry).await {
-        tracing::warn!(error = %e, "failed to append audit log entry");
+    store.audit_log().append(&entry).await
+}
+
+/// Append an audit log entry respecting `audit_fail_closed`.
+///
+/// - When `audit_fail_closed` is false (default): logs the error and returns Ok.
+/// - When `audit_fail_closed` is true: returns a 503 `ApiProblem` on store error,
+///   increments the `audit_fail_closed_rejections` metric, and blocks the action.
+pub(crate) async fn append_audit_checked(
+    state: &Arc<AppState>,
+    actor_id: &str,
+    action: AuditAction,
+    resource_type: AuditResourceType,
+    resource_id: &str,
+    result: &str,
+    metadata: Option<serde_json::Value>,
+    route: Option<GovernanceRoute>,
+) -> Result<(), ApiProblem> {
+    match append_audit(
+        &state.runtime.store,
+        actor_id,
+        action,
+        resource_type,
+        resource_id,
+        result,
+        metadata,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if state.server_config.audit_fail_closed {
+                tracing::error!(error = %e, route = ?route, "audit append failed in fail-closed mode; rejecting request");
+                state
+                    .metrics
+                    .audit_fail_closed_rejections
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Err(ApiProblem::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ApiErrorCode::Internal,
+                    "audit append failed: action blocked by fail-closed policy",
+                ))
+            } else {
+                tracing::warn!(error = %e, route = ?route, "failed to append audit log entry");
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::monitoring::GovernanceRoute;
+    use crate::state::{AppState, GatewayRuntime, ServerConfig};
+    use ferrum_proto::{AuditAction, AuditLogEntry, AuditResourceType};
+    use ferrum_store::{SqliteStore, StoreError, StoreFacade, repos::AuditLogRepo};
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    /// A test-only StoreFacade that wraps a real store but makes audit_log().append() fail.
+    struct FailingAuditStoreFacade {
+        inner: Arc<dyn StoreFacade>,
+    }
+
+    impl FailingAuditStoreFacade {
+        fn new(inner: Arc<dyn StoreFacade>) -> Self {
+            Self { inner }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StoreFacade for FailingAuditStoreFacade {
+        fn capabilities(&self) -> Arc<dyn ferrum_store::repos::CapabilityRepo> {
+            self.inner.capabilities()
+        }
+        fn executions(&self) -> Arc<dyn ferrum_store::repos::ExecutionRepo> {
+            self.inner.executions()
+        }
+        fn rollback_contracts(&self) -> Arc<dyn ferrum_store::repos::RollbackRepo> {
+            self.inner.rollback_contracts()
+        }
+        fn lifecycle_outbox(&self) -> Arc<dyn ferrum_store::repos::LifecycleOutboxRepo> {
+            self.inner.lifecycle_outbox()
+        }
+        fn approvals(&self) -> Arc<dyn ferrum_store::repos::ApprovalRepo> {
+            self.inner.approvals()
+        }
+        fn provenance(&self) -> Arc<dyn ferrum_store::repos::ProvenanceRepo> {
+            self.inner.provenance()
+        }
+        fn ledger(&self) -> Arc<dyn ferrum_store::repos::LedgerRepo> {
+            self.inner.ledger()
+        }
+        fn intents(&self) -> Arc<dyn ferrum_store::repos::IntentRepo> {
+            self.inner.intents()
+        }
+        fn proposals(&self) -> Arc<dyn ferrum_store::repos::ProposalRepo> {
+            self.inner.proposals()
+        }
+        fn policy_bundles(&self) -> Arc<dyn ferrum_store::repos::PolicyBundleRepo> {
+            self.inner.policy_bundles()
+        }
+        fn tokens(&self) -> Arc<dyn ferrum_store::repos::TokenRepo> {
+            self.inner.tokens()
+        }
+        fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+            Arc::new(FailingAuditLogRepo)
+        }
+        fn audit_merkle_roots(&self) -> Arc<dyn ferrum_store::repos::AuditMerkleRootRepo> {
+            self.inner.audit_merkle_roots()
+        }
+        fn audit_checkpoints(&self) -> Arc<dyn ferrum_store::repos::AuditCheckpointRepo> {
+            self.inner.audit_checkpoints()
+        }
+        fn agents(&self) -> Arc<dyn ferrum_store::repos::AgentRepo> {
+            self.inner.agents()
+        }
+        fn write_queue_depth(&self) -> usize {
+            self.inner.write_queue_depth()
+        }
+        async fn health_check(&self) -> ferrum_store::Result<()> {
+            self.inner.health_check().await
+        }
+    }
+
+    struct FailingAuditLogRepo;
+
+    #[async_trait::async_trait]
+    impl AuditLogRepo for FailingAuditLogRepo {
+        async fn append(&self, _entry: &AuditLogEntry) -> ferrum_store::Result<()> {
+            Err(StoreError::Other(
+                "audit append failure for testing".to_string(),
+            ))
+        }
+        async fn list(
+            &self,
+            _action: Option<AuditAction>,
+            _resource_type: Option<AuditResourceType>,
+            _resource_id: Option<&str>,
+            _cursor: Option<&str>,
+            _limit: u32,
+            _since: Option<chrono::DateTime<chrono::Utc>>,
+            _until: Option<chrono::DateTime<chrono::Utc>>,
+        ) -> ferrum_store::Result<(Vec<AuditLogEntry>, Option<String>)> {
+            Ok((Vec::new(), None))
+        }
+        async fn verify_chain(&self) -> ferrum_store::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn test_runtime() -> GatewayRuntime {
+        use ferrum_cap::InMemoryCapabilityService;
+        use ferrum_pdp::StaticPdpEngine;
+        use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+
+        let pdp = Arc::new(StaticPdpEngine);
+        let cap = Arc::new(InMemoryCapabilityService::default());
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, vec![])
+    }
+
+    #[tokio::test]
+    async fn test_append_audit_returns_ok_on_success() {
+        let runtime = test_runtime().await;
+        let store = runtime.store.clone();
+        let result = append_audit(
+            &store,
+            "test-actor",
+            AuditAction::TokenCreate,
+            AuditResourceType::Token,
+            "token-1",
+            "success",
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_append_audit_returns_err_on_failure() {
+        let runtime = test_runtime().await;
+        let failing_store =
+            Arc::new(FailingAuditStoreFacade::new(runtime.store.clone())) as Arc<dyn StoreFacade>;
+        let result = append_audit(
+            &failing_store,
+            "test-actor",
+            AuditAction::TokenCreate,
+            AuditResourceType::Token,
+            "token-1",
+            "success",
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_append_audit_checked_best_effort_ignores_failure() {
+        let runtime = test_runtime().await;
+        let failing_store =
+            Arc::new(FailingAuditStoreFacade::new(runtime.store.clone())) as Arc<dyn StoreFacade>;
+        let mut runtime = runtime;
+        runtime.store = failing_store;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+
+        let result = append_audit_checked(
+            &state,
+            "test-actor",
+            AuditAction::TokenCreate,
+            AuditResourceType::Token,
+            "token-1",
+            "success",
+            None,
+            Some(GovernanceRoute::AgentsCreate),
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_append_audit_checked_fail_closed_returns_503() {
+        let runtime = test_runtime().await;
+        let failing_store =
+            Arc::new(FailingAuditStoreFacade::new(runtime.store.clone())) as Arc<dyn StoreFacade>;
+        let mut runtime = runtime;
+        runtime.store = failing_store;
+        let config = ServerConfig {
+            audit_fail_closed: true,
+            ..ServerConfig::default()
+        };
+        let state = AppState::test_new(runtime, config);
+
+        let result = append_audit_checked(
+            &state,
+            "test-actor",
+            AuditAction::TokenCreate,
+            AuditResourceType::Token,
+            "token-1",
+            "success",
+            None,
+            Some(GovernanceRoute::AgentsCreate),
+        )
+        .await;
+        assert!(result.is_err());
+        let problem = result.unwrap_err();
+        assert_eq!(problem.1, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_append_audit_checked_fail_closed_increments_metric() {
+        let runtime = test_runtime().await;
+        let failing_store =
+            Arc::new(FailingAuditStoreFacade::new(runtime.store.clone())) as Arc<dyn StoreFacade>;
+        let mut runtime = runtime;
+        runtime.store = failing_store;
+        let config = ServerConfig {
+            audit_fail_closed: true,
+            ..ServerConfig::default()
+        };
+        let state = AppState::test_new(runtime, config);
+
+        let before = state
+            .metrics
+            .audit_fail_closed_rejections
+            .load(Ordering::Relaxed);
+        let _ = append_audit_checked(
+            &state,
+            "test-actor",
+            AuditAction::TokenCreate,
+            AuditResourceType::Token,
+            "token-1",
+            "success",
+            None,
+            Some(GovernanceRoute::AgentsCreate),
+        )
+        .await;
+        let after = state
+            .metrics
+            .audit_fail_closed_rejections
+            .load(Ordering::Relaxed);
+        assert_eq!(after, before + 1);
     }
 }

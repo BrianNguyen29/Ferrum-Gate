@@ -1,0 +1,33 @@
+{
+  "format_version": "1.0",
+  "scenario": "health",
+  "concurrency": 50,
+  "duration_secs": 5,
+  "metrics": {
+    "req_per_sec": {
+      "baseline": 5000.0,
+      "unit": "req/s",
+      "min_ratio": 0.70
+    },
+    "p95_ms": {
+      "baseline": 20.0,
+      "unit": "ms",
+      "max_ratio": 2.00
+    },
+    "p99_ms": {
+      "baseline": 30.0,
+      "unit": "ms",
+      "max_ratio": 2.50
+    },
+    "error_rate": {
+      "baseline": 0.0,
+      "unit": "ratio",
+      "max_absolute": 0.01
+    }
+  },
+  "meta": {
+    "last_validated_commit": "sample",
+    "validated_at": "2026-06-25T00:00:00Z",
+    "note": "SAMPLE / NON-AUTHORITATIVE baseline for CI scaffolding. Values are conservative estimates from post-write-queue stress tests. Do not use for blocking gates until validated on a controlled runner."
+  }
+}

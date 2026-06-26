@@ -23,21 +23,21 @@ FERRUMD_BIND_ADDR=127.0.0.1:18080 \
 ## Health check
 
 ```bash
-curl http://127.0.0.1:8080/v1/healthz
+curl http://127.0.0.1:18080/v1/healthz
 # → {"status":"ok"}
 ```
 
 ## Deep readiness (checks store/queue)
 
 ```bash
-curl http://127.0.0.1:8080/v1/readyz/deep
+curl http://127.0.0.1:18080/v1/readyz/deep
 # → 200 if healthy; 503 if degraded
 ```
 
 ## Run the MCP server
 
 ```bash
-cargo run --bin ferrum-mcp-server
+cargo run -p ferrum-integrations-mcp --bin ferrum-mcp-server
 ```
 
 ## CLI quick checks
@@ -46,8 +46,14 @@ cargo run --bin ferrum-mcp-server
 # List intents
 ferrumctl intents list
 
-# Check audit log chain
+# Check audit log chain (remote)
 ferrumctl admin audit verify
+
+# Export portable audit bundle
+ferrumctl admin audit export --bundle /tmp/audit-bundle
+
+# Verify portable audit bundle locally
+ferrumctl admin audit verify --bundle /tmp/audit-bundle
 
 # Backup (SQLite)
 ferrumctl backup --output /tmp/ferrumgate-backup.sql

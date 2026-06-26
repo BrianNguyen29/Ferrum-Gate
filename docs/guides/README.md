@@ -24,6 +24,7 @@ For product-level positioning and onboarding, start with the root README:
 | [Security Model](security-model.md) | Bearer auth, scoped tokens, RBAC design, tenant model |
 | [Service Metrics](slo-sla.md) | Observability baselines, validation runbook, metrics |
 | [Adapter Reference](adapter-reference.md) | Per-adapter operations, rollback, limitations, examples, risk classes |
+| [Custom Adapter Guide](custom-adapter.md) | Developer guide for extending FerrumGate with custom side-effect adapters |
 | [Troubleshooting](troubleshooting.md) | Common issues, diagnostics, recovery steps |
 | [Demo Flows](demo-flows.md) | Six copy-paste demo flows: governed file write, git commit, SQLite mutation, approval-required R3, MCP agent, policy simulation |
 | [FAQ](faq.md) | Frequently asked questions: scope, SaaS, email, MCP HTTP, compliance, PostgreSQL HA, security reporting |

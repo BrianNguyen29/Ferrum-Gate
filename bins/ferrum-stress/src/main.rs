@@ -300,6 +300,7 @@ impl StressServer {
                 s3_config: None,
                 oidc_config: None,
                 agent_clock_skew_secs: 30,
+                ..Default::default()
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         } else {
@@ -330,6 +331,7 @@ impl StressServer {
                 s3_config: None,
                 oidc_config: None,
                 agent_clock_skew_secs: 30,
+                ..Default::default()
             };
             ferrum_gateway::build_router_with_auth(runtime, config)
         };

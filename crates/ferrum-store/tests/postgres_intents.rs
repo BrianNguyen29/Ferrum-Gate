@@ -1135,7 +1135,7 @@ fn lifecycle_outbox_for(
         execution.execution_id,
         Some(contract.contract_id),
         Some(ExecutionState::Authorized),
-        ExecutionState::Prepared,
+        ExecutionState::Running,
         Some(RollbackState::PendingPrepare),
         Some(RollbackState::Prepared),
         ProvenanceEventKind::SideEffectPrepared,
@@ -1236,7 +1236,7 @@ async fn postgres_lifecycle_reconciler_repairs_missing_provenance_and_edge() {
         .await
         .unwrap();
 
-    execution.state = ExecutionState::Prepared;
+    execution.state = ExecutionState::Running;
     contract.state = RollbackState::Prepared;
     repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
         .await
@@ -1283,7 +1283,7 @@ async fn postgres_lifecycle_reconciler_repairs_missing_edge_for_existing_event()
         .await
         .unwrap();
 
-    execution.state = ExecutionState::Prepared;
+    execution.state = ExecutionState::Running;
     contract.state = RollbackState::Prepared;
     repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
         .await
@@ -1324,7 +1324,7 @@ async fn postgres_lifecycle_reconciler_marks_missing_parent_for_operator_review(
     let repo = store.lifecycle_outbox();
     let outbox = lifecycle_outbox_for(&execution, &contract);
 
-    execution.state = ExecutionState::Prepared;
+    execution.state = ExecutionState::Running;
     contract.state = RollbackState::Prepared;
     repo.record_lifecycle_transition(&execution, Some(&contract), &outbox)
         .await

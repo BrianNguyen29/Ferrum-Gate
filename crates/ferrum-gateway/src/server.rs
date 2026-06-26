@@ -34,11 +34,72 @@ use tower::ServiceBuilder;
 use ed25519_dalek::Verifier;
 
 use tower_governor::{
-    GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
+    GovernorError, GovernorLayer, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
 };
 use tower_http::trace::TraceLayer;
 
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
+
+/// Maximum number of entries in the agent nonce replay cache.
+/// When the cache exceeds this limit, oldest entries are evicted
+/// after TTL cleanup. This prevents unbounded growth under
+/// high-volume agent traffic.
+const NONCE_CACHE_MAX_ENTRIES: usize = 10_000;
+
+/// Rate-limiting key that buckets authenticated requests by a principal
+/// identifier combined with IP, and anonymous requests by IP alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RateLimitKey {
+    PrincipalIp {
+        principal: String,
+        ip: std::net::IpAddr,
+    },
+    Ip(std::net::IpAddr),
+}
+
+/// Key extractor that uses principal identity when available, falling back to
+/// the client IP address.  This isolates authenticated traffic from anonymous
+/// traffic on the same IP (noisy-neighbor mitigation) while preserving the
+/// existing IP-based behavior for unauthenticated requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrincipalOrIpKeyExtractor;
+
+impl KeyExtractor for PrincipalOrIpKeyExtractor {
+    type Key = RateLimitKey;
+
+    fn extract<T>(&self, req: &axum::http::Request<T>) -> Result<Self::Key, GovernorError> {
+        let ip = tower_governor::key_extractor::SmartIpKeyExtractor.extract(req)?;
+
+        if let Some(agent_id) = req
+            .headers()
+            .get("X-Ferrum-Agent-Id")
+            .and_then(|v| v.to_str().ok())
+        {
+            if !agent_id.is_empty() {
+                return Ok(RateLimitKey::PrincipalIp {
+                    principal: format!("agent:{}", agent_id),
+                    ip,
+                });
+            }
+        }
+
+        if let Some(auth) = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+        {
+            if !auth.is_empty() {
+                let hash = blake3::hash(auth.as_bytes()).to_hex().to_string();
+                return Ok(RateLimitKey::PrincipalIp {
+                    principal: format!("auth:{}", hash),
+                    ip,
+                });
+            }
+        }
+
+        Ok(RateLimitKey::Ip(ip))
+    }
+}
 
 /// Shared state that includes both runtime and server config for auth.
 #[derive(Clone)]
@@ -49,6 +110,20 @@ pub(crate) struct AppState {
     pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
     /// In-memory nonce cache for Agent auth replay protection.
     nonce_cache: Arc<Mutex<HashMap<String, Instant>>>,
+}
+
+#[cfg(test)]
+impl AppState {
+    /// Test-only constructor that builds an AppState from a runtime and config.
+    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
+        Arc::new(AppState {
+            runtime,
+            server_config,
+            metrics: Arc::new(Metrics::new()),
+            jwks_cache: None,
+            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
 }
 
 /// Metrics state for the /v1/metrics endpoint.
@@ -135,6 +210,8 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_agents_create: AtomicU64,
     pub(crate) governance_success_v1_agents_list: AtomicU64,
     pub(crate) governance_success_v1_agents_revoke: AtomicU64,
+    // Audit fail-closed rejection counter
+    pub(crate) audit_fail_closed_rejections: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -238,6 +315,7 @@ impl Metrics {
             governance_success_v1_agents_create: AtomicU64::new(0),
             governance_success_v1_agents_list: AtomicU64::new(0),
             governance_success_v1_agents_revoke: AtomicU64::new(0),
+            audit_fail_closed_rejections: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -735,11 +813,13 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
     let workload_router = build_workload_router(state.clone());
 
     // Rate limiting: configurable per IP via config
-    // P1: Use SmartIpKeyExtractor to align production with test helper.
-    // This supports x-real-ip / x-forwarded-for headers so workload
-    // generators can distribute traffic across distinct buckets.
+    // P3: Use PrincipalOrIpKeyExtractor to bucket authenticated requests by
+    // principal identity (agent id or auth header hash) combined with IP,
+    // falling back to IP for anonymous traffic.  This preserves the existing
+    // IP-based behavior for unauthenticated requests while mitigating
+    // noisy-neighbor issues on shared IPs.
     let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(SmartIpKeyExtractor)
+        .key_extractor(PrincipalOrIpKeyExtractor)
         .per_second(config.rate_limit_per_second)
         .burst_size(config.rate_limit_burst)
         .finish()
@@ -845,17 +925,20 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
 /// This is a test-only helper that allows configuring rate limits for integration tests.
 /// For production, rate limiting is applied in `run_http_server` with 2 req/s and burst 50.
 ///
-/// Uses SmartIpKeyExtractor which supports x-real-ip header for client IP identification,
-/// allowing tests to set the IP via header without needing MockConnectInfo.
+/// Uses PrincipalOrIpKeyExtractor which supports x-real-ip header for client IP identification
+/// and buckets authenticated requests by principal identity, falling back to IP for
+/// anonymous traffic.  This allows tests to set the IP via header without needing
+/// MockConnectInfo.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn build_router_with_governor(
     runtime: GatewayRuntime,
     per_second: u64,
     burst_size: u32,
 ) -> Router {
-    // Use SmartIpKeyExtractor to support x-real-ip header
+    // Use PrincipalOrIpKeyExtractor to support x-real-ip header and principal-aware
+    // rate limiting in tests.
     let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(SmartIpKeyExtractor)
+        .key_extractor(PrincipalOrIpKeyExtractor)
         .per_second(per_second)
         .burst_size(burst_size)
         .finish()
@@ -1129,7 +1212,7 @@ async fn auth_middleware(
                 Some(c) => c,
                 None => {
                     tracing::error!("oidc config missing");
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AuthFailed,
@@ -1147,7 +1230,7 @@ async fn auth_middleware(
             {
                 Ok(()) => next.run(request).await,
                 Err(OidcAuthError::Unauthorized(msg)) => {
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AuthFailed,
@@ -1160,7 +1243,7 @@ async fn auth_middleware(
                     auth_error(&msg)
                 }
                 Err(OidcAuthError::Forbidden(msg)) => {
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AuthFailed,
@@ -1170,7 +1253,7 @@ async fn auth_middleware(
                         Some(serde_json::json!({"reason": msg})),
                     )
                     .await;
-                    forbidden_error(&msg)
+                    (StatusCode::FORBIDDEN, msg).into_response()
                 }
             }
         }
@@ -1237,7 +1320,7 @@ async fn auth_middleware(
             match verify_agent_request(&state, request, next, &method, &path).await {
                 Ok(response) => response,
                 Err(AgentAuthError::Unauthorized(msg)) => {
-                    crate::audit::append_audit(
+                    let _ = crate::audit::append_audit(
                         &state.runtime.store,
                         "unknown",
                         AuditAction::AgentAuthFailed,
@@ -1319,6 +1402,8 @@ async fn verify_agent_request(
         let mut cache = state.nonce_cache.lock().unwrap();
         let now_instant = Instant::now();
         cache.retain(|_, &mut inserted| now_instant.duration_since(inserted) < nonce_ttl);
+        // Enforce max capacity to prevent unbounded growth
+        prune_nonce_cache_oldest(&mut cache, NONCE_CACHE_MAX_ENTRIES.saturating_sub(1));
         if cache.contains_key(nonce) {
             return Err(AgentAuthError::Unauthorized("replayed nonce".to_string()));
         }
@@ -1405,6 +1490,23 @@ async fn verify_agent_request(
     // Reconstruct request and proceed
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
+}
+
+/// Prune the oldest entries from the nonce cache until it is at or below
+/// `max_entries`. This is called after TTL cleanup to enforce a hard
+/// capacity bound and prevent unbounded growth.
+fn prune_nonce_cache_oldest(cache: &mut HashMap<String, Instant>, max_entries: usize) {
+    while cache.len() > max_entries {
+        let oldest = cache
+            .iter()
+            .min_by_key(|(_, instant)| *instant)
+            .map(|(k, _)| k.clone());
+        if let Some(key) = oldest {
+            cache.remove(&key);
+        } else {
+            break;
+        }
+    }
 }
 
 fn auth_error(message: &str) -> Response {
@@ -1966,6 +2068,10 @@ pub async fn test_runtime_with_bridges(bridges: Vec<Arc<dyn RuntimeBridge>>) -> 
 }
 
 #[cfg(test)]
+#[path = "server_git_rollback_tests.rs"]
+mod git_rollback_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{KeyMaterial, OidcConfig};
@@ -2279,7 +2385,7 @@ mod tests {
         // Verify the response indicates degraded status
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 3);
+        assert_eq!(deep.components.len(), 4);
         // First component: store (unhealthy)
         assert_eq!(deep.components[0].component, "store");
         assert!(!deep.components[0].healthy);
@@ -2291,7 +2397,7 @@ mod tests {
                 .unwrap()
                 .contains("store unavailable")
         );
-        // Second component: write_queue (healthy since queue depth is 0 in test)
+        // Second component: write_queue (healthy)
         assert_eq!(deep.components[1].component, "write_queue");
         assert!(deep.components[1].healthy);
         assert!(deep.components[1].error.is_none());
@@ -2299,6 +2405,10 @@ mod tests {
         assert_eq!(deep.components[2].component, "pool");
         assert!(deep.components[2].healthy);
         assert!(deep.components[2].error.is_none());
+        // Fourth component: lifecycle_outbox (healthy since no drift in test)
+        assert_eq!(deep.components[3].component, "lifecycle_outbox");
+        assert!(deep.components[3].healthy);
+        assert!(deep.components[3].error.is_none());
     }
 
     #[tokio::test]
@@ -2325,7 +2435,7 @@ mod tests {
         // Verify all components are present
         assert_eq!(deep.status, "ok");
         assert!(deep.healthy);
-        assert_eq!(deep.components.len(), 3);
+        assert_eq!(deep.components.len(), 4);
 
         // First component: store
         assert_eq!(deep.components[0].component, "store");
@@ -2344,6 +2454,10 @@ mod tests {
         assert_eq!(deep.components[2].component, "pool");
         assert!(deep.components[2].healthy);
         assert!(deep.components[2].error.is_none());
+        // Fourth component: lifecycle_outbox (healthy since no drift in test)
+        assert_eq!(deep.components[3].component, "lifecycle_outbox");
+        assert!(deep.components[3].healthy);
+        assert!(deep.components[3].error.is_none());
     }
 
     /// A test-only StoreFacade that wraps a real store but allows controlling queue depth.
@@ -2456,7 +2570,7 @@ mod tests {
 
         assert_eq!(deep.status, "degraded");
         assert!(!deep.healthy);
-        assert_eq!(deep.components.len(), 3);
+        assert_eq!(deep.components.len(), 4);
 
         // First component: store (healthy)
         assert_eq!(deep.components[0].component, "store");
@@ -2478,6 +2592,10 @@ mod tests {
         assert_eq!(deep.components[2].component, "pool");
         assert!(deep.components[2].healthy);
         assert!(deep.components[2].error.is_none());
+        // Fourth component: lifecycle_outbox (healthy since no drift in test)
+        assert_eq!(deep.components[3].component, "lifecycle_outbox");
+        assert!(deep.components[3].healthy);
+        assert!(deep.components[3].error.is_none());
     }
 
     /// A test-only StoreFacade that wraps a real store and reports a fixed pool_status.
@@ -2735,129 +2853,165 @@ mod tests {
         assert!(pool_component["status"].as_str().unwrap().contains("ok"));
     }
 
-    #[test]
-    fn test_infer_git_adapter_key_git_repository() {
-        let scope = vec![ResourceSelector::GitRepository {
-            repo_path: "/tmp/test-repo".to_string(),
-            allowed_refs: vec!["main".to_string(), "develop".to_string()],
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-        }];
-        assert_eq!(infer_git_adapter_key(&scope), "git");
-    }
+    #[tokio::test]
+    async fn test_readyz_deep_returns_503_when_lifecycle_outbox_has_pending() {
+        let runtime = test_runtime().await;
 
-    #[test]
-    fn test_infer_git_adapter_key_no_git() {
-        let scope = vec![ResourceSelector::FilesystemPath {
-            path: "/tmp/file.txt".to_string(),
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-            content_hash: None,
-        }];
-        assert_eq!(infer_git_adapter_key(&scope), "noop");
-    }
-
-    #[test]
-    fn test_infer_git_adapter_key_empty_scope() {
-        let scope: Vec<ResourceSelector> = vec![];
-        assert_eq!(infer_git_adapter_key(&scope), "noop");
-    }
-
-    #[test]
-    fn test_infer_git_adapter_key_mixed_scope() {
-        let scope = vec![
-            ResourceSelector::FilesystemPath {
-                path: "/tmp/file.txt".to_string(),
-                mode: ferrum_proto::ResourceMode::ReadWrite,
-                content_hash: None,
+        // Insert minimal prerequisite records so the outbox FK constraint is satisfied
+        let intent_id = ferrum_proto::IntentId::new();
+        let principal_id = ferrum_proto::PrincipalId::new();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id,
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test".to_string(),
+            normalized_goal: "test".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
             },
-            ResourceSelector::GitRepository {
-                repo_path: "/tmp/test-repo".to_string(),
-                allowed_refs: vec!["main".to_string()],
-                mode: ferrum_proto::ResourceMode::ReadWrite,
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
             },
-        ];
-        assert_eq!(infer_git_adapter_key(&scope), "git");
-    }
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
 
-    #[test]
-    fn test_determine_rollback_target_from_bindings_git_ref() {
-        let scope = vec![ResourceSelector::GitRepository {
-            repo_path: "/opt/myrepo".to_string(),
-            allowed_refs: vec!["main".to_string()],
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-        }];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::GitRef {
-                repo_path,
-                before_ref,
-                after_ref,
-            } => {
-                assert_eq!(repo_path, "/opt/myrepo");
-                assert!(before_ref.is_none());
-                assert!(after_ref.is_none());
-            }
-            other => panic!("expected GitRef target, got {:?}", other),
-        }
-    }
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test_tool".to_string(),
+            server_name: "test_server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
 
-    #[test]
-    fn test_determine_rollback_target_from_bindings_generic_fallback() {
-        let scope = vec![ResourceSelector::FilesystemPath {
-            path: "/tmp/file.txt".to_string(),
-            mode: ferrum_proto::ResourceMode::ReadWrite,
-            content_hash: None,
-        }];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::Generic {
-                namespace,
-                identifier,
-            } => {
-                assert_eq!(namespace, "unknown");
-                assert_eq!(identifier, "binding");
-            }
-            other => panic!("expected Generic fallback, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_determine_rollback_target_from_bindings_empty_scope() {
-        let scope: Vec<ResourceSelector> = vec![];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::Generic {
-                namespace,
-                identifier,
-            } => {
-                assert_eq!(namespace, "unknown");
-                assert_eq!(identifier, "binding");
-            }
-            other => panic!("expected Generic fallback, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_determine_rollback_target_from_bindings_first_git_wins() {
-        // When multiple git repos are in scope, returns the first one
-        let scope = vec![
-            ResourceSelector::GitRepository {
-                repo_path: "/repo/one".to_string(),
-                allowed_refs: vec![],
-                mode: ferrum_proto::ResourceMode::Read,
+        let capability_id = ferrum_proto::CapabilityId::new();
+        let now = chrono::Utc::now();
+        let capability = ferrum_proto::CapabilityLease {
+            capability_id,
+            intent_id,
+            proposal_id,
+            tool_binding: ferrum_proto::ToolBinding {
+                server_name: "test_server".to_string(),
+                tool_name: "test_tool".to_string(),
+                tool_version: None,
             },
-            ResourceSelector::GitRepository {
-                repo_path: "/repo/two".to_string(),
-                allowed_refs: vec![],
-                mode: ferrum_proto::ResourceMode::Read,
+            resource_bindings: vec![],
+            argument_constraints: vec![],
+            taint_budget: ferrum_proto::TaintBudget {
+                max_taint_score: 0,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
             },
-        ];
-        let target = determine_rollback_target_from_bindings(&scope);
-        match target {
-            RollbackTarget::GitRef { repo_path, .. } => {
-                assert_eq!(repo_path, "/repo/one");
-            }
-            other => panic!("expected GitRef target, got {:?}", other),
-        }
+            approval_binding: None,
+            issued_by: "test".to_string(),
+            policy_bundle_id: ferrum_proto::PolicyBundleId::new(),
+            tool_manifest_id: None,
+            manifest_hash: None,
+            status: ferrum_proto::CapabilityStatus::Active,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(5),
+            revoked_at: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .capabilities()
+            .insert(&capability)
+            .await
+            .unwrap();
+
+        let execution = ferrum_proto::ExecutionRecord {
+            execution_id: ferrum_proto::ExecutionId::new(),
+            intent_id,
+            proposal_id,
+            capability_id,
+            rollback_contract_id: None,
+            decision: ferrum_proto::Decision::Allow,
+            state: ferrum_proto::ExecutionState::Running,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime.store.executions().insert(&execution).await.unwrap();
+
+        // Insert a pending lifecycle outbox record to simulate drift
+        let outbox = ferrum_proto::LifecycleOutboxRecord::pending(
+            execution.execution_id,
+            None,
+            Some(ferrum_proto::ExecutionState::Running),
+            ferrum_proto::ExecutionState::Committed,
+            None,
+            None,
+            ferrum_proto::ProvenanceEventKind::SideEffectCommitted,
+            "test-pending".to_string(),
+        );
+        runtime
+            .store
+            .lifecycle_outbox()
+            .enqueue_lifecycle_transition(&outbox)
+            .await
+            .unwrap();
+
+        let response = build_router(runtime)
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/readyz/deep")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let deep: DeepHealthResponse = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(deep.status, "degraded");
+        assert!(!deep.healthy);
+        assert_eq!(deep.components.len(), 4);
+
+        let lifecycle_component = deep
+            .components
+            .iter()
+            .find(|c| c.component == "lifecycle_outbox")
+            .unwrap();
+        assert!(!lifecycle_component.healthy);
+        assert!(lifecycle_component.status.contains("pending=1"));
     }
 
     #[tokio::test]
@@ -4368,6 +4522,46 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn test_resolve_approval_mfa_required_returns_403() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/approvals/00000000-0000-0000-0000-000000000000/resolve")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaRequired);
+        assert!(err.message.contains("future work per ADR008"));
+    }
+
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and
     // provenance event emission require foreign key constraints (approval references intent/proposal).
     // These scenarios are covered by integration tests in integration_gateway_flow.rs
@@ -4615,6 +4809,197 @@ mod tests {
         assert!(
             got_429,
             "same x-real-ip should be limited across different workload routes"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // P3: PrincipalOrIpKeyExtractor principal-aware rate limiting
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_authenticated_and_anonymous_share_ip_but_separate_buckets() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust burst for anonymous traffic from IP 10.0.0.1
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Anonymous should be rate limited
+        let mut anon_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.0.0.1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                anon_limited = true;
+                break;
+            }
+        }
+        assert!(anon_limited, "anonymous should be rate limited");
+
+        // Authenticated request from same IP should still succeed (separate bucket)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("Authorization", "Bearer some-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "authenticated should have separate bucket from anonymous on same IP"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_distinct_auth_tokens_get_separate_buckets_same_ip() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust burst for principal A from IP 10.0.0.1
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("Authorization", "Bearer token-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Principal A should be rate limited
+        let mut principal_a_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.0.0.1")
+                        .header("Authorization", "Bearer token-a")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                principal_a_limited = true;
+                break;
+            }
+        }
+        assert!(principal_a_limited, "principal A should be rate limited");
+
+        // Principal B from same IP should still succeed (separate bucket)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("Authorization", "Bearer token-b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "principal B should have separate bucket from principal A"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_distinct_agent_ids_get_separate_buckets_same_ip() {
+        let runtime = test_runtime().await;
+        // Restrictive rate limit: 1 req/sec, burst 1
+        let router = build_router_with_governor(runtime, 1, 1);
+
+        // Exhaust burst for agent A from IP 10.0.0.1
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("X-Ferrum-Agent-Id", "agent-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Agent A should be rate limited
+        let mut agent_a_limited = false;
+        for _ in 0..10 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("x-real-ip", "10.0.0.1")
+                        .header("X-Ferrum-Agent-Id", "agent-a")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                agent_a_limited = true;
+                break;
+            }
+        }
+        assert!(agent_a_limited, "agent A should be rate limited");
+
+        // Agent B from same IP should still succeed (separate bucket)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("x-real-ip", "10.0.0.1")
+                    .header("X-Ferrum-Agent-Id", "agent-b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "agent B should have separate bucket from agent A"
         );
     }
 
@@ -7222,6 +7607,26 @@ rules:
             .unwrap();
         let response2 = router.oneshot(req2).await.unwrap();
         assert_eq!(response2.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_nonce_cache_prune_oldest_enforces_max_capacity() {
+        let mut cache = HashMap::new();
+        let now = Instant::now();
+        // Insert 5 entries with staggered times
+        for i in 0..5 {
+            cache.insert(format!("nonce-{}", i), now - StdDuration::from_secs(i));
+        }
+        assert_eq!(cache.len(), 5);
+        // Prune to max 3
+        prune_nonce_cache_oldest(&mut cache, 3);
+        assert_eq!(cache.len(), 3);
+        // The oldest entries (nonce-4, nonce-3) should have been removed
+        assert!(!cache.contains_key("nonce-4"));
+        assert!(!cache.contains_key("nonce-3"));
+        assert!(cache.contains_key("nonce-2"));
+        assert!(cache.contains_key("nonce-1"));
+        assert!(cache.contains_key("nonce-0"));
     }
 
     #[tokio::test]

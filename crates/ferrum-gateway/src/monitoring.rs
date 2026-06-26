@@ -154,13 +154,83 @@ pub(crate) async fn readyz_deep(
         },
     };
 
-    let healthy = store_status.healthy && queue_healthy && pool_healthy;
+    // Lifecycle outbox drift check: degrade if pending or needs-operator-review records exist.
+    let (lifecycle_outbox_healthy, lifecycle_status) = {
+        let mut healthy = true;
+        let mut status_parts = Vec::new();
+
+        let needs_operator_review = match state
+            .runtime
+            .store
+            .lifecycle_outbox()
+            .list_by_status(LifecycleOutboxStatus::NeedsOperatorReview, 1)
+            .await
+        {
+            Ok(records) => records.len(),
+            Err(e) => {
+                healthy = false;
+                status_parts.push(format!("error querying needs_operator_review: {}", e));
+                0
+            }
+        };
+
+        let pending = match state
+            .runtime
+            .store
+            .lifecycle_outbox()
+            .list_by_status(LifecycleOutboxStatus::PendingProvenance, 1)
+            .await
+        {
+            Ok(records) => records.len(),
+            Err(e) => {
+                healthy = false;
+                status_parts.push(format!("error querying pending: {}", e));
+                0
+            }
+        };
+
+        if needs_operator_review > 0 {
+            healthy = false;
+            status_parts.push(format!("needs_operator_review={}", needs_operator_review));
+        }
+        if pending > 0 {
+            healthy = false;
+            status_parts.push(format!("pending={}", pending));
+        }
+
+        let status = if status_parts.is_empty() {
+            "ok".to_string()
+        } else {
+            format!("degraded: {}", status_parts.join(", "))
+        };
+
+        (
+            healthy,
+            ComponentStatus {
+                component: "lifecycle_outbox".to_string(),
+                status,
+                healthy,
+                error: if status_parts.is_empty() {
+                    None
+                } else {
+                    Some(status_parts.join(", "))
+                },
+            },
+        )
+    };
+
+    let healthy = store_status.healthy && queue_healthy && pool_healthy && lifecycle_outbox_healthy;
     let status = if healthy { "ok" } else { "degraded" };
 
     let response = DeepHealthResponse {
         status: status.to_string(),
         healthy,
-        components: vec![store_status, queue_status, pool_status_component],
+        components: vec![
+            store_status,
+            queue_status,
+            pool_status_component,
+            lifecycle_status,
+        ],
     };
 
     let elapsed_ns = start.elapsed().as_nanos() as u64;

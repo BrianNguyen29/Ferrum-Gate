@@ -24,6 +24,8 @@ If you have time to read only a few documents, read them in this order:
 6. `PRODUCTION_NOTES.md`
 7. `guides/faq.md`
 8. `ROADMAP.md`
+9. `SCOPE.md`
+10. `operations/runbook.md`
 
 ## Subdirectories
 

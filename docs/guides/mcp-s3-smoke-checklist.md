@@ -58,10 +58,10 @@ curl http://127.0.0.1:18080/v1/healthz
 ### 4.1 Start the MCP server
 
 ```bash
-cargo run --bin ferrum-mcp-server
+cargo run -p ferrum-integrations-mcp --bin ferrum-mcp-server
 ```
 
-> Note: `ferrum-mcp-server` is a binary in the `crates/ferrum-integrations-mcp` crate. If the binary name differs, use the crate's actual binary name.
+> Note: `ferrum-mcp-server` is a binary in the `ferrum-integrations-mcp` crate. If the binary name differs, use the crate's actual binary name.
 
 ### 4.2 Send a `tools/list` request
 

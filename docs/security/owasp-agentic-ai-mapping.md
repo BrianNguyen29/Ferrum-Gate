@@ -60,7 +60,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 **Gaps / Limitations:**
 - FerrumGate has **no natural-language prompt parsing or sanitization**. It cannot detect prompt injection at the LLM input layer.
 - Policy rules are written by operators; they may not cover novel prompt-injection payloads.
-- There is **no automated anomaly detection** on proposal patterns that could indicate prompt manipulation.
+- There is **no automated anomaly detection** on proposal patterns that could indicate prompt manipulation (see ADR 010 for a proposed behavioral anomaly detection layer).
 
 **Evidence / References:**
 - [`docs/api/policy-simulation.md`](../api/policy-simulation.md) — dry-run policy evaluation
@@ -137,6 +137,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 - FerrumGate has **no ability to validate training data, model weights, or fine-tuning datasets**.
 - It does not detect whether an LLM output is the result of model poisoning versus legitimate behavior.
 - Content-hash validation exists for policy bundles but not for adapter inputs or outputs.
+- The audit log provides tamper-evident detection, but no WORM storage or external anchoring for long-term archival. See ADR 009 for a proposed WORM export bundle.
 
 **Evidence / References:**
 - [`docs/architecture/tamper-evident-audit-design.md`](../architecture/tamper-evident-audit-design.md)
@@ -187,10 +188,10 @@ This document is **not** a compliance certification or SOC2 mapping.
 - **Agent identity (Ed25519):** Cryptographic identity ensures that requests originate from a registered, non-revoked agent with explicitly allowed scopes. See [`docs/security/agent-identity-ed25519.md`](./agent-identity-ed25519.md).
 
 **Gaps / Limitations:**
-- **Single-factor approval:** Operator approval currently relies on scoped token auth only; there is no second-factor confirmation (e.g., MFA, out-of-band notification with cryptographic acknowledge). See [`docs/security/threat-model-stride.md`](./threat-model-stride.md) B8.
-- **No behavioral anomaly detection:** FerrumGate does not learn or detect unusual agency patterns (e.g., an agent suddenly requesting many R3 actions outside its historical baseline).
+- **Single-factor approval:** Operator approval currently relies on scoped token auth only; there is no second-factor confirmation (e.g., MFA, out-of-band notification with cryptographic acknowledge). See [`docs/security/threat-model-stride.md`](./threat-model-stride.md) B8 and ADR 008 for a proposed timeout/MFA design.
+- **No behavioral anomaly detection:** FerrumGate does not learn or detect unusual agency patterns (e.g., an agent suddenly requesting many R3 actions outside its historical baseline). See ADR 010 for a proposed profiling layer.
 - **No automated escalation:** If an agent exceeds a rate or risk threshold, there is no automated lockdown or revocation trigger.
-- Approval resolve is synchronous; there is no timeout-based auto-deny for stale approvals.
+- Approval resolve is synchronous; there is no timeout-based auto-deny for stale approvals. See ADR 008 for a proposed timeout design.
 
 **Evidence / References:**
 - [`docs/security/scoped-tokens-rbac.md`](./scoped-tokens-rbac.md)

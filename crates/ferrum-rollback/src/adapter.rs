@@ -13,6 +13,8 @@ pub enum AdapterError {
     Validation(String),
     #[error("internal: {0}")]
     Internal(String),
+    #[error("duplicate adapter key: {0}")]
+    DuplicateKey(String),
 }
 
 #[derive(Debug, Clone)]
@@ -68,11 +70,28 @@ pub struct AdapterRegistry {
 
 impl AdapterRegistry {
     pub fn register(&mut self, adapter: Arc<dyn RollbackAdapter>) {
-        self.adapters.insert(adapter.key().to_string(), adapter);
+        let key = adapter.key().to_string();
+        if self.adapters.contains_key(&key) {
+            panic!("duplicate adapter key registered: {}", key);
+        }
+        self.adapters.insert(key, adapter);
+    }
+
+    pub fn try_register(&mut self, adapter: Arc<dyn RollbackAdapter>) -> Result<(), AdapterError> {
+        let key = adapter.key().to_string();
+        if self.adapters.contains_key(&key) {
+            return Err(AdapterError::DuplicateKey(key));
+        }
+        self.adapters.insert(key, adapter);
+        Ok(())
     }
 
     pub fn get(&self, key: &str) -> Option<Arc<dyn RollbackAdapter>> {
         self.adapters.get(key).cloned()
+    }
+
+    pub fn keys(&self) -> Vec<&str> {
+        self.adapters.keys().map(|k| k.as_str()).collect()
     }
 }
 
@@ -221,5 +240,40 @@ mod tests {
         let plan = plan.unwrap();
         assert!(plan.auto_commit);
         assert!(plan.prepare_checks.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate adapter key registered: noop")]
+    fn test_adapter_registry_duplicate_panics() {
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    }
+
+    #[test]
+    fn test_adapter_registry_try_register_duplicate_returns_error() {
+        let mut registry = AdapterRegistry::default();
+        registry
+            .try_register(Arc::new(NoopRollbackAdapter::new("noop")))
+            .unwrap();
+        let result = registry.try_register(Arc::new(NoopRollbackAdapter::new("noop")));
+        assert!(matches!(result, Err(AdapterError::DuplicateKey(ref k)) if k == "noop"));
+    }
+
+    #[test]
+    fn test_adapter_registry_multiple_distinct_keys() {
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        registry.register(Arc::new(NoopRollbackAdapter::new("fs")));
+        registry.register(Arc::new(NoopRollbackAdapter::new("http")));
+
+        assert!(registry.get("noop").is_some());
+        assert!(registry.get("fs").is_some());
+        assert!(registry.get("http").is_some());
+        assert!(registry.get("missing").is_none());
+
+        let mut keys = registry.keys();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["fs", "http", "noop"]);
     }
 }

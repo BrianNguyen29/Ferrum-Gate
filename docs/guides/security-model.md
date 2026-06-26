@@ -18,10 +18,10 @@
 | Threat | Current mitigation | Additional mitigation |
 |--------|--------------------|-----------------------|
 | Token theft | Token stored on VM only; rotation procedure exists; scoped tokens support expiry + revocation | OIDC/SSO and stronger operational policy |
-| Insider abuse | Operator trust plus RBAC + minimal audit log | Compliance-grade audit logging |
+| Insider abuse | Operator trust plus RBAC + minimal audit log | Compliance-grade audit logging; behavioral anomaly detection (ADR 010) |
 | Tenant data leak | N/A (single tenant) | tenant_id filtering + PG RLS |
 | Auth bypass | Constant-time token comparison plus scoped-token RBAC middleware | External identity integration |
-| Secret leak in logs | Output redaction in MCP; minimal audit log avoids secret material | Structured compliance-grade audit controls |
+| Secret leak in logs | Output redaction in MCP; minimal audit log avoids secret material | Structured compliance-grade audit controls; audit fail-closed (ADR 007) |
 
 ## Scoped token and RBAC implementation
 
@@ -44,6 +44,7 @@
 - Revoked token returns 401 (SEC-4).
 - Expired token returns 401 (SEC-5).
 - Audit log records actor, action, and result for current scope (SEC-6).
+- R3 approval requires explicit operator resolve (SEC-7); MFA stub implemented (ADR 008 Phase 1); timeout auto-deny pending.
 - Tenant A cannot read tenant B data — not available by single-tenant design decision; no multi-tenant claim.
 
 ## Bearer auth hardening
@@ -92,9 +93,11 @@ ferrumctl admin audit list --limit 20
 
 ### Limitations
 
-- Append is **best-effort**; store errors do not fail the primary action.
-- No cryptographic signing or WORM storage.
-- Not compliance-grade forensic audit.
+- Append is **best-effort by default**; store errors do not fail the primary action.
+- Optional **fail-closed mode** (`audit_fail_closed = true`) makes audit append failures return `503 Service Unavailable` and block the action for critical mutating routes (token lifecycle, policy changes, approval resolution, execution cancel, agent lifecycle, lifecycle outbox operations). Auth-middleware audit logs remain best-effort even in fail-closed mode.
+- Enable via config/env: `audit_fail_closed = true` or `FERRUMD_AUDIT_FAIL_CLOSED=true`.
+- Metric emitted: `ferrumgate_audit_fail_closed_rejections_total`.
+- Not compliance-grade forensic audit on its own (see ADR 007 and ADR 009).
 
 ## Secret handling
 
@@ -157,6 +160,9 @@ Tenant
 - Add PostgreSQL RLS as defense-in-depth.
 - Evaluate OIDC/JWT/SSO integration.
 - Evaluate mTLS for service-to-service auth.
+- Evaluate audit fail-closed mode (ADR 007).
+- Evaluate R3 approval timeout auto-deny (ADR 008 Phase 2).
+- Evaluate behavioral anomaly detection (ADR 010).
 
 ## Related docs
 

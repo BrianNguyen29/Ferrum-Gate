@@ -1,0 +1,33 @@
+{
+  "format_version": "1.0",
+  "scenario": "intent-compile",
+  "concurrency": 5,
+  "duration_secs": 5,
+  "metrics": {
+    "req_per_sec": {
+      "baseline": 100.0,
+      "unit": "req/s",
+      "min_ratio": 0.60
+    },
+    "p95_ms": {
+      "baseline": 20.0,
+      "unit": "ms",
+      "max_ratio": 2.50
+    },
+    "p99_ms": {
+      "baseline": 1000.0,
+      "unit": "ms",
+      "max_ratio": 3.00
+    },
+    "error_rate": {
+      "baseline": 0.0,
+      "unit": "ratio",
+      "max_absolute": 0.01
+    }
+  },
+  "meta": {
+    "last_validated_commit": "sample",
+    "validated_at": "2026-06-25T00:00:00Z",
+    "note": "SAMPLE / NON-AUTHORITATIVE baseline for CI scaffolding. SQLite single-writer concurrency limits apply. Values are conservative estimates from post-write-queue stress tests. Do not use for blocking gates until validated on a controlled runner."
+  }
+}

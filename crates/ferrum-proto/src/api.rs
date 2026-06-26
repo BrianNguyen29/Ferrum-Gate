@@ -138,7 +138,7 @@ pub struct ApiError {
     pub details: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ApiErrorCode {
     ValidationError,
     NotFound,
@@ -155,6 +155,7 @@ pub enum ApiErrorCode {
     Forbidden,
     BadRequest,
     PayloadTooLarge,
+    MfaRequired,
 }
 
 /// Response envelope for paginated approval lists.

@@ -94,6 +94,36 @@ Optimization history:
 
 PostgreSQL is recommended for deployments requiring materially higher sustained write throughput, cross-process or multi-node deployment, or stronger transactional flexibility (not currently implemented in `ferrum-store`).
 
+## Performance Regression Gate
+
+A conservative performance regression gate is available via `make perf-gate`. It runs short-duration `ferrum-stress` scenarios and compares JSON output against baselines in `baselines/`.
+
+### Baselines
+- Baselines are stored in `baselines/*.json` and keyed by scenario (e.g., `health`, `intent-compile`, `sqlite-contention`).
+- Each baseline contains:
+  - Metric baseline values and relative thresholds (`min_ratio` for throughput, `max_ratio` for latency).
+  - A `meta` block with `last_validated_commit`, `validated_at`, and a `note`.
+- Current baselines are **sample / non-authoritative**. They are labeled as such and should not be used for blocking gates until validated on a controlled runner.
+
+### Running the gate locally
+```bash
+# Advisory mode (default: short 5s duration, non-blocking)
+make perf-gate
+
+# Regenerate baselines after a deliberate optimization PR
+make perf-baseline-update
+```
+
+### Threshold policy
+- **Relative thresholds** account for runner variance:
+  - Throughput must not drop below a configured percentage of baseline (e.g., 60–70%).
+  - Latency must not exceed a configured percentage of baseline (e.g., 200–250%).
+- **Error rate**: hard cap at 1% for all scenarios.
+- The gate is **advisory** in regular CI and release preflight until baselines are authoritative.
+
+### Why advisory?
+CI runners have variable CPU and I/O performance. Relative thresholds reduce noise, but absolute thresholds require hardware-normalized baselines. The gate will become blocking only after baselines are validated on a representative runner class and the ADR is updated. See `docs/adr/011-performance-regression-gate.md`.
+
 ## Authentication
 - **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
 - Tokens are validated with constant-time comparison (timing-attack resistant)
@@ -209,6 +239,7 @@ enabling autoscaling or multiple replicas.
 ## Capability TTL
 - Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)
 - Default TTL: Configured per-request via `requested_ttl_secs`
+- **Contract default**: The agent contract specifies `ttl_default = 15s` as a design expectation; the runtime does not enforce a default and requires `requested_ttl_secs` per request.
 - Expired capabilities return `CapabilityExpired` error
 
 ## Rate-limit configuration

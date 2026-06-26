@@ -13,8 +13,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::{
-    audit::append_audit,
-    generate_token_salt, generate_token_value, hash_token_value, hash_token_with_salt,
+    audit, generate_token_salt, generate_token_value, hash_token_value, hash_token_with_salt,
     response::{sanitized_api_error_response, sanitized_response},
     state::AppState,
 };
@@ -69,8 +68,8 @@ pub(crate) async fn create_token(
     match state.runtime.store.tokens().insert(&token).await {
         Ok(()) => {
             // Audit log: token created
-            append_audit(
-                &state.runtime.store,
+            if let Err(problem) = audit::append_audit_checked(
+                &state,
                 &token.actor_id,
                 AuditAction::TokenCreate,
                 AuditResourceType::Token,
@@ -79,8 +78,12 @@ pub(crate) async fn create_token(
                 Some(serde_json::json!({
                     "role": format!("{:?}", req.role),
                 })),
+                Some(crate::monitoring::GovernanceRoute::AgentsCreate),
             )
-            .await;
+            .await
+            {
+                return axum::response::IntoResponse::into_response(problem);
+            }
             let meta: ScopedTokenMeta = token.into();
             let response = CreateTokenResponse {
                 token: meta,
@@ -173,8 +176,8 @@ pub(crate) async fn revoke_token(
     {
         Ok(true) => {
             // Audit log: token revoked
-            append_audit(
-                &state.runtime.store,
+            if let Err(problem) = audit::append_audit_checked(
+                &state,
                 "unknown",
                 AuditAction::TokenRevoke,
                 AuditResourceType::Token,
@@ -183,8 +186,12 @@ pub(crate) async fn revoke_token(
                 Some(serde_json::json!({
                     "reason": req.reason,
                 })),
+                Some(crate::monitoring::GovernanceRoute::AgentsRevoke),
             )
-            .await;
+            .await
+            {
+                return axum::response::IntoResponse::into_response(problem);
+            }
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(false) => {
@@ -322,8 +329,8 @@ pub(crate) async fn rotate_token(
     match state.runtime.store.tokens().insert(&new_token).await {
         Ok(()) => {
             // Audit log: token rotated
-            append_audit(
-                &state.runtime.store,
+            if let Err(problem) = audit::append_audit_checked(
+                &state,
                 &new_token.actor_id,
                 AuditAction::TokenRotate,
                 AuditResourceType::Token,
@@ -333,8 +340,12 @@ pub(crate) async fn rotate_token(
                     "old_token_id": token_id,
                     "reason": req.reason,
                 })),
+                Some(crate::monitoring::GovernanceRoute::AgentsCreate),
             )
-            .await;
+            .await
+            {
+                return axum::response::IntoResponse::into_response(problem);
+            }
             let meta: ScopedTokenMeta = new_token.into();
             let response = CreateTokenResponse {
                 token: meta,

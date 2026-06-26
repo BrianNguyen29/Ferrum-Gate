@@ -3,14 +3,38 @@
 //! This module provides pure transition helpers that enforce valid state
 //! transitions for capabilities, approvals, and executions.
 //!
+//! ## Execution State Transition Matrix
+//!
+//! The `is_valid_execution_transition` function enforces a strict matrix at the
+//! store seam. Self-transitions are allowed only for idempotent states:
+//! Authorized, Prepared, Running, AwaitingVerification.
+//!
+//! Valid transitions (behavior-preserving for current handler sites):
+//!
+//! | From               | To (valid)                                                  |
+//! |--------------------|-------------------------------------------------------------|
+//! | Proposed           | Authorized, Running, Canceled                               |
+//! | Authorized         | Running, Canceled, Authorized (self)                        |
+//! | Prepared           | Running, Canceled, Prepared (self)                        |
+//! | Running            | Committed, Failed, Compensated, Running (self)            |
+//! | AwaitingVerification | Committed, Failed, Compensated, AwaitingVerification (self) |
+//! | AwaitingApproval   | Canceled                                                    |
+//! | Terminal           | none                                                        |
+//!
+//! Terminal states: Committed, Compensated, RolledBack, Denied, Quarantined,
+//! Failed, Canceled.
+//!
+//! Rollback/full-execution workflow strictness (e.g., specific compensation paths)
+//! is enforced at the handler layer; this matrix is the store seam guard.
+//!
 //! ## Deferred: Rollback/Full Execution Strictness
 //!
 //! The rollback and full-execution workflow strictness (e.g., enforcing that
 //! Committed executions can only transition through specific compensation paths)
-//! is **deferred** to a future slice. This module currently only enforces:
+//! is **deferred** to a future slice. This module currently enforces:
 //!   - Capability: Active → {Used, Expired, Revoked, Quarantined}; terminal states absorbing
 //!   - Approval:  Pending → {Granted, Denied, Expired}; terminal states absorbing
-//!   - Execution: block transitions OUT of terminal states; allow all other transitions
+//!   - Execution: strict matrix above; terminal states absorbing
 //!
 //! A future slice will add rollback-specific transition graphs and full strictness.
 
@@ -94,15 +118,58 @@ pub fn execution_state_is_terminal(state: &ExecutionState) -> bool {
 
 /// Returns true if transitioning FROM `from` TO `to` is valid for ExecutionState.
 ///
-/// This only blocks transitions OUT of terminal states. All other transitions are allowed.
-/// Rollback/full-execution workflow strictness (specific compensation paths, etc.) is deferred.
-pub fn is_valid_execution_transition(from: &ExecutionState, _to: &ExecutionState) -> bool {
-    // Block transitions out of terminal states
+/// Strict matrix enforced at the store seam. Self-transitions are allowed only
+/// for idempotent non-terminal states: Authorized, Prepared, Running,
+/// AwaitingVerification.
+///
+/// Valid transitions (behavior-preserving for current handler sites):
+///
+/// | From               | To (valid)                                                  |
+/// |--------------------|-------------------------------------------------------------|
+/// | Proposed           | Authorized, Running, Canceled                             |
+/// | Authorized         | Running, Canceled, Authorized (self)                      |
+/// | Prepared           | Running, Canceled, Prepared (self)                        |
+/// | Running            | Committed, Failed, Compensated, Running (self)           |
+/// | AwaitingVerification | Committed, Failed, Compensated, AwaitingVerification (self) |
+/// | AwaitingApproval   | Canceled                                                    |
+/// | Terminal           | none                                                        |
+///
+/// Rollback/full-execution workflow strictness (e.g., specific compensation paths)
+/// is enforced at the handler layer; this matrix is the store seam guard.
+pub fn is_valid_execution_transition(from: &ExecutionState, to: &ExecutionState) -> bool {
     if execution_state_is_terminal(from) {
         return false;
     }
-    // All other transitions are allowed (full strictness deferred)
-    true
+    match from {
+        ExecutionState::Proposed => matches!(
+            to,
+            ExecutionState::Authorized | ExecutionState::Running | ExecutionState::Canceled
+        ),
+        ExecutionState::Authorized => matches!(
+            to,
+            ExecutionState::Running | ExecutionState::Canceled | ExecutionState::Authorized
+        ),
+        ExecutionState::Prepared => matches!(
+            to,
+            ExecutionState::Running | ExecutionState::Canceled | ExecutionState::Prepared
+        ),
+        ExecutionState::Running => matches!(
+            to,
+            ExecutionState::Committed
+                | ExecutionState::Failed
+                | ExecutionState::Compensated
+                | ExecutionState::Running
+        ),
+        ExecutionState::AwaitingVerification => matches!(
+            to,
+            ExecutionState::Committed
+                | ExecutionState::Failed
+                | ExecutionState::Compensated
+                | ExecutionState::AwaitingVerification
+        ),
+        ExecutionState::AwaitingApproval => matches!(to, ExecutionState::Canceled),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -267,9 +334,65 @@ mod tests {
     }
 
     #[test]
-    fn execution_authorized_to_prepared_valid() {
+    fn execution_proposed_to_running_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Proposed,
+            &ExecutionState::Running,
+        ));
+    }
+
+    #[test]
+    fn execution_proposed_to_canceled_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Proposed,
+            &ExecutionState::Canceled,
+        ));
+    }
+
+    #[test]
+    fn execution_authorized_to_running_valid() {
         assert!(is_valid_execution_transition(
             &ExecutionState::Authorized,
+            &ExecutionState::Running,
+        ));
+    }
+
+    #[test]
+    fn execution_authorized_to_canceled_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Authorized,
+            &ExecutionState::Canceled,
+        ));
+    }
+
+    #[test]
+    fn execution_authorized_self_transition_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Authorized,
+            &ExecutionState::Authorized,
+        ));
+    }
+
+    #[test]
+    fn execution_prepared_to_running_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Prepared,
+            &ExecutionState::Running,
+        ));
+    }
+
+    #[test]
+    fn execution_prepared_to_canceled_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Prepared,
+            &ExecutionState::Canceled,
+        ));
+    }
+
+    #[test]
+    fn execution_prepared_self_transition_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Prepared,
             &ExecutionState::Prepared,
         ));
     }
@@ -279,6 +402,94 @@ mod tests {
         assert!(is_valid_execution_transition(
             &ExecutionState::Running,
             &ExecutionState::Committed,
+        ));
+    }
+
+    #[test]
+    fn execution_running_to_failed_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Running,
+            &ExecutionState::Failed,
+        ));
+    }
+
+    #[test]
+    fn execution_running_to_compensated_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Running,
+            &ExecutionState::Compensated,
+        ));
+    }
+
+    #[test]
+    fn execution_running_self_transition_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Running,
+            &ExecutionState::Running,
+        ));
+    }
+
+    #[test]
+    fn execution_awaiting_verification_to_committed_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::AwaitingVerification,
+            &ExecutionState::Committed,
+        ));
+    }
+
+    #[test]
+    fn execution_awaiting_verification_to_failed_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::AwaitingVerification,
+            &ExecutionState::Failed,
+        ));
+    }
+
+    #[test]
+    fn execution_awaiting_verification_to_compensated_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::AwaitingVerification,
+            &ExecutionState::Compensated,
+        ));
+    }
+
+    #[test]
+    fn execution_awaiting_verification_self_transition_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::AwaitingVerification,
+            &ExecutionState::AwaitingVerification,
+        ));
+    }
+
+    #[test]
+    fn execution_awaiting_approval_to_canceled_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::AwaitingApproval,
+            &ExecutionState::Canceled,
+        ));
+    }
+
+    #[test]
+    fn execution_authorized_to_prepared_invalid() {
+        assert!(!is_valid_execution_transition(
+            &ExecutionState::Authorized,
+            &ExecutionState::Prepared,
+        ));
+    }
+
+    #[test]
+    fn execution_prepared_to_authorized_invalid() {
+        assert!(!is_valid_execution_transition(
+            &ExecutionState::Prepared,
+            &ExecutionState::Authorized,
+        ));
+    }
+
+    #[test]
+    fn execution_running_to_authorized_invalid() {
+        assert!(!is_valid_execution_transition(
+            &ExecutionState::Running,
+            &ExecutionState::Authorized,
         ));
     }
 
@@ -335,41 +546,72 @@ mod tests {
     }
 
     #[test]
-    fn execution_all_non_terminal_transitions_allowed() {
-        // All transitions from non-terminal states are allowed
-        let non_terminal = [
-            ExecutionState::Proposed,
-            ExecutionState::Authorized,
-            ExecutionState::Prepared,
-            ExecutionState::Running,
-            ExecutionState::AwaitingApproval,
-            ExecutionState::AwaitingVerification,
+    fn execution_invalid_non_terminal_transitions_blocked() {
+        let invalid_pairs = [
+            (ExecutionState::Proposed, ExecutionState::Prepared),
+            (ExecutionState::Proposed, ExecutionState::Committed),
+            (ExecutionState::Proposed, ExecutionState::Failed),
+            (ExecutionState::Proposed, ExecutionState::Compensated),
+            (ExecutionState::Proposed, ExecutionState::AwaitingApproval),
+            (
+                ExecutionState::Proposed,
+                ExecutionState::AwaitingVerification,
+            ),
+            (ExecutionState::Authorized, ExecutionState::Proposed),
+            (ExecutionState::Authorized, ExecutionState::Prepared),
+            (ExecutionState::Authorized, ExecutionState::Committed),
+            (ExecutionState::Prepared, ExecutionState::Proposed),
+            (ExecutionState::Prepared, ExecutionState::Committed),
+            (ExecutionState::Running, ExecutionState::Proposed),
+            (ExecutionState::Running, ExecutionState::Prepared),
+            (ExecutionState::Running, ExecutionState::AwaitingApproval),
+            (
+                ExecutionState::Running,
+                ExecutionState::AwaitingVerification,
+            ),
+            (ExecutionState::Running, ExecutionState::Canceled),
+            (
+                ExecutionState::AwaitingVerification,
+                ExecutionState::Proposed,
+            ),
+            (
+                ExecutionState::AwaitingVerification,
+                ExecutionState::Authorized,
+            ),
+            (
+                ExecutionState::AwaitingVerification,
+                ExecutionState::Prepared,
+            ),
+            (
+                ExecutionState::AwaitingVerification,
+                ExecutionState::Running,
+            ),
+            (
+                ExecutionState::AwaitingVerification,
+                ExecutionState::Canceled,
+            ),
+            (ExecutionState::AwaitingApproval, ExecutionState::Proposed),
+            (ExecutionState::AwaitingApproval, ExecutionState::Authorized),
+            (ExecutionState::AwaitingApproval, ExecutionState::Prepared),
+            (ExecutionState::AwaitingApproval, ExecutionState::Running),
+            (
+                ExecutionState::AwaitingApproval,
+                ExecutionState::AwaitingVerification,
+            ),
+            (ExecutionState::AwaitingApproval, ExecutionState::Committed),
+            (ExecutionState::AwaitingApproval, ExecutionState::Failed),
+            (
+                ExecutionState::AwaitingApproval,
+                ExecutionState::Compensated,
+            ),
         ];
-        let targets = [
-            ExecutionState::Proposed,
-            ExecutionState::Authorized,
-            ExecutionState::Prepared,
-            ExecutionState::Running,
-            ExecutionState::AwaitingApproval,
-            ExecutionState::AwaitingVerification,
-            ExecutionState::Committed,
-            ExecutionState::Compensated,
-            ExecutionState::RolledBack,
-            ExecutionState::Denied,
-            ExecutionState::Quarantined,
-            ExecutionState::Failed,
-            ExecutionState::Canceled,
-        ];
-        for from in &non_terminal {
-            for to in &targets {
-                // Self-transitions are allowed for non-terminal states
-                assert!(
-                    is_valid_execution_transition(from, to),
-                    "Expected transition from {:?} to {:?} to be allowed",
-                    from,
-                    to
-                );
-            }
+        for (from, to) in invalid_pairs {
+            assert!(
+                !is_valid_execution_transition(&from, &to),
+                "Expected transition from {:?} to {:?} to be blocked",
+                from,
+                to
+            );
         }
     }
 

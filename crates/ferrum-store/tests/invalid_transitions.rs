@@ -664,6 +664,66 @@ async fn execution_update_state_proposed_to_authorized_is_valid() {
     );
 }
 
+#[tokio::test]
+async fn execution_update_state_prepared_to_authorized_returns_invalid_state() {
+    // Strict matrix: Prepared -> Authorized is not a handler transition
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    store.apply_embedded_migrations().await.unwrap();
+
+    let intent_id = insert_intent(&store).await;
+    let proposal_id = insert_proposal(&store, intent_id).await;
+    let cap_id = CapabilityId::new();
+    let cap = make_capability(cap_id, intent_id, proposal_id, CapabilityStatus::Active);
+    store.capabilities().insert(&cap).await.unwrap();
+
+    let repo = store.executions();
+    let execution_id = ExecutionId::new();
+
+    let exec = make_execution(
+        execution_id,
+        intent_id,
+        proposal_id,
+        cap_id,
+        ExecutionState::Prepared,
+    );
+    repo.insert(&exec).await.unwrap();
+
+    let result = repo
+        .update_state(execution_id, ExecutionState::Authorized)
+        .await;
+    assert!(matches!(result, Err(StoreError::InvalidState(_))));
+}
+
+#[tokio::test]
+async fn execution_update_state_proposed_to_prepared_returns_invalid_state() {
+    // Strict matrix: Proposed -> Prepared is not a handler transition
+    let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+    store.apply_embedded_migrations().await.unwrap();
+
+    let intent_id = insert_intent(&store).await;
+    let proposal_id = insert_proposal(&store, intent_id).await;
+    let cap_id = CapabilityId::new();
+    let cap = make_capability(cap_id, intent_id, proposal_id, CapabilityStatus::Active);
+    store.capabilities().insert(&cap).await.unwrap();
+
+    let repo = store.executions();
+    let execution_id = ExecutionId::new();
+
+    let exec = make_execution(
+        execution_id,
+        intent_id,
+        proposal_id,
+        cap_id,
+        ExecutionState::Proposed,
+    );
+    repo.insert(&exec).await.unwrap();
+
+    let result = repo
+        .update_state(execution_id, ExecutionState::Prepared)
+        .await;
+    assert!(matches!(result, Err(StoreError::InvalidState(_))));
+}
+
 // =============================================================================
 // Edge cases: non-existent entities
 // =============================================================================

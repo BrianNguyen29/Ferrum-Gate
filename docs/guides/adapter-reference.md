@@ -1,6 +1,8 @@
 # Adapter Reference
 
 > **Parent**: [`guides/README.md`](./README.md)
+>
+> For extending FerrumGate with custom adapters, see [`custom-adapter.md`](./custom-adapter.md).
 
 ---
 

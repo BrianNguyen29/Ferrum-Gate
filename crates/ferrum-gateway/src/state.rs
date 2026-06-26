@@ -391,6 +391,22 @@ pub struct ServerConfig {
     /// Clock skew tolerance for Agent auth timestamps in seconds.
     /// Conservative default: 30.
     pub agent_clock_skew_secs: i64,
+    /// Enable periodic background lifecycle outbox reconciliation.
+    /// Default: false.
+    pub lifecycle_reconciliation_enabled: bool,
+    /// Interval between periodic reconciliation runs in seconds.
+    /// Default: 60.
+    pub lifecycle_reconciliation_interval_secs: u64,
+    /// Maximum number of outbox records to reconcile per periodic batch.
+    /// Default: 1000.
+    pub lifecycle_reconciliation_batch_limit: u32,
+    /// When true, audit append failures block the action and return 503.
+    /// Default: false (best-effort).
+    pub audit_fail_closed: bool,
+    /// When true, approval resolve requires a second factor (MFA).
+    /// Default: false. No concrete verifier is wired yet; enabling this
+    /// returns 403/mfa_required until client factor transport is implemented.
+    pub approval_mfa_required: bool,
 }
 
 impl Default for ServerConfig {
@@ -420,6 +436,11 @@ impl Default for ServerConfig {
             s3_config: None,
             oidc_config: None,
             agent_clock_skew_secs: 30,
+            lifecycle_reconciliation_enabled: false,
+            lifecycle_reconciliation_interval_secs: 60,
+            lifecycle_reconciliation_batch_limit: 1000,
+            audit_fail_closed: false,
+            approval_mfa_required: false,
         }
     }
 }
@@ -548,6 +569,21 @@ impl ServerConfig {
         // Validate agent clock skew
         if self.auth_mode == AuthMode::Agent && self.agent_clock_skew_secs <= 0 {
             return Err("agent_clock_skew_secs must be positive".to_string());
+        }
+
+        // Validate lifecycle reconciliation settings
+        if self.lifecycle_reconciliation_enabled {
+            if self.lifecycle_reconciliation_interval_secs == 0 {
+                return Err("lifecycle_reconciliation_interval_secs must be at least 1".to_string());
+            }
+            if self.lifecycle_reconciliation_batch_limit == 0 {
+                return Err("lifecycle_reconciliation_batch_limit must be at least 1".to_string());
+            }
+            if self.lifecycle_reconciliation_batch_limit > 10_000 {
+                return Err(
+                    "lifecycle_reconciliation_batch_limit must be at most 10000".to_string()
+                );
+            }
         }
 
         Ok(())

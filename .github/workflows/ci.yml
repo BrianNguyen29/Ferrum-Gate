@@ -99,6 +99,13 @@ jobs:
           assert root.tag == "testsuite"
           assert root.attrib["name"] == "ferrum-stress"
           PY
+      - name: Advisory perf regression gate (ADR 011)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running advisory perf gate (dry-run, non-blocking)..."
+          bash scripts/run_perf_gate.sh --dry-run --duration 5 --scenarios "health,intent-compile,sqlite-contention"
 
   postgres-live-tests:
     runs-on: ubuntu-latest
@@ -272,7 +279,39 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           head -n 50 coverage.txt >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Coverage is evidence-only in this job. No threshold is enforced yet." >> $GITHUB_STEP_SUMMARY
+          echo "Coverage is evidence-only in this job. No hard threshold is enforced yet." >> $GITHUB_STEP_SUMMARY
+          echo "Next step: when coverage stabilizes, enable the hard threshold gate via scripts/check_coverage_threshold.py --hard." >> $GITHUB_STEP_SUMMARY
+      - name: Coverage soft threshold warning
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          import sys
+
+          with open("coverage.txt", encoding="utf-8") as fh:
+              content = fh.read()
+
+          coverage = None
+          total_match = re.search(r'TOTAL\s+.*?([\d.]+)%', content, re.MULTILINE)
+          if total_match:
+              coverage = float(total_match.group(1))
+          else:
+              matches = re.findall(r'([\d.]+)%', content)
+              if matches:
+                  coverage = float(matches[-1])
+
+          if coverage is not None and coverage < 40.0:
+              print(f"::warning::Workspace coverage {coverage:.2f}% is below the soft threshold of 40%")
+              print(f"::warning::When coverage stabilizes, enable hard threshold via scripts/check_coverage_threshold.py --hard")
+              sys.exit(0)
+          elif coverage is not None:
+              print(f"Coverage {coverage:.2f}% meets soft threshold of 40%")
+          else:
+              print("::warning::Could not parse coverage percentage from coverage.txt")
+          PY
+      - name: Critical-crate coverage threshold (soft, non-blocking)
+        run: |
+          python3 scripts/check_coverage_threshold.py coverage.txt || true
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --all
       - name: Upload coverage artifact
