@@ -71,7 +71,7 @@ jobs:
             --output-dir "${{ runner.temp }}/ferrumgate-local-profile"
 
       - name: Upload local profile evidence artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ferrumgate-local-profile-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/ferrumgate-local-profile/
