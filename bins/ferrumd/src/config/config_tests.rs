@@ -2787,7 +2787,7 @@ fn test_validate_warns_but_allows_disabled_lifecycle_reconciliation_in_productio
         r#"[server]
 bind_addr = "0.0.0.0:8080"
 auth_mode = "bearer"
-bearer_token = "a_secure_token_that_is_not_a_placeholder_1234567890"
+bearer_token = "valid-test-token"
 store_dsn = "sqlite:///tmp/ferrumgate/test.db"
 fs_workdir = "/tmp/ferrumgate"
 lifecycle_reconciliation_enabled = false
@@ -2836,7 +2836,7 @@ fn test_validate_warns_but_allows_disabled_audit_fail_closed_in_production() {
         r#"[server]
 bind_addr = "0.0.0.0:8080"
 auth_mode = "bearer"
-bearer_token = "a_secure_token_that_is_not_a_placeholder_1234567890"
+bearer_token = "valid-test-token"
 store_dsn = "sqlite:///tmp/ferrumgate/test.db"
 fs_workdir = "/tmp/ferrumgate"
 audit_fail_closed = false
