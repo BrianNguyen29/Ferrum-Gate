@@ -49,7 +49,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"]
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 schemars = { version = "0.8", features = ["chrono", "uuid1", "indexmap"] }
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "chrono", "uuid", "runtime-tokio-rustls"] }
+sqlx = { version = "0.9", default-features = false, features = ["sqlite", "chrono", "uuid", "runtime-tokio-rustls"] }
 sha2 = "0.10"
 petgraph = "0.7"
 clap = { version = "4", features = ["derive"] }
