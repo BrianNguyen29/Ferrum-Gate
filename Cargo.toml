@@ -69,7 +69,7 @@ constant_time_eq = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 serde_yaml = "0.9"
 blake3 = "1.5"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 rand = "0.8"
 regex = "1"
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
