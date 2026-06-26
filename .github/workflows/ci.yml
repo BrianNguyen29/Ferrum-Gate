@@ -8,7 +8,7 @@ jobs:
   release-governance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Hardcoded secrets scan
         run: bash scripts/run_secret_scan.sh
       - name: Install Rust
@@ -23,7 +23,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show repository tree
         run: find . -maxdepth 3 | sort
       - name: Local validation
@@ -124,7 +124,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cargo test (PostgreSQL live, no skips)
@@ -211,7 +211,7 @@ jobs:
   s3-live-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start MinIO
         run: |
           docker run -d --name ferrum-minio \
@@ -256,7 +256,7 @@ jobs:
   coverage-and-sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
