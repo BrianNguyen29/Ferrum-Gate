@@ -42,7 +42,7 @@ jobs:
           prom/prometheus:v2.53.5
           check rules /rules/ferrumgate-alerts.yaml
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
       - name: Helm chart lint and render
         run: |
           helm lint deploy/helm/ferrumgate \
