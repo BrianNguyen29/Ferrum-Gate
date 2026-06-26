@@ -15,7 +15,7 @@ http = ["dep:axum", "dep:tower"]
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-firewall = { path = "../ferrum-firewall" }
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
