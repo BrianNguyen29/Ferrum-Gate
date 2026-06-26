@@ -46,28 +46,45 @@ Skeleton or partial implementation; not ready for production use:
 
 - **MCP Streamable HTTP / SSE transport.**
 
-## Next (future priorities, not implemented)
+## Next (separate-PR proposals)
 
-These are planned future directions. They are **not** implemented and have no committed timeline.
+These are **deferred to upcoming separate PRs**. They are not implemented and have no committed timeline, but acceptance criteria are defined and they are prioritized over open-ended backlog items.
 
-- **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
-- **MCP resumability** — Session resumability. Not implemented; no committed timeline.
+- **Approval timeout / auto-deny** — Auto-deny stale approvals after a configurable timeout. See ADR 008 (separate PR from MFA).
+  - Acceptance: `approval_timeout_seconds` parsed/validated; pending approvals transition to `timed_out`; reflected in lifecycle outbox and CLI.
+- **MFA TOTP second factor** — TOTP verification for high-risk approval resolution. See ADR 008 (separate PR from approval timeout).
+  - Acceptance: `MfaVerifier` trait with TOTP implementation behind `mfa-totp` feature; `approval_mfa_required` config; resolve endpoint returns `403` with `mfa_required` when factor missing/invalid.
+- **Store-backed CapabilityService** — Move in-memory capability tracking to persistent store (SQLite/PostgreSQL) for cross-process consistency and HA readiness.
+  - Acceptance: `CapabilityService` trait with store-backed implementation; in-memory implementation retained for tests; no regression in capability mint/revoke latency.
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access. See ADR 009.
-- **Quickstart split** — Separate "5-minute cheat sheet" (copy-paste commands) from "10-minute walkthrough" (full lifecycle explanation).
-- **Audit fail-closed** — Optional mode where audit-store failure blocks the action. See ADR 007.
-- **R3 approval timeout / second factor** — Auto-deny stale approvals and optional MFA for high-risk actions. See ADR 008.
+  - Acceptance: `ferrumctl audit export` produces `.jsonl` + `manifest.json`; `ferrumctl audit verify` checks hash chain and Merkle root.
+- **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
+  - Acceptance: CI workflow runs stdio + HTTP smoke against a target host; validates tool discovery and a health tool call.
 
-## Later (future priorities, not implemented)
+## Later (future / proposed, blocked or needs design)
 
-These require broader design decisions or additional evidence before they can be committed.
+These require broader design decisions, additional evidence, or an ADR before they can be committed.
 
 - **WORM export** — Write-once-read-many sink integration and portable `ferrumctl audit export` bundle for stronger tamper resistance. Depends on external anchoring design. See ADR 009.
+  - Acceptance: `AuditSink` trait with `WormSink` behind feature gate; MinIO Object Lock integration test; background export with retry logic.
 - **Behavioral anomaly detection** — Lightweight statistical profiling of actor behavior to flag unusual agency patterns. See ADR 010.
+  - Acceptance: `BehavioralProfiler` trait with `ThresholdDetector`; anomaly events written to audit log; Prometheus metric `ferrumgate_behavioral_anomaly_detected_total`.
 - **Performance regression gate** — Automated CI gate that blocks changes regressing established baselines. See ADR 011.
+  - Acceptance: `make perf-gate` runs short `ferrum-stress` scenarios and compares against baselines; advisory in CI until baselines are authoritative.
+- **PolicyBundle PDP engine** — Policy decision point with bundle-scoped rule evaluation. **Blocked** on rule semantics ADR (needed before engine contract can be finalized).
+  - Acceptance: Rule semantics ADR accepted; PDP engine compiles bundle rules to a decision graph; integration tests for permit/deny/obligate cases.
+- **MCP resumability** — Session resumability. Not implemented; no committed timeline.
+  - Acceptance: Resume checkpoint persisted to store; session ID rehydration restores tool context and pending capability state.
+- **Production MCP HTTP/SSE** — Production-ready Streamable HTTP / SSE transport. Requires target-host smoke, load, and reconnect evidence first.
+  - Acceptance: Load test evidence (≥100 concurrent sessions, 0% errors over 5 min); reconnect test evidence; ADR 005 updated to Accepted.
+- **GCS / Azure Blob adapters** — Object-store adapters. Require rollback/compensation contracts and local validation.
+  - Acceptance: Adapter implements `AdapterPort` with put/delete/get/copy; versioning-based rollback; local emulator integration tests.
+- **HA reconciler** — Background task to reconcile capability and execution state across restarted or failed-over instances.
+  - Acceptance: Reconciler scans stale `in_flight` executions and transitions them to `failed` or `compensated` with audit entries; works with PostgreSQL and SQLite.
+- **Schema-drift checker** — Startup validation that detects database schema version mismatches and provides a clear operator message.
+  - Acceptance: `ferrumd` refuses to start if schema version > expected version; prints migration path; integration test with intentionally drifted schema.
 - **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
-- **GCS / Azure Blob adapters** — Object-store adapters. Require rollback/ compensation contracts and local validation.
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.
-- **Production MCP HTTP/SSE** — After target-host smoke, load, and reconnect evidence exists.
 
 ## Not implemented / out of scope
 

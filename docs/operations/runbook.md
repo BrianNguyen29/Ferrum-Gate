@@ -68,8 +68,8 @@ The following controls are proposed but not yet implemented. See the referenced 
 
 | Control | ADR | Status |
 |---------|-----|--------|
-| Audit fail-closed mode | [ADR 007](../adr/007-audit-fail-closed.md) | Proposed |
+| Audit fail-closed mode | [ADR 007](../adr/007-audit-fail-closed.md) | Accepted |
 | R3 approval timeout / second factor | [ADR 008](../adr/008-r3-approval-timeout-mfa.md) | Proposed |
 | WORM export and portable audit bundle | [ADR 009](../adr/009-worm-export-audit-bundle.md) | Proposed |
 | Behavioral anomaly detection | [ADR 010](../adr/010-behavioral-anomaly-detection.md) | Proposed |
-| Performance regression gate | [ADR 011](../adr/011-performance-regression-gate.md) | Proposed |
+| Performance regression gate | [ADR 011](../adr/011-performance-regression-gate.md) | Accepted |

@@ -1,7 +1,7 @@
 # ADR 008 — R3 Approval Timeout and Second Factor
 
 ## Status
-Proposed (Phase 1 MFA stub completed; timeout auto-deny pending)
+Proposed (Phase 1 MFA stub completed; split into **separate PRs** — approval timeout auto-deny; MFA TOTP adapter)
 
 ## Context
 
@@ -14,21 +14,21 @@ This gap was identified in the threat model (B8 — unauthorized approval) and t
 
 ## Decision
 
-Propose two independent but complementary controls:
+Propose two independent but complementary controls, each targeting a **separate follow-up PR** to keep review scope bounded:
 
-### 1. Approval timeout with auto-deny
+### 1. Approval timeout with auto-deny (separate PR)
 - Introduce `approval_timeout_seconds: u64` (config default `3600`, max `86400`).
 - Pending approvals older than the timeout are automatically rejected with status `timed_out`.
 - A background task (or cron-like reconciliation) evaluates pending approvals on a configurable interval (`approval_reconciliation_interval_seconds`, default `300`).
 - Metrics: `ferrumgate_approval_timeouts_total`.
 
-### 2. Second-factor confirmation (MFA / out-of-band)
+### 2. Second-factor confirmation / MFA TOTP (separate PR)
 - Introduce an optional `approval_mfa_required: bool` (config default `false`).
 - When enabled, the `POST /v1/approvals/{id}/resolve` endpoint requires a second factor in addition to the scoped token.
 - The second factor is **pluggable by design**: a TOTP code, a WebAuthn assertion, or an out-of-band cryptographic acknowledge (e.g., signed JWT from a separate identity provider).
 - Phase 1 (completed): document the interface (`MfaVerifier` trait) and provide a no-op implementation. `approval_mfa_required` is parsed and wired; when enabled the endpoint returns `403 MfaRequired` because client factor transport is not yet modeled.
-- Phase 2: implement TOTP verification as the first concrete adapter.
-- Phase 3: operator-provided WebAuthn or IdP integration.
+- Phase 2 (separate PR): implement TOTP verification as the first concrete adapter.
+- Phase 3 (future): operator-provided WebAuthn or IdP integration.
 
 Both controls are opt-in to preserve backward compatibility.
 

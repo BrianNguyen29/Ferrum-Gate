@@ -536,6 +536,19 @@ impl ServerConfig {
             return Err("all sqlite_db_roots must be absolute paths".to_string());
         }
 
+        if production_like && !self.lifecycle_reconciliation_enabled {
+            tracing::warn!(
+                "lifecycle_reconciliation_enabled is false in a production-like configuration; \
+                 periodic lifecycle outbox reconciliation is disabled"
+            );
+        }
+        if production_like && !self.audit_fail_closed {
+            tracing::warn!(
+                "audit_fail_closed is false in a production-like configuration; \
+                 audit append failures will not block actions"
+            );
+        }
+
         // Validate store DSN is SQLite (PostgreSQL and MySQL not implemented)
         validate_store_dsn(&self.store_dsn)?;
 

@@ -549,4 +549,12 @@ pub trait StoreFacade: Send + Sync {
     fn pool_status(&self) -> Option<PoolStatus> {
         None
     }
+
+    /// Gracefully shut down the store.
+    ///
+    /// Signals background tasks (e.g. SQLite writer) to stop and waits
+    /// for them to drain. The default implementation is a no-op.
+    async fn shutdown(&self) -> crate::Result<()> {
+        Ok(())
+    }
 }

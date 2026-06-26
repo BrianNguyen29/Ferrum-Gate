@@ -23,6 +23,7 @@ Before tagging a release, verify:
 - [ ] `make audit` passes (cargo-deny / cargo-audit)
 - [ ] `make pretarget` passes (config examples, restore drill, evidence skeleton, bearer-auth smoke)
 - [ ] `make perf-gate` passes (advisory performance regression check; see ADR 011)
+- [ ] `make coverage-threshold-hard` passes (optional hard coverage check for critical crates; see below)
 - [ ] `CHANGELOG.md` is updated with the new version section (must include release date and non-trivial content)
 - [ ] Version strings in `Cargo.toml` workspace packages are bumped if needed
 - [ ] `docs/ROADMAP.md` status table is updated if any items changed status
@@ -40,6 +41,9 @@ make release-preflight
 
 # With SBOM generation (still no push/publish)
 make release-preflight-execute
+
+# Optional: hard coverage threshold check for critical crates (local only; requires cargo-llvm-cov)
+make coverage-threshold-hard
 ```
 
 The script validates:
@@ -51,13 +55,15 @@ The script validates:
 
 ### Manual GitHub workflow
 
-A `workflow_dispatch` workflow is available at `.github/workflows/release.yml` for CI-level preflight. It does **not** create tags, push, or publish crates. It **mandatorily** generates and uploads a CycloneDX SBOM artifact.
+A `workflow_dispatch` workflow is available at `.github/workflows/release.yml` for CI-level preflight. It does **not** publish crates. It **mandatorily** generates and uploads a CycloneDX SBOM artifact. Optionally, it can create a **draft** GitHub release with the SBOM attached.
 
 Steps:
 1. Go to **Actions → release → Run workflow**.
 2. Enter the target version (must match `Cargo.toml` workspace version).
-3. The workflow will run all preflight checks and generate the SBOM artifact.
-4. Download the SBOM artifact after the run completes.
+3. Enable **Create a draft GitHub release** if you want a draft release created automatically.
+4. The workflow will run all preflight checks and generate the SBOM artifact.
+5. If draft release is enabled, the workflow creates a draft release and attaches the SBOM.
+6. Download the SBOM artifact after the run completes (if not using draft release).
 
 ## Creating a release
 
@@ -91,7 +97,7 @@ cargo publish -p ferrum-proto
 ## Release automation next steps (proposed, not implemented)
 
 - **Automated crate publishing** — A CI job that publishes crates in dependency order after a release tag is pushed. Requires crates.io API token management, dry-run validation, and rollback handling. See `docs/ROADMAP.md` for timeline.
-- **Automated GitHub Release creation** — A workflow that creates the GitHub Release from the tag, copies the `CHANGELOG.md` section, and attaches the SBOM artifact. Currently manual.
+- **Automated GitHub Release creation** — A workflow that creates the GitHub Release from the tag, copies the `CHANGELOG.md` section, and attaches the SBOM artifact. **Partially implemented**: the `release.yml` workflow can optionally create a draft release with SBOM attached; full automation (auto-generating release notes from CHANGELOG) is still manual.
 - **Release branch automation** — Automated creation of a release branch, version bump PR, and tag push. Not yet implemented; manual process is documented above.
 
 ## Supported versions

@@ -31,6 +31,15 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | MCP Streamable HTTP / SSE transport | Experimental | Not production-ready; requires `--features http` |
 | MCP resumability | Not implemented | Future priority; no committed timeline |
 | Turnkey HA product | Not implemented | Operator must design HA topology |
+| Store-backed CapabilityService | Not implemented | Deferred to separate PR |
+| PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
+| MFA TOTP | Not implemented | Deferred to separate PR |
+| Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
+| WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
+| Behavioral anomaly detection | Not implemented | Backlog; see ADR 010 |
+| GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |
+| HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
+| Schema-drift checker | Not implemented | Backlog; requires migration strategy ADR |
 
 ## Honest assessment
 

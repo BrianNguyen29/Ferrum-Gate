@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update coverage-threshold-hard
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -39,6 +39,7 @@ help:
 	@echo "make site-check - check site scaffold presence (no zola required)"
 	@echo "make release-preflight - run conservative release preflight checks (dry-run, no push/publish)"
 	@echo "make release-preflight-execute - run release preflight with SBOM generation (still no push/publish)"
+	@echo "make coverage-threshold-hard - local hard coverage threshold check for critical crates (requires cargo-llvm-cov)"
 	@echo "make slo-sustained-dry-run - safe dry-run rehearsal for SLO sustained observation"
 
 check:
@@ -287,3 +288,14 @@ release-preflight:
 release-preflight-execute:
 	@echo "Running release preflight with SBOM generation (still no push/publish)..."
 	@bash scripts/prepare_release.sh --execute
+
+coverage-threshold-hard:
+	@echo "Running hard coverage threshold check for critical crates..."
+	@if command -v cargo-llvm-cov >/dev/null 2>&1; then \
+		cargo llvm-cov --workspace --text --output-path coverage.txt; \
+		python3 scripts/check_coverage_threshold.py coverage.txt --hard; \
+	else \
+		echo "cargo-llvm-cov not found. Install it to run this target:"; \
+		echo "  cargo install --locked cargo-llvm-cov"; \
+		exit 1; \
+	fi

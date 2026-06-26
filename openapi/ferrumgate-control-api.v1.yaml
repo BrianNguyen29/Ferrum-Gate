@@ -20,7 +20,10 @@ info:
     (e.g., nginx, cloud load balancer) for production use.
 
 servers:
-  - url: http://localhost:8080
+  - url: http://127.0.0.1:18080
+    description: Canonical local development (dev config default)
+  - url: http://127.0.0.1:8080
+    description: Deployment / container default (e.g., Docker, Helm)
 
 paths:
   /v1/healthz:

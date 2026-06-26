@@ -393,11 +393,8 @@ impl SqliteStore {
         // Signal the writer task to stop accepting new operations and drain
         self.writer_state.request_shutdown();
 
-        // Wait for the writer task to finish draining and exit
-        let mut handle = self.writer_handle.lock().await;
-        if let Err(e) = (&mut *handle).await {
-            tracing::warn!(error = %e, "writer task panicked during shutdown");
-        }
+        // Wait for the writer task to signal completion
+        self.writer_state.wait_for_shutdown().await;
 
         Ok(())
     }
@@ -557,6 +554,10 @@ impl StoreFacade for SqliteStore {
             .await
             .map_err(|e| crate::StoreError::Other(e.to_string()))?;
         Ok(())
+    }
+
+    async fn shutdown(&self) -> crate::Result<()> {
+        self.shutdown().await
     }
 }
 
@@ -1188,6 +1189,16 @@ mod tests {
             .health_check()
             .await
             .expect("health_check should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_store_facade_shutdown_drains_writer() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let facade: Arc<dyn StoreFacade> = Arc::new(store);
+
+        // Shutdown via the trait should drain the writer without panic
+        facade.shutdown().await.unwrap();
     }
 
     #[tokio::test]

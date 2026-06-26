@@ -11,11 +11,11 @@ This directory records significant architecture decisions made in the FerrumGate
 | [004](004-s3-feature-gate.md) | S3 Feature Gate and Live Mode Semantics | Accepted |
 | [005](005-mcp-transport-maturity.md) | MCP Transport Maturity Boundary | Accepted |
 | [006](006-archive-ledger-deferred-runtime.md) | Archive ferrum-ledger and Deferred Runtime Items | Accepted |
-| [007](007-audit-fail-closed.md) | Audit Fail-Closed Mode | Proposed |
-| [008](008-r3-approval-timeout-mfa.md) | R3 Approval Timeout and Second Factor | Proposed |
-| [009](009-worm-export-audit-bundle.md) | WORM Export and Portable Audit Bundle | Proposed |
+| [007](007-audit-fail-closed.md) | Audit Fail-Closed Mode | Accepted |
+| [008](008-r3-approval-timeout-mfa.md) | R3 Approval Timeout and Second Factor | Proposed (split into separate PRs: approval timeout; MFA TOTP) |
+| [009](009-worm-export-audit-bundle.md) | WORM Export and Portable Audit Bundle | Proposed (audit verification UX deferred to separate PR; WORM sink backlog) |
 | [010](010-behavioral-anomaly-detection.md) | Behavioral Anomaly Detection | Proposed |
-| [011](011-performance-regression-gate.md) | Performance Regression Gate | Proposed |
+| [011](011-performance-regression-gate.md) | Performance Regression Gate | Accepted (advisory / non-blocking in regular CI) |
 
 ## Format
 
