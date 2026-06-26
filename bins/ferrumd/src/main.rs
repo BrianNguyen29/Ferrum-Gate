@@ -272,13 +272,17 @@ async fn main() -> Result<()> {
         None
     };
 
-    let runtime = GatewayRuntime::new(pdp, cap, rollback, store, vec![])
+    let runtime = GatewayRuntime::new(pdp, cap, rollback, Arc::clone(&store), vec![])
         .with_lifecycle_reconciliation_report(reconciliation_report);
     let result = run_http_server(config, runtime).await;
 
     if let Some(handle) = worker_handle {
         shutdown_notify.notify_waiters();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    if let Err(e) = store.shutdown().await {
+        tracing::warn!(error = %e, "store shutdown failed");
     }
 
     result

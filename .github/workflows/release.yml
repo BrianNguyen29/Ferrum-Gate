@@ -7,10 +7,17 @@ on:
         description: 'Target version (e.g., 0.1.0) — must match Cargo.toml workspace version'
         required: true
         default: '0.1.0'
+      draft-release:
+        description: 'Create a draft GitHub release with SBOM attached (still manual approval)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   release-preflight:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -40,15 +47,43 @@ jobs:
           name: sbom-release
           path: target/cyclonedx/*
           retention-days: 30
+      - name: Create draft release
+        if: ${{ github.event.inputs.draft-release == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Creating draft release for v${{ github.event.inputs.version }}..."
+          sbom_files=$(find target/cyclonedx/ -name "*.json" -type f)
+          if [[ -z "$sbom_files" ]]; then
+            echo "[ERROR] No SBOM JSON files found in target/cyclonedx/"
+            exit 1
+          fi
+          # Use the first SBOM file as the primary attachment
+          sbom_path=$(echo "$sbom_files" | head -n1)
+          echo "Attaching SBOM: $sbom_path"
+          gh release create "v${{ github.event.inputs.version }}" \
+            --draft \
+            --title "v${{ github.event.inputs.version }}" \
+            --notes "Draft release for v${{ github.event.inputs.version }}. See CHANGELOG.md for details." \
+            --repo "${{ github.repository }}" \
+            "$sbom_path#sbom.cyclonedx.json"
       - name: Summary
         run: |
           echo "## Release Preflight" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Version: ${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- SBOM generated: mandatory (always uploaded)" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.draft-release }}" == "true" ]; then
+            echo "- Draft release: created (tag v${{ github.event.inputs.version }} created as draft)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- Draft release: skipped (enable 'draft-release' input to create one)" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "This workflow does **not** create tags, push, or publish crates." >> $GITHUB_STEP_SUMMARY
-          echo "Manual steps after preflight passes:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Commit and tag locally." >> $GITHUB_STEP_SUMMARY
-          echo "2. Push tag to origin." >> $GITHUB_STEP_SUMMARY
-          echo "3. Create GitHub Release and attach the SBOM artifact." >> $GITHUB_STEP_SUMMARY
+          echo "This workflow does **not** publish crates." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.draft-release }}" != "true" ]; then
+            echo "Manual steps after preflight passes:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Commit and tag locally." >> $GITHUB_STEP_SUMMARY
+            echo "2. Push tag to origin." >> $GITHUB_STEP_SUMMARY
+            echo "3. Create GitHub Release and attach the SBOM artifact." >> $GITHUB_STEP_SUMMARY
+          fi

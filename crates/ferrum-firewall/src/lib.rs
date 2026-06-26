@@ -238,7 +238,47 @@ impl TaintScoringFirewall {
             }
         }
 
-        result.trim().to_string()
+        Self::redact_secrets(result.trim())
+    }
+
+    /// Redact common secret patterns from a string.
+    ///
+    /// Targets: bearer/authorization tokens, API keys, GitHub tokens, AWS
+    /// access-key-like values, PEM private key markers.  Preserves UUIDs and
+    /// correlation IDs (high-confidence, low false-positive design).
+    fn redact_secrets(input: &str) -> String {
+        use regex::Regex;
+        use std::sync::LazyLock;
+
+        static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+            vec![
+                // PEM private key blocks (match first to avoid partial matches)
+                Regex::new(r"(?i)-----BEGIN\s+(?:ENCRYPTED\s+|RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE\s+KEY-----[A-Za-z0-9\s+/=]*?-----END\s+(?:ENCRYPTED\s+|RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE\s+KEY-----")
+                    .expect("valid static PEM regex"),
+                // GitHub tokens
+                Regex::new(r"\bgh[opusr]_[A-Za-z0-9]{36,}\b")
+                    .expect("valid static GitHub token regex"),
+                Regex::new(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")
+                    .expect("valid static GitHub PAT regex"),
+                // AWS access keys
+                Regex::new(r"\bAKIA[0-9A-Z]{16}\b")
+                    .expect("valid static AWS AKIA regex"),
+                Regex::new(r"\bASIA[0-9A-Z]{16}\b")
+                    .expect("valid static AWS ASIA regex"),
+                // Bearer / authorization tokens
+                Regex::new(r"(?i)\bBearer\s+[A-Za-z0-9\-_\.=+/]{8,}")
+                    .expect("valid static Bearer regex"),
+                // API keys (common prefixes)
+                Regex::new(r"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?key|auth[_-]?token)\s*[:=]\s*[A-Za-z0-9\-_\.=+/]{8,}")
+                    .expect("valid static API key regex"),
+            ]
+        });
+
+        let mut result = input.to_string();
+        for regex in PATTERNS.iter() {
+            result = regex.replace_all(&result, "[REDACTED]").into_owned();
+        }
+        result
     }
 
     /// Determine if quarantine is needed based on taint score and rollback class.
@@ -662,5 +702,183 @@ mod tests {
         let arr = sanitized.as_array().unwrap();
         assert_eq!(arr[0].as_str().unwrap(), "item 1");
         assert_eq!(arr[1].as_str().unwrap(), "item 2");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Secret redaction tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sanitize_redacts_bearer_token() {
+        let fw = TaintScoringFirewall::new();
+        let input = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+        let sanitized = fw.sanitize(input);
+        assert!(
+            !sanitized.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
+            "bearer token should be redacted"
+        );
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_api_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "api_key=abc1234567890def";
+        let sanitized = fw.sanitize(input);
+        assert!(
+            !sanitized.contains("abc1234567890def"),
+            "api key value should be redacted"
+        );
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_secret_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "secret_key=supersecretvalue123";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("supersecretvalue123"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_access_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "access-key=anothersecretvalue";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("anothersecretvalue"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_auth_token() {
+        let fw = TaintScoringFirewall::new();
+        let input = "auth_token=tokensecret123456";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("tokensecret123456"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_github_token() {
+        let fw = TaintScoringFirewall::new();
+        let token = format!("ghp_{}", "1".repeat(36));
+        let input = format!("token {}", token);
+        let sanitized = fw.sanitize(&input);
+        assert!(
+            !sanitized.contains(&token),
+            "GitHub token should be redacted"
+        );
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_github_pat() {
+        let fw = TaintScoringFirewall::new();
+        let input = "github_pat_12345678901234567890_abcdef";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("github_pat_12345678901234567890_abcdef"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_aws_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "AKIAIOSFODNN7EXAMPLE";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_aws_session_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "ASIAIOSFODNN7EXAMPLE";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("ASIAIOSFODNN7EXAMPLE"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_pem_private_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "-----BEGIN RSA PRIVATE KEY----- MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgwNRPb -----END RSA PRIVATE KEY-----";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgwNRPb"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_preserves_uuid() {
+        let fw = TaintScoringFirewall::new();
+        let input = "550e8400-e29b-41d4-a716-446655440000";
+        let sanitized = fw.sanitize(input);
+        assert_eq!(sanitized, "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_correlation_id() {
+        let fw = TaintScoringFirewall::new();
+        let input = "correlation_id=550e8400-e29b-41d4-a716-446655440000";
+        let sanitized = fw.sanitize(input);
+        assert_eq!(
+            sanitized,
+            "correlation_id=550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_preserves_short_api_key() {
+        let fw = TaintScoringFirewall::new();
+        let input = "api_key=1234";
+        let sanitized = fw.sanitize(input);
+        assert_eq!(sanitized, "api_key=1234");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_normal_text() {
+        let fw = TaintScoringFirewall::new();
+        let input = "hello world";
+        let sanitized = fw.sanitize(input);
+        assert_eq!(sanitized, "hello world");
+    }
+
+    #[test]
+    fn test_sanitize_redacts_combined_with_control_chars() {
+        let fw = TaintScoringFirewall::new();
+        let input = "hello\x00Bearer abcdefgh12345678";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("abcdefgh12345678"));
+        assert!(sanitized.contains("[REDACTED]"));
+        assert_eq!(sanitized, "hello [REDACTED]");
+    }
+
+    #[test]
+    fn test_sanitize_output_redacts_nested_secrets() {
+        let fw = TaintScoringFirewall::new();
+        let input = serde_json::json!({
+            "message": "token is Bearer abcdefgh12345678",
+            "nested": {
+                "key": "api_key=secretvalue123"
+            }
+        });
+        let sanitized = fw.sanitize_output(input);
+        let obj = sanitized.as_object().unwrap();
+        let msg = obj.get("message").unwrap().as_str().unwrap();
+        assert!(!msg.contains("abcdefgh12345678"));
+        assert!(msg.contains("[REDACTED]"));
+        let nested = obj.get("nested").unwrap().as_object().unwrap();
+        let key = nested.get("key").unwrap().as_str().unwrap();
+        assert!(!key.contains("secretvalue123"));
+        assert!(key.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_redacts_bearer_lowercase() {
+        let fw = TaintScoringFirewall::new();
+        let input = "bearer lowercase_token_12345678";
+        let sanitized = fw.sanitize(input);
+        assert!(!sanitized.contains("lowercase_token_12345678"));
+        assert!(sanitized.contains("[REDACTED]"));
     }
 }

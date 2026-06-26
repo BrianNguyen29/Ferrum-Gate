@@ -67,6 +67,7 @@ Set via config or env var `FERRUMD_BEARER_TOKEN`. Tokens are compared with const
 | `/v1/intents/compile` | `POST` | bearer | Compile a new intent |
 | `/v1/intents` | `GET` | bearer | List compiled intents |
 | `/v1/proposals/{proposal_id}/evaluate` | `POST` | bearer | Evaluate a proposal against active policy |
+| `/v1/policy/simulate` | `POST` | bearer | Simulate proposal against active runtime policy (side-effect free) |
 
 ### Capabilities
 
@@ -83,6 +84,7 @@ Set via config or env var `FERRUMD_BEARER_TOKEN`. Tokens are compared with const
 | `/v1/executions/{execution_id}/prepare` | `POST` | bearer | Prepare side effect (snapshot, validation) |
 | `/v1/executions/{execution_id}/execute` | `POST` | bearer | Execute the prepared action |
 | `/v1/executions/{execution_id}/verify` | `POST` | bearer | Verify the outcome |
+| `/v1/executions/{execution_id}/commit` | `POST` | bearer | Manually commit a verified execution (R3 boundary) |
 | `/v1/executions/{execution_id}/evaluate-outcome` | `POST` | bearer | Evaluate whether outcome aligns with intent |
 | `/v1/executions/{execution_id}/compensate` | `POST` | bearer | Trigger compensation/rollback |
 | `/v1/executions/{execution_id}/cancel` | `POST` | bearer | Cancel execution before commit |
@@ -122,6 +124,10 @@ Set via config or env var `FERRUMD_BEARER_TOKEN`. Tokens are compared with const
 | `/v1/policy-bundles/{bundle_id}` | `PUT` | bearer | Update a policy bundle |
 | `/v1/policy-bundles/{bundle_id}` | `DELETE` | bearer | Delete a policy bundle |
 | `/v1/policy-bundles/{bundle_id}/active` | `PUT` | bearer | Set bundle as active |
+| `/v1/policy-bundles/simulate` | `POST` | bearer | Simulate a policy bundle (side-effect free) |
+| `/v1/policy-bundles/{bundle_id}/versions` | `GET` | bearer | List versions of a policy bundle |
+| `/v1/policy-bundles/{bundle_id}/diff` | `GET` | bearer | Diff between two policy bundle versions |
+| `/v1/policy-bundles/{bundle_id}/rollback` | `POST` | bearer | Rollback a policy bundle to a previous version |
 
 ### Admin
 

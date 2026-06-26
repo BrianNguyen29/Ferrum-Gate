@@ -41,7 +41,7 @@ objects:
 
   CapabilityLease:
     invariants:
-      - "ttl_default = 15s"
+      - "ttl_default = 15s (client contract expectation; runtime requires explicit requested_ttl_secs per request)"
       - "ttl_max = 300s"
       - "single_use_only = true"
       - "resource_bindings subset_of IntentEnvelope.resource_scope"

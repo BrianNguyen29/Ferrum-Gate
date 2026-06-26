@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-- **Docs consistency** — clarified canonical local dev port (18080) vs deployment examples (8080); added S3 adapter (experimental) to public status lists; noted `ttl_default = 15s` as a contract expectation rather than a verified runtime default; expanded API guide with admin, audit, and lifecycle outbox endpoint overview.
+- **Docs consistency** — clarified canonical local dev port (18080) vs deployment examples (8080); added S3 adapter (experimental) to public status lists; noted `ttl_default = 15s` as a contract expectation rather than a verified runtime default; expanded API guide with admin, audit, lifecycle outbox, and missing policy/execution endpoint overview; fixed ADR007 and ADR011 status mismatches in README and runbook tables.
 - **S3 adapter** — live execution (put/delete/get/copy) with versioning-based rollback; gated behind `live` config; MinIO integration tests present.
 - **Lifecycle outbox** — reconciliation endpoints and `ferrumctl admin lifecycle-outbox` operator commands added.
 - **Audit hardening** — tamper-evident audit log chain, Merkle root verification, and checkpoint endpoints.

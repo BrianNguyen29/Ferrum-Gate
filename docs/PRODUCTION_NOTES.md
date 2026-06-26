@@ -124,6 +124,17 @@ make perf-baseline-update
 ### Why advisory?
 CI runners have variable CPU and I/O performance. Relative thresholds reduce noise, but absolute thresholds require hardware-normalized baselines. The gate will become blocking only after baselines are validated on a representative runner class and the ADR is updated. See `docs/adr/011-performance-regression-gate.md`.
 
+### Promoting Baselines from Advisory to Blocking
+
+To promote a performance baseline from SAMPLE/advisory to authoritative:
+
+1. **Controlled runner**: Run `make perf-baseline-update` on a representative, stable CI runner or dedicated benchmarking host. Document the hardware spec (CPU, RAM, disk type) in the baseline `meta.note`.
+2. **Statistical stability**: Execute at least 5 consecutive runs on the same commit. All runs must pass the relative thresholds against each other (within 10% variance).
+3. **Remove SAMPLE label**: Update the `meta.note` field from "SAMPLE / NON-AUTHORITATIVE" to a descriptive label (e.g., "Authoritative — validated on GitHub Actions ubuntu-latest runner"), set `last_validated_commit` to the exact commit SHA, and set `validated_at` to the current ISO 8601 timestamp.
+4. **Update thresholds**: Ensure `min_ratio` and `max_ratio` values are conservative enough to absorb runner variance without missing real regressions (typically `min_ratio >= 0.70` for throughput, `max_ratio <= 2.50` for latency).
+5. **ADR update**: If making the gate blocking, update `docs/adr/011-performance-regression-gate.md` to reflect the change from advisory to enforced.
+6. **Coverage gate parity**: Only promote perf baselines to blocking after the critical-crate coverage gate (`make coverage-threshold-hard`) has been stable for at least two release cycles.
+
 ## Authentication
 - **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
 - Tokens are validated with constant-time comparison (timing-attack resistant)

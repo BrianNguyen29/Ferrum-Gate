@@ -1,7 +1,7 @@
 # ADR 009 — WORM Export and Portable Audit Bundle
 
 ## Status
-Proposed
+Proposed (portable audit bundle / verification UX deferred to **separate PR**; WORM sink remains backlog pending external anchoring design)
 
 ## Context
 

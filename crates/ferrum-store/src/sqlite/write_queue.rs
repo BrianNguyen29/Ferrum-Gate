@@ -504,6 +504,10 @@ impl WriterState {
     fn notify_shutdown_complete(&self) {
         self.shutdown_complete.notify_one();
     }
+
+    pub(crate) async fn wait_for_shutdown(&self) {
+        self.shutdown_complete.notified().await;
+    }
 }
 
 /// Spawn the write queue writer task.
@@ -538,31 +542,43 @@ async fn writer_loop(
     state: Arc<WriterState>,
     pending_ops: Arc<AtomicUsize>,
 ) {
-    while let Some(op) = rx.recv().await {
-        // Check for shutdown signal - reject new ops but drain the queue
-        if state.is_shutdown_requested() {
-            // Handle the current op that was already received (not yet processed)
-            if let Err(e) = execute_write_op(&pool, op).await {
-                tracing::warn!(error = %e, "write queue shutdown drain operation failed");
-            }
-            // Decrement pending count for all accepted operations
-            pending_ops.fetch_sub(1, Ordering::Relaxed);
-            // Drain remaining operations before shutdown
-            tracing::debug!("write queue draining remaining operations during shutdown");
-            while let Some(drain_op) = rx.recv().await {
-                if let Err(e) = execute_write_op(&pool, drain_op).await {
-                    tracing::warn!(error = %e, "write queue drain operation failed");
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+            Ok(Some(op)) => {
+                if state.is_shutdown_requested() {
+                    // Process the current op that was already received, then drain
+                    if let Err(e) = execute_write_op(&pool, op).await {
+                        tracing::warn!(error = %e, "write queue shutdown drain operation failed");
+                    }
+                    pending_ops.fetch_sub(1, Ordering::Relaxed);
+                    break;
                 }
-                // Decrement pending count for all accepted operations
+                // Execute the write operation
+                if let Err(e) = execute_write_op(&pool, op).await {
+                    tracing::warn!(error = %e, "write queue operation failed");
+                }
                 pending_ops.fetch_sub(1, Ordering::Relaxed);
             }
-            break;
+            Ok(None) => {
+                // Channel closed (all senders dropped)
+                break;
+            }
+            Err(_) => {
+                // Timeout - check if shutdown was requested
+                if state.is_shutdown_requested() {
+                    break;
+                }
+            }
         }
-        // Execute the write operation
-        if let Err(e) = execute_write_op(&pool, op).await {
-            tracing::warn!(error = %e, "write queue operation failed");
+    }
+    // Drain remaining operations before shutting down
+    tracing::debug!("write queue draining remaining operations during shutdown");
+    while let Ok(Some(drain_op)) =
+        tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await
+    {
+        if let Err(e) = execute_write_op(&pool, drain_op).await {
+            tracing::warn!(error = %e, "write queue drain operation failed");
         }
-        // Decrement pending count after processing all accepted operations
         pending_ops.fetch_sub(1, Ordering::Relaxed);
     }
     state.notify_shutdown_complete();

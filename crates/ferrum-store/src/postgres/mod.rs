@@ -324,6 +324,11 @@ impl PostgresStore {
     pub fn agents(&self) -> PostgresAgentRepo {
         PostgresAgentRepo::new(self.pool.clone())
     }
+
+    /// Gracefully close the PostgreSQL connection pool.
+    pub async fn shutdown(&self) {
+        self.pool.close().await;
+    }
 }
 
 fn split_postgres_statements(sql: &str) -> Vec<&str> {
@@ -496,6 +501,11 @@ impl StoreFacade for PostgresStore {
             max_connections: self.max_connections,
             acquire_timeouts: self.acquire_timeouts.load(Ordering::Relaxed),
         })
+    }
+
+    async fn shutdown(&self) -> crate::Result<()> {
+        self.shutdown().await;
+        Ok(())
     }
 }
 
