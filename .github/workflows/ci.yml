@@ -316,7 +316,7 @@ jobs:
         run: cargo cyclonedx --all
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: |
@@ -325,7 +325,7 @@ jobs:
           retention-days: 30
       - name: Upload SBOM artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: target/cyclonedx/*
