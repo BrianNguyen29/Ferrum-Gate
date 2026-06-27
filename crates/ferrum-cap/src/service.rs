@@ -29,6 +29,8 @@ pub enum CapabilityError {
     Expired,
     #[error("requested ttl exceeds max allowed")]
     TtlTooLong,
+    #[error("capability service internal error")]
+    Internal,
 }
 
 #[async_trait]
@@ -44,6 +46,10 @@ pub trait CapabilityService: Send + Sync {
     ) -> Result<CapabilityLease, CapabilityError>;
     async fn revoke(&self, capability_id: CapabilityId)
     -> Result<CapabilityLease, CapabilityError>;
+
+    fn is_store_backed(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Default)]

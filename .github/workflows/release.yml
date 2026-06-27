@@ -13,6 +13,10 @@ on:
         default: false
         type: boolean
 
+env:
+  # Ensure consistent version format for downstream scripts
+  FERRUM_RELEASE_VERSION: ${{ github.event.inputs.version }}
+
 jobs:
   release-preflight:
     runs-on: ubuntu-latest
@@ -29,7 +33,7 @@ jobs:
       - name: Run release preflight script
         run: |
           set -euo pipefail
-          bash scripts/prepare_release.sh --execute --version "${{ github.event.inputs.version }}"
+          bash scripts/prepare_release.sh --execute --version "${FERRUM_RELEASE_VERSION}"
       - name: Advisory perf regression gate (ADR 011)
         continue-on-error: true
         run: |
@@ -53,7 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "Creating draft release for v${{ github.event.inputs.version }}..."
+          echo "Creating draft release for v${FERRUM_RELEASE_VERSION}..."
           sbom_files=$(find target/cyclonedx/ -name "*.json" -type f)
           if [[ -z "$sbom_files" ]]; then
             echo "[ERROR] No SBOM JSON files found in target/cyclonedx/"
@@ -62,20 +66,20 @@ jobs:
           # Use the first SBOM file as the primary attachment
           sbom_path=$(echo "$sbom_files" | head -n1)
           echo "Attaching SBOM: $sbom_path"
-          gh release create "v${{ github.event.inputs.version }}" \
+          gh release create "v${FERRUM_RELEASE_VERSION}" \
             --draft \
-            --title "v${{ github.event.inputs.version }}" \
-            --notes "Draft release for v${{ github.event.inputs.version }}. See CHANGELOG.md for details." \
+            --title "v${FERRUM_RELEASE_VERSION}" \
+            --notes "Draft release for v${FERRUM_RELEASE_VERSION}. See CHANGELOG.md for details." \
             --repo "${{ github.repository }}" \
             "$sbom_path#sbom.cyclonedx.json"
       - name: Summary
         run: |
           echo "## Release Preflight" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Version: ${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: ${FERRUM_RELEASE_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- SBOM generated: mandatory (always uploaded)" >> $GITHUB_STEP_SUMMARY
           if [ "${{ github.event.inputs.draft-release }}" == "true" ]; then
-            echo "- Draft release: created (tag v${{ github.event.inputs.version }} created as draft)" >> $GITHUB_STEP_SUMMARY
+            echo "- Draft release: created (tag v${FERRUM_RELEASE_VERSION} created as draft)" >> $GITHUB_STEP_SUMMARY
           else
             echo "- Draft release: skipped (enable 'draft-release' input to create one)" >> $GITHUB_STEP_SUMMARY
           fi

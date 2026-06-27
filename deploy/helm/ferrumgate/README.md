@@ -88,6 +88,22 @@ kind delete cluster --name ferrumgate-test
 
 ## Configuration
 
+### Readiness probe tradeoff
+
+The chart defaults to the **shallow** `/v1/readyz` probe because the default `authMode` is `"bearer"` and Kubernetes probes cannot authenticate. The shallow probe always returns 200 and does **not** verify store health or write-queue backpressure.
+
+For load-balancer or ingress health checks that can supply a bearer token, use **`/v1/readyz/deep`** instead. This endpoint returns 503 when the store is unhealthy or the write queue depth exceeds 100, allowing traffic to be routed away from degraded instances.
+
+To switch to deep readiness in a dev cluster (auth disabled), override the probe path:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /v1/readyz/deep
+```
+
+See [`docs/PRODUCTION_NOTES.md`](../../../docs/PRODUCTION_NOTES.md) for endpoint semantics and metrics guidance.
+
 ### Required operator overrides
 
 Before any real deployment, the operator must override placeholder secrets:

@@ -37,9 +37,11 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
 | WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
 | Behavioral anomaly detection | Not implemented | Backlog; see ADR 010 |
+| Persistent nonce cache (shared) | Not implemented | Backlog; in-memory cache is process-local; multi-node requires shared cache |
 | GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |
 | HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
-| Schema-drift checker | Not implemented | Backlog; requires migration strategy ADR |
+| HA leader election | Not implemented | Backlog; requires PostgreSQL HA design and distributed consensus |
+| Schema-drift checker | Implemented | Startup refuses databases with `_schema_version` newer than the binary-supported schema version |
 
 ## Honest assessment
 

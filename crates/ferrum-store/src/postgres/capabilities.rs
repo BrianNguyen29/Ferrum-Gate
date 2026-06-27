@@ -100,14 +100,44 @@ impl CapabilityRepo for PostgresCapabilityRepo {
     ) -> Result<bool> {
         let status_text = enum_text(&status)?;
         let active_text = enum_text(&CapabilityStatus::Active)?;
+        let now = chrono::Utc::now();
         let result = sqlx::query(
             "UPDATE capabilities
              SET status = $2,
                  raw_json = jsonb_set(raw_json, '{status}', to_jsonb($2::text))
-             WHERE capability_id = $1 AND status = $3",
+             WHERE capability_id = $1 AND status = $3 AND expires_at > $4",
         )
         .bind(capability_id.to_string())
         .bind(status_text)
+        .bind(active_text)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn revoke_if_active(
+        &self,
+        capability_id: CapabilityId,
+        revoked_at: ferrum_proto::Timestamp,
+    ) -> Result<bool> {
+        let revoked_text = enum_text(&CapabilityStatus::Revoked)?;
+        let active_text = enum_text(&CapabilityStatus::Active)?;
+        let result = sqlx::query(
+            "UPDATE capabilities
+             SET status = $2,
+                 revoked_at = $3,
+                 raw_json = jsonb_set(
+                     jsonb_set(raw_json, '{status}', to_jsonb($2::text)),
+                     '{revoked_at}',
+                     to_jsonb($4::text)
+                 )
+             WHERE capability_id = $1 AND status = $5 AND expires_at > $3",
+        )
+        .bind(capability_id.to_string())
+        .bind(revoked_text)
+        .bind(revoked_at)
+        .bind(revoked_at.to_rfc3339())
         .bind(active_text)
         .execute(&self.pool)
         .await?;

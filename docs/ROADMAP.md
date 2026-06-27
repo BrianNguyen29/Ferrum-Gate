@@ -33,6 +33,8 @@ Feature-complete for standard use; local and CI-validated:
 - Filesystem, HTTP, Git, SQLite, mail draft adapters
 - `ferrumctl` CLI; `ferrum-stress` smoke tests; `ferrum-tui` dashboard
 - Prometheus metrics; rate limiting; Helm chart
+- Store-backed `CapabilityService` for production capability mint/get/revoke/use paths, with in-memory service retained for tests/dev
+- Schema-drift checker that refuses startup when the database schema version is newer than the binary-supported version
 
 ## Beta
 
@@ -54,8 +56,6 @@ These are **deferred to upcoming separate PRs**. They are not implemented and ha
   - Acceptance: `approval_timeout_seconds` parsed/validated; pending approvals transition to `timed_out`; reflected in lifecycle outbox and CLI.
 - **MFA TOTP second factor** — TOTP verification for high-risk approval resolution. See ADR 008 (separate PR from approval timeout).
   - Acceptance: `MfaVerifier` trait with TOTP implementation behind `mfa-totp` feature; `approval_mfa_required` config; resolve endpoint returns `403` with `mfa_required` when factor missing/invalid.
-- **Store-backed CapabilityService** — Move in-memory capability tracking to persistent store (SQLite/PostgreSQL) for cross-process consistency and HA readiness.
-  - Acceptance: `CapabilityService` trait with store-backed implementation; in-memory implementation retained for tests; no regression in capability mint/revoke latency.
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access. See ADR 009.
   - Acceptance: `ferrumctl audit export` produces `.jsonl` + `manifest.json`; `ferrumctl audit verify` checks hash chain and Merkle root.
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
@@ -81,8 +81,8 @@ These require broader design decisions, additional evidence, or an ADR before th
   - Acceptance: Adapter implements `AdapterPort` with put/delete/get/copy; versioning-based rollback; local emulator integration tests.
 - **HA reconciler** — Background task to reconcile capability and execution state across restarted or failed-over instances.
   - Acceptance: Reconciler scans stale `in_flight` executions and transitions them to `failed` or `compensated` with audit entries; works with PostgreSQL and SQLite.
-- **Schema-drift checker** — Startup validation that detects database schema version mismatches and provides a clear operator message.
-  - Acceptance: `ferrumd` refuses to start if schema version > expected version; prints migration path; integration test with intentionally drifted schema.
+- **Persistent nonce cache** — Agent auth replay protection uses a bounded in-memory cache. Multi-process or multi-node deployments require a shared persistent cache layer. Not implemented.
+- **HA leader election** — Distributed leader election for coordinated multi-node operations beyond per-task reconciliation leases. Not implemented; requires PostgreSQL HA design.
 - **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.
 
