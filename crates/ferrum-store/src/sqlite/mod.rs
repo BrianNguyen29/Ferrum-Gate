@@ -242,7 +242,8 @@ impl SqliteStore {
     /// Apply embedded schema migrations within a transaction.
     ///
     /// Idempotent: checks `_schema_version` before running SQL. If the recorded
-    /// version is >= [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
+    /// version is equal to [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
+    /// If the recorded version is greater, the call returns a [`StoreError::SchemaDrift`].
     pub async fn apply_embedded_migrations(&self) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
@@ -262,7 +263,14 @@ impl SqliteStore {
                 .await?
                 .unwrap_or(0);
 
-        if current_version >= migrations::CURRENT_SCHEMA_VERSION {
+        if current_version > migrations::CURRENT_SCHEMA_VERSION {
+            return Err(crate::StoreError::SchemaDrift {
+                db_version: current_version,
+                expected_version: migrations::CURRENT_SCHEMA_VERSION,
+            });
+        }
+
+        if current_version == migrations::CURRENT_SCHEMA_VERSION {
             ensure_lifecycle_outbox_reconciliation_lease_columns(&mut tx).await?;
             tx.commit().await?;
             return Ok(());
@@ -1357,5 +1365,35 @@ mod tests {
         assert_eq!(count_all_after, 1);
         let count_active_after = store.agents().count(true).await.unwrap();
         assert_eq!(count_active_after, 0);
+    }
+
+    #[tokio::test]
+    async fn apply_embedded_migrations_rejects_future_schema_version() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        // Bootstrap _schema_version table
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        // Insert a future version
+        sqlx::query("INSERT INTO _schema_version (version, applied_at) VALUES (?1, ?2)")
+            .bind(migrations::CURRENT_SCHEMA_VERSION + 1)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        let err = store.apply_embedded_migrations().await.unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("schema version"),
+            "expected schema drift error, got: {}",
+            err_str
+        );
     }
 }

@@ -121,6 +121,13 @@ pub trait CapabilityRepo: Send + Sync {
         capability_id: CapabilityId,
         status: CapabilityStatus,
     ) -> Result<bool>;
+    /// Atomically revoke an active, unexpired capability and set `revoked_at`.
+    /// Returns true if the row was updated, false otherwise.
+    async fn revoke_if_active(
+        &self,
+        capability_id: CapabilityId,
+        revoked_at: Timestamp,
+    ) -> Result<bool>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<CapabilityLease>>;
 }
 

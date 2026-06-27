@@ -50,3 +50,7 @@ path = "src/integration_lineage_chain.rs"
 [[test]]
 name = "integration_fs_roundtrip"
 path = "src/integration_fs_roundtrip.rs"
+
+[[test]]
+name = "integration_rate_limit"
+path = "src/integration_rate_limit.rs"

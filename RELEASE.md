@@ -31,7 +31,7 @@ Before tagging a release, verify:
 
 ## Release automation (preflight)
 
-A conservative, manual-preflight script is provided to run the checklist safely without pushing or publishing anything.
+A conservative, manual-preflight script is provided to run the checklist safely without pushing or publishing anything. A CI workflow (`.github/workflows/release.yml`) is also available for CI-level preflight with mandatory SBOM generation and optional draft-release creation.
 
 ### Local preflight
 

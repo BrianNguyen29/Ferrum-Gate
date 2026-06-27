@@ -69,12 +69,14 @@ Approval records are part of the provenance chain and include `actor_id`, `actor
 
 Every operation is classified by reversibility:
 
-| Class | Meaning | Example |
-|-------|---------|---------|
-| R0 | No-op / read-only | health check, list intents |
-| R1 | Reversible with compensation | file write with snapshot |
-| R2 | Reversible with external cleanup | git branch create/delete |
-| R3 | Requires approval + compensation | destructive mutations |
+| Class | Canonical name | Meaning | Example |
+|-------|----------------|---------|---------|
+| R0 | `R0NativeReversible` | No-op / natively reversible | health check, list intents |
+| R1 | `R1SnapshotRecoverable` | Reversible with snapshot | file write with snapshot |
+| R2 | `R2Compensatable` | Reversible with explicit compensation plan | git branch create/delete |
+| R3 | `R3IrreversibleHighConsequence` | Requires approval; auto-commit disabled | destructive mutations |
+
+Canonical names are defined in the agent contract: [`contracts/ferrumgate-agent-contract.v1.yaml`](../../contracts/ferrumgate-agent-contract.v1.yaml).
 
 The rollback class determines whether approval is required and what compensation strategy is prepared before execution.
 
@@ -137,12 +139,12 @@ Adapters are responsible for prepare, execute, verify, and compensate steps with
 
 ### Risk levels
 
-| Level | Name | Trigger |
-|-------|------|---------|
-| R0 | Safe | Read-only, no side effects |
-| R1 | Reversible | Side effects with automatic compensation |
-| R2 | Recoverable | Side effects with manual recovery possible |
-| R3 | Critical | Destructive; requires approval |
+| Level | Name | Canonical rollback class | Trigger |
+|-------|------|------------------------|---------|
+| R0 | Safe | `R0NativeReversible` | Read-only, no side effects |
+| R1 | Reversible | `R1SnapshotRecoverable` | Side effects with automatic compensation |
+| R2 | Recoverable | `R2Compensatable` | Side effects with manual recovery possible |
+| R3 | Critical | `R3IrreversibleHighConsequence` | Destructive; requires approval |
 
 Risk level and rollback class are related but distinct: rollback class is an operational classification, while risk level is the policy-facing label that triggers approval gates.
 

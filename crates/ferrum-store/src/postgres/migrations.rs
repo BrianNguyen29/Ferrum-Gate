@@ -119,7 +119,6 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-#[allow(dead_code)]
 pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 #[cfg(test)]

@@ -17,12 +17,17 @@ https://ferrumgate.example.com/v1   # hosted (when configured)
 
 ## Authentication
 
-Two auth modes are supported:
+Five auth modes are supported:
 
 | Mode | Behavior | Use case |
 |------|----------|----------|
 | `Disabled` | No auth required on any endpoint | Local development only |
-| `Bearer` | `Authorization: Bearer <token>` required on all endpoints except `/v1/healthz` and `/v1/readyz` | Bearer-auth deployments |
+| `Bearer` | `Authorization: Bearer <token>` required on all endpoints except `/v1/healthz` and `/v1/readyz` | Pilot / single-token deployments |
+| `Scoped` | `Authorization: Bearer <scoped-token>` with RBAC scopes; tokens are created via `/v1/admin/tokens` | Multi-role deployments with least-privilege |
+| `OIDC` | OIDC-based authentication; configure via `FERRUMD_OIDC_*` env vars | SSO / identity-provider integration |
+| `Agent` | Ed25519-signed agent identity; registered via `/v1/admin/agents` | Machine-agent workloads |
+
+> **Note:** For `OIDC` env vars, see [`configs/examples/ferrumd.env.example`](../../configs/examples/ferrumd.env.example). For `Agent` setup, see [`docs/security/agent-identity-ed25519.md`](../../docs/security/agent-identity-ed25519.md). For `Scoped` RBAC details, see [`security-model.md`](./security-model.md).
 
 ### Monitoring endpoints
 

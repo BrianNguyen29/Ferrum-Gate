@@ -59,6 +59,17 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test
         run: cargo test --workspace
+      - name: MCP stdio smoke (advisory)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Building ferrumd and ferrum-mcp-server (debug) for MCP smoke..."
+          cargo build --bin ferrumd --bin ferrum-mcp-server
+          echo "Running MCP lifecycle smoke (D1.7 + D1.11)..."
+          FERRUMD="$PWD/target/debug/ferrumd" \
+            FERRUM_MCP="$PWD/target/debug/ferrum-mcp-server" \
+            bash scripts/run_mcp_lifecycle_smoke.sh
       - name: Cargo check (all features)
         run: cargo check --workspace --all-features
       - name: Cargo clippy (all features)

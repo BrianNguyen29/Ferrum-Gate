@@ -7,7 +7,7 @@ use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_ada
 #[cfg(feature = "s3")]
 use ferrum_adapter_s3::{PlannableS3Adapter, S3Adapter};
 use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
-use ferrum_cap::InMemoryCapabilityService;
+use ferrum_cap::CapabilityService;
 use ferrum_gateway::{GatewayRuntime, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
@@ -71,7 +71,6 @@ async fn main() -> Result<()> {
     );
 
     let pdp = Arc::new(StaticPdpEngine);
-    let cap = Arc::new(InMemoryCapabilityService::default());
 
     let mut registry = AdapterRegistry::default();
     registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
@@ -224,6 +223,10 @@ async fn main() -> Result<()> {
             .context("failed to apply migrations")?;
         Arc::new(sqlite_store) as Arc<dyn StoreFacade>
     };
+
+    let cap: Arc<dyn CapabilityService> = Arc::new(ferrum_gateway::StoreCapabilityService::new(
+        Arc::clone(&store),
+    ));
 
     let reconciliation_report = reconcile_lifecycle_outbox_before_startup(&store).await?;
 

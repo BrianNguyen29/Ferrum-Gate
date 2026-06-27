@@ -206,7 +206,9 @@ impl PostgresStore {
     ///
     /// Idempotent: checks `_schema_version` before running SQL. Only migrations
     /// with a version greater than the recorded version are applied, and each
-    /// version is recorded immediately after its SQL succeeds.
+    /// version is recorded immediately after its SQL succeeds. If the recorded
+    /// version is greater than [`migrations::CURRENT_SCHEMA_VERSION`], the call
+    /// returns a [`StoreError::SchemaDrift`].
     ///
     /// SQLite-only migrations (`leader_tips`, `sync_state`, `leader_allowlist`)
     /// are intentionally **not** ported to PostgreSQL. `policy_bundles` is already
@@ -234,6 +236,13 @@ impl PostgresStore {
                 .fetch_optional(&mut *tx)
                 .await?
                 .unwrap_or(0);
+
+        if (current_version as i64) > migrations::CURRENT_SCHEMA_VERSION {
+            return Err(crate::StoreError::SchemaDrift {
+                db_version: current_version as i64,
+                expected_version: migrations::CURRENT_SCHEMA_VERSION,
+            });
+        }
 
         for migration in migrations::MIGRATIONS {
             if migration.version <= current_version as i64 {
@@ -676,5 +685,40 @@ mod tests {
 
         // Second run should be a no-op
         store.apply_embedded_migrations().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn apply_embedded_migrations_rejects_future_schema_version() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        // Bootstrap _schema_version table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+        // Insert a future version
+        sqlx::query("INSERT INTO _schema_version (version, applied_at) VALUES ($1, $2) ON CONFLICT (version) DO UPDATE SET applied_at = $2")
+            .bind(migrations::CURRENT_SCHEMA_VERSION + 1)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        let err = store.apply_embedded_migrations().await.unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("schema version"),
+            "expected schema drift error, got: {}",
+            err_str
+        );
     }
 }

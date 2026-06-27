@@ -16,16 +16,17 @@ The goals of this documentation set:
 
 If you have time to read only a few documents, read them in this order:
 
-1. `guides/README.md`
-2. `guides/concepts.md`
-3. `guides/quickstart.md`
-4. `guides/operator.md`
-5. `guides/security-model.md`
-6. `PRODUCTION_NOTES.md`
-7. `guides/faq.md`
-8. `ROADMAP.md`
-9. `SCOPE.md`
-10. `operations/runbook.md`
+1. [`guides/README.md`](guides/README.md)
+2. [`guides/concepts.md`](guides/concepts.md)
+3. [`guides/quickstart.md`](guides/quickstart.md)
+4. [`guides/operator.md`](guides/operator.md)
+5. [`guides/security-model.md`](guides/security-model.md)
+6. [`PRODUCTION_NOTES.md`](PRODUCTION_NOTES.md)
+7. [`guides/faq.md`](guides/faq.md)
+8. [`ROADMAP.md`](ROADMAP.md)
+9. [`SCOPE.md`](SCOPE.md)
+10. [`operations/runbook.md`](operations/runbook.md)
+11. [`guides/custom-adapter.md`](guides/custom-adapter.md)
 
 ## Subdirectories
 

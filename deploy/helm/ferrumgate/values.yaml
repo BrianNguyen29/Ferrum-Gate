@@ -82,6 +82,17 @@ livenessProbe:
   failureThreshold: 3
 
 readinessProbe:
+  # Readiness probe tradeoff:
+  #   /v1/readyz (shallow) — always returns 200; does NOT verify store health or
+  #   write-queue backpressure. Safe for Kubernetes probes when bearer auth is enabled.
+  #   /v1/readyz/deep (functional) — returns 200 only when store and write queue are
+  #   healthy; requires a bearer token when auth is enabled. Suitable for load-balancer
+  #   health checks that can supply auth headers, but NOT for standard K8s probes.
+  #
+  # The chart defaults to shallow readiness because the default authMode is "bearer"
+  # and K8s probes cannot authenticate. If you disable auth (dev only), you may
+  # override the path to /v1/readyz/deep via a custom values file.
+  # See docs/PRODUCTION_NOTES.md § "Health and Readiness Endpoints" for details.
   httpGet:
     path: /v1/readyz
     port: http

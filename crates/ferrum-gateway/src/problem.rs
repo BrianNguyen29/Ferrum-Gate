@@ -58,6 +58,9 @@ impl ApiProblem {
             CapabilityError::Revoked => (StatusCode::BAD_REQUEST, ApiErrorCode::CapabilityRevoked),
             CapabilityError::Expired => (StatusCode::BAD_REQUEST, ApiErrorCode::CapabilityExpired),
             CapabilityError::TtlTooLong => (StatusCode::BAD_REQUEST, ApiErrorCode::ValidationError),
+            CapabilityError::Internal => {
+                (StatusCode::INTERNAL_SERVER_ERROR, ApiErrorCode::Internal)
+            }
         };
         Self::new(status, code, err.to_string())
     }

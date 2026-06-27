@@ -110,6 +110,7 @@ Other references:
 
 - [API Guide](./docs/guides/api.md) · [MCP Integration](./docs/guides/mcp-integration.md) · [Demo Flows](./docs/guides/demo-flows.md)
 - [Policy Authoring](./docs/guides/policy-authoring.md) · [Troubleshooting](./docs/guides/troubleshooting.md)
+- [Custom Adapter Guide](./docs/guides/custom-adapter.md) · [Incident Runbook](./docs/operations/runbook.md)
 - [FAQ](./docs/guides/faq.md) · [Roadmap](./docs/ROADMAP.md)
 - [Helm Chart](./deploy/helm/ferrumgate/README.md) · [Monitoring Config](./configs/monitoring/README.md)
 

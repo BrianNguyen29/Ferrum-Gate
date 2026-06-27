@@ -12,6 +12,13 @@ pub enum StoreError {
     NotFound { entity: &'static str, id: String },
     #[error("invalid state transition: {0}")]
     InvalidState(String),
+    #[error(
+        "database schema version {db_version} is newer than the supported version {expected_version}; upgrade the binary before starting"
+    )]
+    SchemaDrift {
+        db_version: i64,
+        expected_version: i64,
+    },
     #[error("{0}")]
     Other(String),
 }

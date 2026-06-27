@@ -20,6 +20,7 @@ mod response;
 mod server;
 mod state;
 
+pub use capabilities::StoreCapabilityService;
 pub use mfa::*;
 pub use server::*;
 pub use state::*;
