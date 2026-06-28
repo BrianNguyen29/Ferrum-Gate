@@ -1058,6 +1058,9 @@ mod tests {
         fn agents(&self) -> Arc<dyn ferrum_store::repos::AgentRepo> {
             self.inner.agents()
         }
+        fn mfa_credentials(&self) -> Arc<dyn ferrum_store::repos::MfaCredentialRepo> {
+            self.inner.mfa_credentials()
+        }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
         }

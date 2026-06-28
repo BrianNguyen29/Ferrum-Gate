@@ -454,6 +454,30 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .governance_errors_v1_agents_revoke
         .load(Ordering::Relaxed);
+    let gov_err_mfa_enroll = state
+        .metrics
+        .governance_errors_v1_mfa_enroll
+        .load(Ordering::Relaxed);
+    let gov_err_mfa_verify = state
+        .metrics
+        .governance_errors_v1_mfa_verify
+        .load(Ordering::Relaxed);
+    let gov_err_mfa_disable = state
+        .metrics
+        .governance_errors_v1_mfa_disable
+        .load(Ordering::Relaxed);
+    let gov_err_mfa_rotate = state
+        .metrics
+        .governance_errors_v1_mfa_rotate
+        .load(Ordering::Relaxed);
+    let gov_err_mfa_list = state
+        .metrics
+        .governance_errors_v1_mfa_list
+        .load(Ordering::Relaxed);
+    let gov_err_mfa_get = state
+        .metrics
+        .governance_errors_v1_mfa_get
+        .load(Ordering::Relaxed);
 
     // Load governance success counters
     let gov_ok_intents_compile = state
@@ -599,6 +623,30 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     let gov_ok_agents_revoke = state
         .metrics
         .governance_success_v1_agents_revoke
+        .load(Ordering::Relaxed);
+    let gov_ok_mfa_enroll = state
+        .metrics
+        .governance_success_v1_mfa_enroll
+        .load(Ordering::Relaxed);
+    let gov_ok_mfa_verify = state
+        .metrics
+        .governance_success_v1_mfa_verify
+        .load(Ordering::Relaxed);
+    let gov_ok_mfa_disable = state
+        .metrics
+        .governance_success_v1_mfa_disable
+        .load(Ordering::Relaxed);
+    let gov_ok_mfa_rotate = state
+        .metrics
+        .governance_success_v1_mfa_rotate
+        .load(Ordering::Relaxed);
+    let gov_ok_mfa_list = state
+        .metrics
+        .governance_success_v1_mfa_list
+        .load(Ordering::Relaxed);
+    let gov_ok_mfa_get = state
+        .metrics
+        .governance_success_v1_mfa_get
         .load(Ordering::Relaxed);
 
     // Load latency histogram data for /v1/healthz
@@ -794,6 +842,12 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          ferrumgate_governance_errors_total{{route=\"/v1/admin/agents\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/admin/agents\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}\",method=\"DELETE\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/enroll\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/verify\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/disable\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/rotate\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/{{mfa_factor_id}}\",method=\"GET\"}} {}\n\
          # HELP ferrumgate_governance_success_total Governance successes by route and method\n\
          # TYPE ferrumgate_governance_success_total counter\n\
          ferrumgate_governance_success_total{{route=\"/v1/intents/compile\",method=\"POST\"}} {}\n\
@@ -831,7 +885,13 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          ferrumgate_governance_success_total{{route=\"/v1/bridges/{{bridge_id}}/tools\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/admin/agents\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/admin/agents\",method=\"GET\"}} {}\n\
-         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}\",method=\"DELETE\"}} {}\n",
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}\",method=\"DELETE\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/enroll\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/verify\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/disable\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/rotate\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/admin/agents/{{agent_id}}/mfa/{{mfa_factor_id}}\",method=\"GET\"}} {}\n",
         healthz_count,
         readyz_count,
         readyz_deep_count_200,
@@ -879,6 +939,12 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_err_agents_create,
         gov_err_agents_list,
         gov_err_agents_revoke,
+        gov_err_mfa_enroll,
+        gov_err_mfa_verify,
+        gov_err_mfa_disable,
+        gov_err_mfa_rotate,
+        gov_err_mfa_list,
+        gov_err_mfa_get,
         gov_ok_intents_compile,
         gov_ok_intents_list,
         gov_ok_proposals_evaluate,
@@ -915,6 +981,12 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_ok_agents_create,
         gov_ok_agents_list,
         gov_ok_agents_revoke,
+        gov_ok_mfa_enroll,
+        gov_ok_mfa_verify,
+        gov_ok_mfa_disable,
+        gov_ok_mfa_rotate,
+        gov_ok_mfa_list,
+        gov_ok_mfa_get,
     );
 
     // Append histogram output to body

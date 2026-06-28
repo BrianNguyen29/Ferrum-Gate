@@ -173,6 +173,12 @@ pub(crate) struct Metrics {
     pub(crate) governance_errors_v1_agents_create: AtomicU64,
     pub(crate) governance_errors_v1_agents_list: AtomicU64,
     pub(crate) governance_errors_v1_agents_revoke: AtomicU64,
+    pub(crate) governance_errors_v1_mfa_enroll: AtomicU64,
+    pub(crate) governance_errors_v1_mfa_verify: AtomicU64,
+    pub(crate) governance_errors_v1_mfa_disable: AtomicU64,
+    pub(crate) governance_errors_v1_mfa_rotate: AtomicU64,
+    pub(crate) governance_errors_v1_mfa_list: AtomicU64,
+    pub(crate) governance_errors_v1_mfa_get: AtomicU64,
     // Governance success counters keyed by static route template
     pub(crate) governance_success_v1_intents_compile: AtomicU64,
     pub(crate) governance_success_v1_intents_list: AtomicU64,
@@ -210,6 +216,12 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_agents_create: AtomicU64,
     pub(crate) governance_success_v1_agents_list: AtomicU64,
     pub(crate) governance_success_v1_agents_revoke: AtomicU64,
+    pub(crate) governance_success_v1_mfa_enroll: AtomicU64,
+    pub(crate) governance_success_v1_mfa_verify: AtomicU64,
+    pub(crate) governance_success_v1_mfa_disable: AtomicU64,
+    pub(crate) governance_success_v1_mfa_rotate: AtomicU64,
+    pub(crate) governance_success_v1_mfa_list: AtomicU64,
+    pub(crate) governance_success_v1_mfa_get: AtomicU64,
     // Audit fail-closed rejection counter
     pub(crate) audit_fail_closed_rejections: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
@@ -279,6 +291,12 @@ impl Metrics {
             governance_errors_v1_agents_create: AtomicU64::new(0),
             governance_errors_v1_agents_list: AtomicU64::new(0),
             governance_errors_v1_agents_revoke: AtomicU64::new(0),
+            governance_errors_v1_mfa_enroll: AtomicU64::new(0),
+            governance_errors_v1_mfa_verify: AtomicU64::new(0),
+            governance_errors_v1_mfa_disable: AtomicU64::new(0),
+            governance_errors_v1_mfa_rotate: AtomicU64::new(0),
+            governance_errors_v1_mfa_list: AtomicU64::new(0),
+            governance_errors_v1_mfa_get: AtomicU64::new(0),
             governance_success_v1_intents_compile: AtomicU64::new(0),
             governance_success_v1_intents_list: AtomicU64::new(0),
             governance_success_v1_proposals_evaluate: AtomicU64::new(0),
@@ -315,6 +333,12 @@ impl Metrics {
             governance_success_v1_agents_create: AtomicU64::new(0),
             governance_success_v1_agents_list: AtomicU64::new(0),
             governance_success_v1_agents_revoke: AtomicU64::new(0),
+            governance_success_v1_mfa_enroll: AtomicU64::new(0),
+            governance_success_v1_mfa_verify: AtomicU64::new(0),
+            governance_success_v1_mfa_disable: AtomicU64::new(0),
+            governance_success_v1_mfa_rotate: AtomicU64::new(0),
+            governance_success_v1_mfa_list: AtomicU64::new(0),
+            governance_success_v1_mfa_get: AtomicU64::new(0),
             audit_fail_closed_rejections: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
@@ -446,6 +470,24 @@ impl Metrics {
             GovernanceRoute::AgentsRevoke => self
                 .governance_errors_v1_agents_revoke
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaEnroll => self
+                .governance_errors_v1_mfa_enroll
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaVerify => self
+                .governance_errors_v1_mfa_verify
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaDisable => self
+                .governance_errors_v1_mfa_disable
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaRotate => self
+                .governance_errors_v1_mfa_rotate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaList => self
+                .governance_errors_v1_mfa_list
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaGet => self
+                .governance_errors_v1_mfa_get
+                .fetch_add(1, Ordering::Relaxed),
         };
     }
 
@@ -560,6 +602,24 @@ impl Metrics {
             GovernanceRoute::AgentsRevoke => self
                 .governance_success_v1_agents_revoke
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaEnroll => self
+                .governance_success_v1_mfa_enroll
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaVerify => self
+                .governance_success_v1_mfa_verify
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaDisable => self
+                .governance_success_v1_mfa_disable
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaRotate => self
+                .governance_success_v1_mfa_rotate
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaList => self
+                .governance_success_v1_mfa_list
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::MfaGet => self
+                .governance_success_v1_mfa_get
+                .fetch_add(1, Ordering::Relaxed),
         };
     }
 
@@ -664,6 +724,12 @@ pub(crate) enum GovernanceRoute {
     AgentsCreate,
     AgentsList,
     AgentsRevoke,
+    MfaEnroll,
+    MfaVerify,
+    MfaDisable,
+    MfaRotate,
+    MfaList,
+    MfaGet,
 }
 
 impl GovernanceRoute {
@@ -710,6 +776,12 @@ impl GovernanceRoute {
             GovernanceRoute::AgentsCreate => "/v1/admin/agents",
             GovernanceRoute::AgentsList => "/v1/admin/agents",
             GovernanceRoute::AgentsRevoke => "/v1/admin/agents/{agent_id}",
+            GovernanceRoute::MfaEnroll => "/v1/admin/agents/{agent_id}/mfa/enroll",
+            GovernanceRoute::MfaVerify => "/v1/admin/agents/{agent_id}/mfa/verify",
+            GovernanceRoute::MfaDisable => "/v1/admin/agents/{agent_id}/mfa/disable",
+            GovernanceRoute::MfaRotate => "/v1/admin/agents/{agent_id}/mfa/rotate",
+            GovernanceRoute::MfaList => "/v1/admin/agents/{agent_id}/mfa",
+            GovernanceRoute::MfaGet => "/v1/admin/agents/{agent_id}/mfa/{mfa_factor_id}",
         }
     }
 
@@ -753,6 +825,12 @@ impl GovernanceRoute {
             GovernanceRoute::AgentsCreate => "POST",
             GovernanceRoute::AgentsList => "GET",
             GovernanceRoute::AgentsRevoke => "DELETE",
+            GovernanceRoute::MfaEnroll => "POST",
+            GovernanceRoute::MfaVerify => "POST",
+            GovernanceRoute::MfaDisable => "POST",
+            GovernanceRoute::MfaRotate => "POST",
+            GovernanceRoute::MfaList => "GET",
+            GovernanceRoute::MfaGet => "GET",
         }
     }
 }
@@ -1106,6 +1184,31 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/admin/agents/{agent_id}",
             delete(crate::admin::agents::revoke_agent),
+        )
+        // Admin MFA endpoints
+        .route(
+            "/v1/admin/agents/{agent_id}/mfa/enroll",
+            post(crate::admin::mfa::enroll_mfa),
+        )
+        .route(
+            "/v1/admin/agents/{agent_id}/mfa/verify",
+            post(crate::admin::mfa::verify_mfa),
+        )
+        .route(
+            "/v1/admin/agents/{agent_id}/mfa/disable",
+            post(crate::admin::mfa::disable_mfa),
+        )
+        .route(
+            "/v1/admin/agents/{agent_id}/mfa/rotate",
+            post(crate::admin::mfa::rotate_mfa),
+        )
+        .route(
+            "/v1/admin/agents/{agent_id}/mfa",
+            get(crate::admin::mfa::list_mfa_factors),
+        )
+        .route(
+            "/v1/admin/agents/{agent_id}/mfa/{mfa_factor_id}",
+            get(crate::admin::mfa::get_mfa_factor),
         )
         // Admin lifecycle outbox operator endpoints
         .route(
@@ -1656,6 +1759,29 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/v1/admin/agents") => Some("admin:agents"),
         ("GET", "/v1/admin/agents") => Some("admin:agents"),
         ("DELETE", p) if p.starts_with("/v1/admin/agents/") => Some("admin:agents"),
+        // Admin MFA routes
+        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/enroll") => {
+            Some("admin:mfa")
+        }
+        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/verify") => {
+            Some("admin:mfa")
+        }
+        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/disable") => {
+            Some("admin:mfa")
+        }
+        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/rotate") => {
+            Some("admin:mfa")
+        }
+        ("GET", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa") => {
+            Some("admin:mfa")
+        }
+        ("GET", p)
+            if p.starts_with("/v1/admin/agents/")
+                && p.contains("/mfa/")
+                && !p.ends_with("/mfa") =>
+        {
+            Some("admin:mfa")
+        }
         // Lifecycle outbox operator workflow
         ("GET", "/v1/admin/lifecycle-outbox") => Some("admin:lifecycle-outbox:read"),
         ("GET", p) if p.starts_with("/v1/admin/lifecycle-outbox/") => {
@@ -2092,7 +2218,7 @@ mod tests {
     use ferrum_store::repos::{
         AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
         CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
-        PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
+        MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
@@ -2212,6 +2338,9 @@ mod tests {
         }
         fn agents(&self) -> Arc<dyn AgentRepo> {
             self.inner.agents()
+        }
+        fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo> {
+            self.inner.mfa_credentials()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -2528,6 +2657,9 @@ mod tests {
         fn agents(&self) -> Arc<dyn AgentRepo> {
             self.inner.agents()
         }
+        fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo> {
+            self.inner.mfa_credentials()
+        }
         fn write_queue_depth(&self) -> usize {
             self.queue_depth
         }
@@ -2664,6 +2796,9 @@ mod tests {
         }
         fn agents(&self) -> Arc<dyn AgentRepo> {
             self.inner.agents()
+        }
+        fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo> {
+            self.inner.mfa_credentials()
         }
         fn write_queue_depth(&self) -> usize {
             self.inner.write_queue_depth()
@@ -3992,6 +4127,12 @@ mod tests {
                 GovernanceRoute::AgentsCreate,
                 GovernanceRoute::AgentsList,
                 GovernanceRoute::AgentsRevoke,
+                GovernanceRoute::MfaEnroll,
+                GovernanceRoute::MfaVerify,
+                GovernanceRoute::MfaDisable,
+                GovernanceRoute::MfaRotate,
+                GovernanceRoute::MfaList,
+                GovernanceRoute::MfaGet,
             ];
 
             // Exhaustiveness check: match against all variants.
@@ -4034,6 +4175,12 @@ mod tests {
                 GovernanceRoute::AgentsCreate => (),
                 GovernanceRoute::AgentsList => (),
                 GovernanceRoute::AgentsRevoke => (),
+                GovernanceRoute::MfaEnroll => (),
+                GovernanceRoute::MfaVerify => (),
+                GovernanceRoute::MfaDisable => (),
+                GovernanceRoute::MfaRotate => (),
+                GovernanceRoute::MfaList => (),
+                GovernanceRoute::MfaGet => (),
             };
 
             ROUTES
@@ -4054,6 +4201,7 @@ mod tests {
             },
             approve: true,
             reason: None,
+            mfa_factor: None,
         };
 
         let response = router
@@ -4088,6 +4236,7 @@ mod tests {
             },
             approve: true,
             reason: None,
+            mfa_factor: None,
         };
 
         let response = router
@@ -4108,7 +4257,458 @@ mod tests {
             .unwrap();
         let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
         assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaRequired);
-        assert!(err.message.contains("future work per ADR008"));
+        assert!(err.message.contains("MFA factor is required"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_mfa_invalid_code_returns_403() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Insert an active MFA credential for the operator
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "key-1",
+        );
+        let active_record = ferrum_proto::MfaCredentialRecord {
+            status: ferrum_proto::MfaFactorStatus::Active,
+            verified_at: Some(chrono::Utc::now()),
+            ..record
+        };
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some("000000".to_string()),
+            }),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/approvals/00000000-0000-0000-0000-000000000000/resolve")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
+        assert!(err.message.contains("invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_mfa_valid_code_resolves() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Create an intent and proposal so the approval can be inserted
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test-intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "read".to_string(),
+                description: "read only analysis".to_string(),
+                effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+                required: true,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Medium,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(1),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: now,
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        // Insert an active MFA credential for the operator
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "key-1",
+        );
+        let active_record = ferrum_proto::MfaCredentialRecord {
+            status: ferrum_proto::MfaFactorStatus::Active,
+            verified_at: Some(chrono::Utc::now()),
+            ..record
+        };
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+
+        // Generate a valid TOTP code
+        let now = chrono::Utc::now().timestamp() as u64;
+        let valid_code = crate::mfa::generate_totp_code(&secret, now);
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        let approval = ferrum_proto::ApprovalRequest {
+            approval_id,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "requester".to_string(),
+                display_name: Some("Requester".to_string()),
+            },
+            reason: "test approval".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.approvals().insert(&approval).await.unwrap();
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some(valid_code),
+            }),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resolved: ferrum_proto::ApprovalRequest = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(
+            resolved.state,
+            ferrum_proto::ApprovalState::Granted
+        ));
+
+        // Verify record_use updated last_used_at
+        let updated = runtime
+            .store
+            .mfa_credentials()
+            .get(active_record.mfa_factor_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(updated.last_used_at.is_some());
+        assert!(updated.last_used_counter.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_mfa_replay_rejected() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test-intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "read".to_string(),
+                description: "read only analysis".to_string(),
+                effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+                required: true,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Medium,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(1),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: now,
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "key-1",
+        );
+        let active_record = ferrum_proto::MfaCredentialRecord {
+            status: ferrum_proto::MfaFactorStatus::Active,
+            verified_at: Some(chrono::Utc::now()),
+            ..record
+        };
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+
+        let now_ts = chrono::Utc::now().timestamp() as u64;
+        let valid_code = crate::mfa::generate_totp_code(&secret, now_ts);
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        let approval = ferrum_proto::ApprovalRequest {
+            approval_id,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "requester".to_string(),
+                display_name: Some("Requester".to_string()),
+            },
+            reason: "test approval".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.approvals().insert(&approval).await.unwrap();
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some(valid_code.clone()),
+            }),
+        };
+
+        // First resolve should succeed
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Create a second approval to test replay with the same code
+        let approval_id2 = ferrum_proto::ApprovalId::new();
+        let approval2 = ferrum_proto::ApprovalRequest {
+            approval_id: approval_id2,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "requester".to_string(),
+                display_name: Some("Requester".to_string()),
+            },
+            reason: "test approval 2".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.approvals().insert(&approval2).await.unwrap();
+
+        let resolve_request2 = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some(valid_code),
+            }),
+        };
+
+        // Second resolve with the same code should fail with replay protection
+        let response2 = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id2))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&resolve_request2).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response2.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response2.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
     }
 
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and

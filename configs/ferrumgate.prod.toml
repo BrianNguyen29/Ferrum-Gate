@@ -46,6 +46,11 @@ pg_max_connections = 10
 pg_min_idle = 2
 pg_acquire_timeout_secs = 5
 
+# ── MFA Configuration (optional) ──
+# mfa_secret_key should be set via FERRUMD_MFA_SECRET_KEY environment variable
+# in production to avoid committing secrets to version control.
+# mfa_totp_issuer = "FerrumGate"
+
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".
 # Static keys take precedence over fetched JWKS keys.

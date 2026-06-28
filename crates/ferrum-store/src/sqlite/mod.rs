@@ -11,6 +11,7 @@ mod leader_allowlist;
 mod leader_tip_cache;
 mod ledger;
 mod lifecycle_outbox;
+mod mfa_credentials;
 mod migrations;
 mod policy_bundles;
 mod proposals;
@@ -32,6 +33,7 @@ pub use leader_allowlist::LeaderAllowlist;
 pub use leader_tip_cache::{CacheWriteError, LeaderTipCache};
 pub use ledger::SqliteLedgerRepo;
 pub use lifecycle_outbox::SqliteLifecycleOutboxRepo;
+pub use mfa_credentials::SqliteMfaCredentialRepo;
 pub use policy_bundles::SqlitePolicyBundleRepo;
 pub use proposals::SqliteProposalRepo;
 pub use provenance::SqliteProvenanceRepo;
@@ -42,8 +44,8 @@ pub use tokens::SqliteTokenRepo;
 use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
-    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, PolicyBundleRepo,
-    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, MfaCredentialRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
 use async_trait::async_trait;
@@ -381,6 +383,10 @@ impl SqliteStore {
         SqliteAgentRepo::new(self.pool.clone())
     }
 
+    pub fn mfa_credentials(&self) -> SqliteMfaCredentialRepo {
+        SqliteMfaCredentialRepo::new(self.pool.clone())
+    }
+
     /// Verify the local ledger chain integrity.
     ///
     /// Delegates to `SqliteLedgerRepo::verify_chain()` which validates:
@@ -543,6 +549,10 @@ impl StoreFacade for SqliteStore {
 
     fn agents(&self) -> Arc<dyn AgentRepo> {
         Arc::new(SqliteAgentRepo::new(self.pool.clone()))
+    }
+
+    fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo> {
+        Arc::new(SqliteMfaCredentialRepo::new(self.pool.clone()))
     }
 
     fn write_queue_depth(&self) -> usize {
@@ -1314,7 +1324,7 @@ mod tests {
                 .fetch_one(store.pool())
                 .await
                 .unwrap();
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
     }
 
     #[tokio::test]

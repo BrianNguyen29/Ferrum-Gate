@@ -56,3 +56,4 @@ strong_id!(PolicyBundleId);
 strong_id!(PrincipalId);
 strong_id!(SessionId);
 strong_id!(ChannelId);
+strong_id!(MfaFactorId);

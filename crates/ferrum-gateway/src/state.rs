@@ -407,6 +407,72 @@ pub struct ServerConfig {
     /// Default: false. No concrete verifier is wired yet; enabling this
     /// returns 403/mfa_required until client factor transport is implemented.
     pub approval_mfa_required: bool,
+    /// MFA secret key for encrypting TOTP secrets.
+    /// Loaded from `FERRUMD_MFA_SECRET_KEY` environment variable.
+    /// Redacted in debug/display output.
+    pub mfa_secret_key: Option<String>,
+    /// TOTP issuer name displayed in authenticator apps.
+    /// Default: "FerrumGate".
+    pub mfa_totp_issuer: String,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ServerConfig");
+        d.field("bind_addr", &self.bind_addr);
+        d.field("store_dsn", &self.store_dsn);
+        d.field("auth_mode", &self.auth_mode);
+        d.field(
+            "bearer_token",
+            &self.bearer_token.as_ref().map(|_| "<redacted>"),
+        );
+        d.field(
+            "allow_insecure_nonlocal_bind",
+            &self.allow_insecure_nonlocal_bind,
+        );
+        d.field("log_filter", &self.log_filter);
+        d.field("log_format", &self.log_format);
+        d.field("store_synchronous", &self.store_synchronous);
+        d.field("store_wal_autocheckpoint", &self.store_wal_autocheckpoint);
+        d.field("rate_limit_per_second", &self.rate_limit_per_second);
+        d.field("rate_limit_burst", &self.rate_limit_burst);
+        d.field("write_queue_threshold", &self.write_queue_threshold);
+        d.field("pg_max_connections", &self.pg_max_connections);
+        d.field("pg_min_idle", &self.pg_min_idle);
+        d.field("pg_acquire_timeout_secs", &self.pg_acquire_timeout_secs);
+        d.field("pg_statement_timeout_ms", &self.pg_statement_timeout_ms);
+        d.field(
+            "pg_idle_in_transaction_timeout_ms",
+            &self.pg_idle_in_transaction_timeout_ms,
+        );
+        d.field("fs_workdir", &self.fs_workdir);
+        d.field("git_repo_roots", &self.git_repo_roots);
+        d.field("sqlite_db_roots", &self.sqlite_db_roots);
+        #[cfg(feature = "s3")]
+        d.field("s3_config", &self.s3_config);
+        d.field("oidc_config", &self.oidc_config);
+        d.field("agent_clock_skew_secs", &self.agent_clock_skew_secs);
+        d.field(
+            "lifecycle_reconciliation_enabled",
+            &self.lifecycle_reconciliation_enabled,
+        );
+        d.field(
+            "lifecycle_reconciliation_interval_secs",
+            &self.lifecycle_reconciliation_interval_secs,
+        );
+        d.field(
+            "lifecycle_reconciliation_batch_limit",
+            &self.lifecycle_reconciliation_batch_limit,
+        );
+        d.field("audit_fail_closed", &self.audit_fail_closed);
+        d.field("approval_mfa_required", &self.approval_mfa_required);
+        d.field(
+            "mfa_secret_key",
+            &self.mfa_secret_key.as_ref().map(|_| "<redacted>"),
+        );
+        d.field("mfa_totp_issuer", &self.mfa_totp_issuer);
+        d.finish()
+    }
 }
 
 impl Default for ServerConfig {
@@ -441,6 +507,8 @@ impl Default for ServerConfig {
             lifecycle_reconciliation_batch_limit: 1000,
             audit_fail_closed: false,
             approval_mfa_required: false,
+            mfa_secret_key: None,
+            mfa_totp_issuer: "FerrumGate".to_string(),
         }
     }
 }
@@ -596,6 +664,19 @@ impl ServerConfig {
                 return Err(
                     "lifecycle_reconciliation_batch_limit must be at most 10000".to_string()
                 );
+            }
+        }
+
+        // Validate mfa_secret_key format if present: must be exactly 64 hex chars (32 bytes).
+        if let Some(ref key) = self.mfa_secret_key {
+            if key.len() != 64 {
+                return Err(format!(
+                    "mfa_secret_key must be exactly 64 hex characters (32 bytes), got {} characters",
+                    key.len()
+                ));
+            }
+            if hex::decode(key).is_err() {
+                return Err("mfa_secret_key contains invalid hex characters".to_string());
             }
         }
 

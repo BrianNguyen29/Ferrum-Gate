@@ -458,8 +458,10 @@ paths:
         Resolves a pending approval by granting or denying it.
         Only pending approvals can be resolved; terminal approvals return 409 Conflict.
         Expired approvals return 403 Forbidden.
-        When `approval_mfa_required` is enabled, returns 403 with `MfaRequired` because
-        client factor transport is not yet implemented (future work per ADR008).
+        When `approval_mfa_required` is enabled, the request must include a valid
+        active `mfa_factor` with a correct `code` (e.g. TOTP code). Missing factor
+        returns 403 with `MfaRequired`; invalid factor or code returns 403 with
+        `MfaInvalid`.
       operationId: resolveApproval
       parameters:
         - $ref: '#/components/parameters/ApprovalId'
@@ -485,7 +487,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
         '403':
-          description: Approval has expired
+          description: Approval has expired, MFA is required, or MFA verification failed
           content:
             application/json:
               schema:
@@ -1131,6 +1133,138 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/admin/agents/{agent_id}/mfa/enroll:
+    post:
+      summary: Enroll a new MFA factor for an agent
+      operationId: enrollMfa
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: MFA factor enrolled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaEnrollResponse'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents/{agent_id}/mfa/verify:
+    post:
+      summary: Verify a pending MFA factor
+      operationId: verifyMfa
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaVerifyRequest'
+      responses:
+        '200':
+          description: MFA factor verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaVerifyResponse'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents/{agent_id}/mfa/disable:
+    post:
+      summary: Disable an active MFA factor
+      operationId: disableMfa
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: MFA factor disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaDisableResponse'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents/{agent_id}/mfa/rotate:
+    post:
+      summary: Rotate an active MFA factor
+      operationId: rotateMfa
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: MFA factor rotated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaRotateResponse'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents/{agent_id}/mfa:
+    get:
+      summary: List MFA factors for an agent
+      operationId: listMfaFactors
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: List of MFA factors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaFactorListResponse'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/admin/agents/{agent_id}/mfa/{mfa_factor_id}:
+    get:
+      summary: Get an MFA factor by ID
+      operationId: getMfaFactor
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - name: mfa_factor_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: MFA factor details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaFactorSummary'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/admin/lifecycle-outbox:
     get:
       summary: List lifecycle outbox records
@@ -1588,6 +1722,8 @@ components:
             - Internal
             - Unauthorized
             - MfaRequired
+            - MfaInvalid
+            - Misconfigured
         message:
           type: string
         correlation_id:
@@ -2311,6 +2447,124 @@ components:
           type: boolean
         reason:
           type: string
+          nullable: true
+        mfa_factor:
+          $ref: '#/components/schemas/MfaFactor'
+          nullable: true
+
+    MfaFactor:
+      type: object
+      required: [id, factor_type, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: MFA factor identifier
+        factor_type:
+          type: string
+          enum: [totp]
+          description: Type of MFA factor
+        status:
+          type: string
+          enum: [Active, Inactive, Pending]
+          description: Current status of the factor
+        label:
+          type: string
+          nullable: true
+          description: Human-readable label for the factor
+        created_at:
+          type: string
+          format: date-time
+        code:
+          type: string
+          nullable: true
+          description: Verification code (e.g. TOTP code) sent by client, never stored
+
+    MfaEnrollResponse:
+      type: object
+      required: [mfa_factor_id, otpauth_uri]
+      properties:
+        mfa_factor_id:
+          type: string
+          format: uuid
+        otpauth_uri:
+          type: string
+
+    MfaVerifyRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+
+    MfaVerifyResponse:
+      type: object
+      required: [verified]
+      properties:
+        verified:
+          type: boolean
+
+    MfaDisableResponse:
+      type: object
+      required: [disabled]
+      properties:
+        disabled:
+          type: boolean
+
+    MfaRotateResponse:
+      type: object
+      required: [mfa_factor_id, otpauth_uri]
+      properties:
+        mfa_factor_id:
+          type: string
+          format: uuid
+        otpauth_uri:
+          type: string
+
+    MfaFactorListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MfaFactorSummary'
+        total:
+          type: integer
+
+    MfaFactorSummary:
+      type: object
+      required: [mfa_factor_id, factor_type, status, created_at]
+      properties:
+        mfa_factor_id:
+          type: string
+          format: uuid
+        factor_type:
+          type: string
+          enum: [totp]
+        status:
+          type: string
+          enum: [Active, Inactive, Pending]
+        label:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_counter:
+          type: integer
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
           nullable: true
 
     ProvenanceQueryRequest:
