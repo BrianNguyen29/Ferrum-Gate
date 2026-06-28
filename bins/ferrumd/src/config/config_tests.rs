@@ -43,6 +43,8 @@ fn clear_test_env() {
         "FERRUMD_LIFECYCLE_RECONCILIATION_BATCH_LIMIT",
         "FERRUMD_AUDIT_FAIL_CLOSED",
         "FERRUMD_APPROVAL_MFA_REQUIRED",
+        "FERRUMD_MFA_SECRET_KEY",
+        "FERRUMD_MFA_TOTP_ISSUER",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -108,6 +110,8 @@ sqlite_db_roots = ["/from/file/databases"]
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -186,6 +190,8 @@ allow_insecure_nonlocal_bind = false
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -233,9 +239,11 @@ auth_mode = "bearer"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(error.to_string().contains("bearer token cannot be empty"));
 
     let _ = fs::remove_file(path);
@@ -279,9 +287,11 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -331,9 +341,11 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -383,6 +395,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -429,6 +443,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -474,9 +490,11 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error.to_string().contains("MySQL is not implemented"),
         "expected MySQL not implemented error, got: {}",
@@ -522,6 +540,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -570,6 +590,8 @@ rate_limit_burst = 100
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -618,6 +640,8 @@ rate_limit_burst = 100
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -671,6 +695,8 @@ rate_limit_burst = 100
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -719,9 +745,11 @@ rate_limit_per_second = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -768,9 +796,11 @@ rate_limit_burst = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -817,9 +847,11 @@ rate_limit_burst = 20000
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -865,6 +897,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -910,6 +944,8 @@ log_format = "json"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -955,6 +991,8 @@ log_format = "text"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1004,6 +1042,8 @@ log_format = "text"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1050,9 +1090,11 @@ log_format = "invalid"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(error.to_string().contains("invalid log format"));
 
     let _ = fs::remove_file(path);
@@ -1095,6 +1137,8 @@ log_format = "compact"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1142,6 +1186,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1188,6 +1234,8 @@ write_queue_threshold = 500
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1234,6 +1282,8 @@ write_queue_threshold = 500
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1284,6 +1334,8 @@ write_queue_threshold = 500
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1330,9 +1382,11 @@ write_queue_threshold = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -1379,9 +1433,11 @@ write_queue_threshold = 10001
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -1429,6 +1485,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1478,6 +1536,8 @@ pg_acquire_timeout_secs = 10
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1533,6 +1593,8 @@ pg_acquire_timeout_secs = 10
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1584,6 +1646,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1630,9 +1694,11 @@ pg_max_connections = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -1679,9 +1745,11 @@ pg_acquire_timeout_secs = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -1727,6 +1795,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1774,6 +1844,8 @@ pg_idle_in_transaction_timeout_ms = 7000
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1826,6 +1898,8 @@ pg_idle_in_transaction_timeout_ms = 7000
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1876,6 +1950,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1923,6 +1999,8 @@ pg_idle_in_transaction_timeout_ms = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1984,6 +2062,8 @@ fg-operators = "operator"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2080,6 +2160,8 @@ fg-admins = "admin"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2155,9 +2237,11 @@ audiences = ["ferrumgate-test"]
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let err = resolve_config(&args).err().expect("expected config error");
+    let err = resolve_config(&args).expect_err("expected config error");
     assert!(
         err.to_string().contains("oidc issuer cannot be empty"),
         "got: {}",
@@ -2211,9 +2295,11 @@ fg-admins = "admin"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let err = resolve_config(&args).err().expect("expected config error");
+    let err = resolve_config(&args).expect_err("expected config error");
     assert!(
         err.to_string()
             .contains("static_keys cannot be empty when jwks_url is not configured"),
@@ -2269,6 +2355,8 @@ fg-admins = "admin"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2335,6 +2423,8 @@ fg-admins = "admin"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2383,6 +2473,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2436,6 +2528,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2482,6 +2576,8 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         lifecycle_reconciliation_batch_limit: Some(2500),
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2531,6 +2627,8 @@ lifecycle_reconciliation_batch_limit = 200
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2580,9 +2678,11 @@ lifecycle_reconciliation_interval_secs = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -2630,9 +2730,11 @@ lifecycle_reconciliation_batch_limit = 0
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
-    let error = resolve_config(&args).err().expect("expected config error");
+    let error = resolve_config(&args).expect_err("expected config error");
     assert!(
         error
             .to_string()
@@ -2678,6 +2780,8 @@ auth_mode = "disabled"
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2728,6 +2832,8 @@ approval_mfa_required = false
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2770,6 +2876,8 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: true,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2818,6 +2926,8 @@ lifecycle_reconciliation_enabled = false
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2867,10 +2977,287 @@ audit_fail_closed = false
         lifecycle_reconciliation_batch_limit: None,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
     };
 
     let config = resolve_config(&args).unwrap();
     assert!(!config.audit_fail_closed);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_mfa_secret_key_defaults_to_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.mfa_secret_key.is_none());
+    assert_eq!(config.mfa_totp_issuer, "FerrumGate");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_mfa_secret_key_from_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_MFA_SECRET_KEY",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        std::env::set_var("FERRUMD_MFA_TOTP_ISSUER", "MyOrg");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(
+        config.mfa_secret_key,
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
+    );
+    assert_eq!(config.mfa_totp_issuer, "MyOrg");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_mfa_secret_key_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_MFA_SECRET_KEY",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: Some(
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+        ),
+        mfa_totp_issuer: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(
+        config.mfa_secret_key,
+        Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string())
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_mfa_secret_key_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+mfa_secret_key = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+mfa_totp_issuer = "FileIssuer"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(
+        config.mfa_secret_key,
+        Some("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_string())
+    );
+    assert_eq!(config.mfa_totp_issuer, "FileIssuer");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_mfa_secret_key_redacted_in_debug() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let debug = format!("{:?}", config);
+    assert!(
+        !debug.contains("secret-value"),
+        "mfa_secret_key must be redacted in debug output"
+    );
+    assert!(
+        debug.contains("<redacted>"),
+        "debug output should contain <redacted>"
+    );
 
     let _ = fs::remove_file(path);
     clear_test_env();

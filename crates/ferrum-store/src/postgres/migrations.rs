@@ -114,12 +114,20 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/010_add_lifecycle_outbox_fencing.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 11,
+        name: "011_add_mfa_credentials",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/011_add_mfa_credentials.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 #[cfg(test)]
 mod tests {

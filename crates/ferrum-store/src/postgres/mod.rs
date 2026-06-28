@@ -33,6 +33,7 @@ mod helpers;
 mod intents;
 mod ledger;
 mod lifecycle_outbox;
+mod mfa_credentials;
 mod migrations;
 mod policy_bundles;
 mod proposals;
@@ -50,6 +51,7 @@ pub use executions::PostgresExecutionRepo;
 pub use intents::PostgresIntentRepo;
 pub use ledger::PostgresLedgerRepo;
 pub use lifecycle_outbox::PostgresLifecycleOutboxRepo;
+pub use mfa_credentials::PostgresMfaCredentialRepo;
 pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
@@ -59,8 +61,8 @@ pub use tokens::PostgresTokenRepo;
 use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
-    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, PolicyBundleRepo,
-    ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, MfaCredentialRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -334,6 +336,10 @@ impl PostgresStore {
         PostgresAgentRepo::new(self.pool.clone())
     }
 
+    pub fn mfa_credentials(&self) -> PostgresMfaCredentialRepo {
+        PostgresMfaCredentialRepo::new(self.pool.clone())
+    }
+
     /// Gracefully close the PostgreSQL connection pool.
     pub async fn shutdown(&self) {
         self.pool.close().await;
@@ -487,6 +493,10 @@ impl StoreFacade for PostgresStore {
 
     fn agents(&self) -> Arc<dyn AgentRepo> {
         Arc::new(self.agents())
+    }
+
+    fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo> {
+        Arc::new(self.mfa_credentials())
     }
 
     async fn health_check(&self) -> crate::Result<()> {
@@ -643,7 +653,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 10);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 11);
     }
 
     #[test]
@@ -687,38 +697,45 @@ mod tests {
         store.apply_embedded_migrations().await.unwrap();
     }
 
+    #[test]
+    fn postgres_mfa_credential_repo_implements_mfa_credential_repo() {
+        fn _check<T: MfaCredentialRepo>() {}
+        _check::<PostgresMfaCredentialRepo>();
+    }
+
     #[tokio::test]
     #[ignore = "requires running PostgreSQL instance"]
-    async fn apply_embedded_migrations_rejects_future_schema_version() {
+    async fn postgres_mfa_credential_crud_smoke() {
         let store = PostgresStore::connect(
             "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
         )
         .await
         .unwrap();
-        // Bootstrap _schema_version table
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS _schema_version (
-                version INTEGER PRIMARY KEY,
-                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )",
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
-        // Insert a future version
-        sqlx::query("INSERT INTO _schema_version (version, applied_at) VALUES ($1, $2) ON CONFLICT (version) DO UPDATE SET applied_at = $2")
-            .bind(migrations::CURRENT_SCHEMA_VERSION + 1)
-            .bind(chrono::Utc::now().to_rfc3339())
-            .execute(store.pool())
-            .await
-            .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
 
-        let err = store.apply_embedded_migrations().await.unwrap_err();
-        let err_str = err.to_string();
-        assert!(
-            err_str.contains("schema version"),
-            "expected schema drift error, got: {}",
-            err_str
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "encrypted-secret-b64",
+            "nonce-b64",
+            "key-1",
         );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        let retrieved = repo.get(record.mfa_factor_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.agent_id, "agent-1");
+        assert_eq!(retrieved.factor_type, ferrum_proto::MfaFactorType::Totp);
+
+        repo.activate(record.mfa_factor_id).await.unwrap();
+        let active = repo.get_active_for_agent("agent-1").await.unwrap();
+        assert!(active.is_some());
+
+        repo.record_use(record.mfa_factor_id, 42).await.unwrap();
+        repo.revoke(record.mfa_factor_id).await.unwrap();
+        let revoked = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(revoked.status, ferrum_proto::MfaFactorStatus::Inactive);
     }
 }

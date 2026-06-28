@@ -1,4 +1,4 @@
-use crate::{ActorRef, ApprovalId, ExecutionId, ProposalId, Timestamp};
+use crate::{ActorRef, ApprovalId, ExecutionId, MfaFactor, ProposalId, Timestamp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -29,4 +29,6 @@ pub struct ApprovalResolveRequest {
     pub actor: ActorRef,
     pub approve: bool,
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mfa_factor: Option<MfaFactor>,
 }

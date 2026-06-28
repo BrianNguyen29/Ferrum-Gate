@@ -83,6 +83,7 @@ The following scopes are currently enforced by `required_scope_for_path()` for H
 | `admin:lifecycle-outbox:read` | Lifecycle outbox list/get routes | Inspect reconciliation records. |
 | `admin:lifecycle-outbox:write` | Lifecycle outbox retry/resolve routes | Retry reconciliation or mark operator review resolved. |
 | `admin:audit` | Admin audit-log routes | Read audit logs and audit checkpoints. |
+| `admin:mfa` | Admin agent MFA routes | Enroll, verify, rotate, or disable agent MFA. |
 | `*` | Admin wildcard | Matches any required scope. |
 
 ### Reserved scopes

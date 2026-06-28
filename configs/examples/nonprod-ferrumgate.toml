@@ -62,6 +62,11 @@ store_synchronous = "NORMAL"
 
 # busy_timeout is a hardcoded SQLite PRAGMA (5000 ms); it is not a config key.
 
+# ── MFA Configuration (optional) ──
+# mfa_secret_key should be set via FERRUMD_MFA_SECRET_KEY environment variable
+# in non-prod to avoid committing secrets to version control.
+# mfa_totp_issuer = "FerrumGate NonProd"
+
 # Rate limiting (tower_governor, per-IP token bucket)
 #
 # WARNING: The built-in defaults (2 req/s, burst 50) are intentionally

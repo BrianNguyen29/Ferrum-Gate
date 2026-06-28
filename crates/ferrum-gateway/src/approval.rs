@@ -21,8 +21,8 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use ferrum_proto::{
     ActorRef, ActorType, ApiErrorCode, ApprovalId, ApprovalListEnvelope, ApprovalResolveRequest,
-    ApprovalState, AuditAction, AuditResourceType, EventId, HashChainRef, ObjectRef, ObjectType,
-    ProvenanceEvent, ProvenanceEventKind,
+    ApprovalState, AuditAction, AuditResourceType, EventId, HashChainRef, MfaFactorStatus,
+    ObjectRef, ObjectType, ProvenanceEvent, ProvenanceEventKind,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -304,18 +304,186 @@ pub(crate) async fn resolve_approval(
             .record_governance_error(GovernanceRoute::ApprovalsResolve, e)
     })?;
 
-    // ADR008 Phase 1: MFA stub. When enabled, fail closed because no client
-    // factor transport is currently modeled (TOTP/WebAuthn are Phase 2+).
+    // ADR008 Phase 2: MFA verification for approval resolve.
+    // When enabled, require a valid active TOTP factor from the resolver.
     if state.server_config.approval_mfa_required {
-        return governance_err!(
-            state,
-            GovernanceRoute::ApprovalsResolve,
-            ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::MfaRequired,
-                "MFA is required for approval resolve, but client factor transport is not yet implemented (future work per ADR008)",
-            )
-        );
+        let mfa_factor = match request.mfa_factor {
+            Some(ref f) => f,
+            None => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::MfaRequired,
+                        "MFA factor is required for approval resolve",
+                    )
+                );
+            }
+        };
+
+        let key_hex = match &state.server_config.mfa_secret_key {
+            Some(k) => k,
+            None => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::Misconfigured,
+                        "mfa_secret_key is not configured",
+                    )
+                );
+            }
+        };
+
+        let key_bytes = match crate::mfa::decode_hex_key(key_hex) {
+            Ok(b) => b,
+            Err(msg) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(StatusCode::FORBIDDEN, ApiErrorCode::Misconfigured, msg,)
+                );
+            }
+        };
+
+        let record = match state
+            .runtime
+            .store
+            .mfa_credentials()
+            .get(mfa_factor.id)
+            .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::MfaInvalid,
+                        "MFA factor not found",
+                    )
+                );
+            }
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
+        };
+
+        if record.agent_id != request.actor.actor_id {
+            return governance_err!(
+                state,
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::new(
+                    StatusCode::FORBIDDEN,
+                    ApiErrorCode::MfaInvalid,
+                    "MFA factor does not belong to the actor",
+                )
+            );
+        }
+
+        if record.status != MfaFactorStatus::Active {
+            return governance_err!(
+                state,
+                GovernanceRoute::ApprovalsResolve,
+                ApiProblem::new(
+                    StatusCode::FORBIDDEN,
+                    ApiErrorCode::MfaInvalid,
+                    "MFA factor is not active",
+                )
+            );
+        }
+
+        let secret = match crate::mfa::decrypt_secret(
+            &key_bytes,
+            &record.encrypted_secret,
+            &record.secret_nonce,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "mfa decrypt_secret failed during approval resolve");
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::MfaInvalid,
+                        "failed to verify MFA factor",
+                    )
+                );
+            }
+        };
+
+        let code = match mfa_factor.code {
+            Some(ref c) => c,
+            None => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::MfaInvalid,
+                        "MFA verification code is missing",
+                    )
+                );
+            }
+        };
+
+        let now = chrono::Utc::now().timestamp() as u64;
+        let matched_counter = match crate::mfa::verify_totp_code_with_counter(&secret, code, now) {
+            Ok(c) => c,
+            Err(_) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::MfaInvalid,
+                        "MFA verification code is invalid",
+                    )
+                );
+            }
+        };
+
+        // Record successful use with counter for replay protection (CAS in DB)
+        match state
+            .runtime
+            .store
+            .mfa_credentials()
+            .record_use(mfa_factor.id, matched_counter)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::MfaInvalid,
+                        "MFA verification code is invalid",
+                    )
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "mfa record_use failed during approval resolve");
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ApiErrorCode::Internal,
+                        "MFA state update failed",
+                    )
+                );
+            }
+        }
     }
 
     // Fetch the approval from the store

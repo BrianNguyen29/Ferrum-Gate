@@ -4,9 +4,9 @@ use ferrum_proto::{
     AuditLogEntry, AuditMerkleRoot, AuditResourceType, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, JsonMap, LifecycleOutboxId, LifecycleOutboxRecord,
-    LifecycleOutboxStatus, PolicyBundle, PolicyBundleVersion, ProposalId, ProvenanceEdge,
-    ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId, RollbackState,
-    Timestamp,
+    LifecycleOutboxStatus, MfaCredentialRecord, PolicyBundle, PolicyBundleVersion, ProposalId,
+    ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId,
+    RollbackState, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -518,6 +518,38 @@ pub trait PolicyBundleRepo: Send + Sync {
     ) -> Result<i64>;
 }
 
+/// Repository for MFA credentials.
+#[async_trait]
+pub trait MfaCredentialRepo: Send + Sync {
+    /// Insert a new MFA credential record.
+    async fn insert(&self, record: &MfaCredentialRecord) -> Result<()>;
+
+    /// Get a credential by its factor ID.
+    async fn get(
+        &self,
+        mfa_factor_id: ferrum_proto::MfaFactorId,
+    ) -> Result<Option<MfaCredentialRecord>>;
+
+    /// Get the active (non-revoked, status=Active) credential for an agent, if any.
+    async fn get_active_for_agent(&self, agent_id: &str) -> Result<Option<MfaCredentialRecord>>;
+
+    /// List all credentials for an agent (including pending and revoked).
+    async fn list_by_agent(&self, agent_id: &str) -> Result<Vec<MfaCredentialRecord>>;
+
+    /// Activate a pending credential and set `verified_at`.
+    async fn activate(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
+
+    /// Update `last_used_at` and `last_used_counter` after successful verification.
+    async fn record_use(
+        &self,
+        mfa_factor_id: ferrum_proto::MfaFactorId,
+        counter: u64,
+    ) -> Result<bool>;
+
+    /// Revoke a credential by setting `revoked_at`.
+    async fn revoke(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
+}
+
 /// Facade trait that bundles all repository accessors.
 ///
 /// Decouples GatewayRuntime from any concrete store implementation.
@@ -539,6 +571,7 @@ pub trait StoreFacade: Send + Sync {
     fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo>;
     fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo>;
     fn agents(&self) -> Arc<dyn AgentRepo>;
+    fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo>;
 
     /// Returns the current number of pending write operations in the queue.
     /// This represents operations that have been sent but not yet completed processing.

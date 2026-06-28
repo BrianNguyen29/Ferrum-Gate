@@ -39,6 +39,10 @@ pub enum AuditAction {
     AgentAuthFailed,
     LifecycleOutboxRetry,
     LifecycleOutboxResolve,
+    MfaEnroll,
+    MfaVerify,
+    MfaDisable,
+    MfaRotate,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -58,6 +62,10 @@ impl std::fmt::Display for AuditAction {
             AuditAction::AgentAuthFailed => "agent_auth_failed",
             AuditAction::LifecycleOutboxRetry => "lifecycle_outbox_retry",
             AuditAction::LifecycleOutboxResolve => "lifecycle_outbox_resolve",
+            AuditAction::MfaEnroll => "mfa_enroll",
+            AuditAction::MfaVerify => "mfa_verify",
+            AuditAction::MfaDisable => "mfa_disable",
+            AuditAction::MfaRotate => "mfa_rotate",
         };
         write!(f, "{}", s)
     }
@@ -82,6 +90,10 @@ impl std::str::FromStr for AuditAction {
             "agent_auth_failed" => Ok(AuditAction::AgentAuthFailed),
             "lifecycle_outbox_retry" => Ok(AuditAction::LifecycleOutboxRetry),
             "lifecycle_outbox_resolve" => Ok(AuditAction::LifecycleOutboxResolve),
+            "mfa_enroll" => Ok(AuditAction::MfaEnroll),
+            "mfa_verify" => Ok(AuditAction::MfaVerify),
+            "mfa_disable" => Ok(AuditAction::MfaDisable),
+            "mfa_rotate" => Ok(AuditAction::MfaRotate),
             _ => Err(format!("invalid audit action: {}", s)),
         }
     }
@@ -97,6 +109,7 @@ pub enum AuditResourceType {
     Auth,
     Agent,
     LifecycleOutbox,
+    MfaCredential,
 }
 
 impl std::fmt::Display for AuditResourceType {
@@ -109,6 +122,7 @@ impl std::fmt::Display for AuditResourceType {
             AuditResourceType::Auth => "auth",
             AuditResourceType::Agent => "agent",
             AuditResourceType::LifecycleOutbox => "lifecycle_outbox",
+            AuditResourceType::MfaCredential => "mfa_credential",
         };
         write!(f, "{}", s)
     }
@@ -126,6 +140,7 @@ impl std::str::FromStr for AuditResourceType {
             "auth" => Ok(AuditResourceType::Auth),
             "agent" => Ok(AuditResourceType::Agent),
             "lifecycle_outbox" => Ok(AuditResourceType::LifecycleOutbox),
+            "mfa_credential" => Ok(AuditResourceType::MfaCredential),
             _ => Err(format!("invalid audit resource type: {}", s)),
         }
     }

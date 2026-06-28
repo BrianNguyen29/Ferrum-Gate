@@ -12040,7 +12040,8 @@ async fn test_resolve_approval_granted_success() {
             display_name: Some("Test Operator".to_string()),
         },
         approve: true,
-        reason: Some("looks good".to_string()),
+        reason: Some("approved for testing".to_string()),
+        mfa_factor: None,
     };
 
     let response = router
@@ -12138,6 +12139,7 @@ async fn test_resolve_approval_denied_success() {
         },
         approve: false,
         reason: Some("not approved".to_string()),
+        mfa_factor: None,
     };
 
     let response = router
@@ -12251,6 +12253,7 @@ async fn test_resolve_approval_conflict_already_granted() {
         },
         approve: true,
         reason: None,
+        mfa_factor: None,
     };
 
     let response = router
@@ -12353,6 +12356,7 @@ async fn test_resolve_approval_conflict_already_denied() {
         },
         approve: true,
         reason: None,
+        mfa_factor: None,
     };
 
     let response = router
@@ -12456,6 +12460,7 @@ async fn test_resolve_approval_forbidden_expired() {
         },
         approve: true,
         reason: None,
+        mfa_factor: None,
     };
 
     let response = router
@@ -12542,7 +12547,8 @@ async fn test_resolve_approval_provenance_event_emitted() {
             display_name: Some("Test Operator".to_string()),
         },
         approve: true,
-        reason: Some("approved for testing".to_string()),
+        reason: None,
+        mfa_factor: None,
     };
 
     let response = router

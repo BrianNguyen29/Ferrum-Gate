@@ -106,6 +106,15 @@ pub struct Args {
     /// When true, approval resolve requires a second factor (MFA) (default: false).
     #[arg(long)]
     approval_mfa_required: bool,
+
+    /// MFA secret key for encrypting TOTP secrets.
+    /// When set, TOTP credential storage is enabled.
+    #[arg(long)]
+    mfa_secret_key: Option<String>,
+
+    /// TOTP issuer name displayed in authenticator apps (default: "FerrumGate").
+    #[arg(long)]
+    mfa_totp_issuer: Option<String>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -212,6 +221,10 @@ struct ServerSection {
     audit_fail_closed: Option<bool>,
     #[serde(default)]
     approval_mfa_required: Option<bool>,
+    #[serde(default)]
+    mfa_secret_key: Option<String>,
+    #[serde(default = "default_mfa_totp_issuer")]
+    mfa_totp_issuer: String,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
@@ -248,6 +261,10 @@ fn default_s3_require_versioning() -> bool {
 #[cfg(feature = "s3")]
 fn default_s3_region() -> String {
     "us-east-1".to_string()
+}
+
+fn default_mfa_totp_issuer() -> String {
+    "FerrumGate".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -501,6 +518,19 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
             .unwrap_or(false)
     };
 
+    let mfa_secret_key = args
+        .mfa_secret_key
+        .clone()
+        .or(get_env("FERRUMD_MFA_SECRET_KEY")?)
+        .or_else(|| server.as_ref().and_then(|s| s.mfa_secret_key.clone()));
+
+    let mfa_totp_issuer = args
+        .mfa_totp_issuer
+        .clone()
+        .or(get_env("FERRUMD_MFA_TOTP_ISSUER")?)
+        .or_else(|| server.as_ref().map(|s| s.mfa_totp_issuer.clone()))
+        .unwrap_or_else(default_mfa_totp_issuer);
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -749,6 +779,8 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         lifecycle_reconciliation_batch_limit,
         audit_fail_closed,
         approval_mfa_required,
+        mfa_secret_key,
+        mfa_totp_issuer,
     };
 
     // Validate configuration

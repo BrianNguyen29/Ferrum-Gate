@@ -802,6 +802,7 @@ fn call_approve_intent(
         },
         approve: true,
         reason,
+        mfa_factor: None,
     };
 
     match client.resolve_approval(&approval_id_proto, &request) {
@@ -851,6 +852,7 @@ fn call_reject_intent(
         },
         approve: false,
         reason,
+        mfa_factor: None,
     };
 
     match client.resolve_approval(&approval_id_proto, &request) {

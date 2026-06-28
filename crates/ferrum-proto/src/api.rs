@@ -156,6 +156,8 @@ pub enum ApiErrorCode {
     BadRequest,
     PayloadTooLarge,
     MfaRequired,
+    MfaInvalid,
+    Misconfigured,
 }
 
 /// Response envelope for paginated approval lists.
