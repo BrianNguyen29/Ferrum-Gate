@@ -38,6 +38,7 @@ use tower_governor::{
 };
 use tower_http::trace::TraceLayer;
 
+use crate::AuthActor;
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
 
 /// Maximum number of entries in the agent nonce replay cache.
@@ -1331,7 +1332,15 @@ async fn auth_middleware(
             match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), &method, &path)
                 .await
             {
-                Ok(()) => next.run(request).await,
+                Ok(actor_id) => {
+                    let (mut parts, body) = request.into_parts();
+                    parts.extensions.insert(AuthActor {
+                        actor_id,
+                        source: "oidc",
+                    });
+                    let request = axum::http::Request::from_parts(parts, body);
+                    next.run(request).await
+                }
                 Err(OidcAuthError::Unauthorized(msg)) => {
                     let _ = crate::audit::append_audit(
                         &state.runtime.store,
@@ -1416,6 +1425,14 @@ async fn auth_middleware(
             tokio::spawn(async move {
                 let _ = token_repo.touch(&token_id).await;
             });
+
+            // Insert authenticated actor identity for downstream handlers
+            let (mut parts, body) = request.into_parts();
+            parts.extensions.insert(AuthActor {
+                actor_id: token.actor_id.clone(),
+                source: "scoped",
+            });
+            let request = axum::http::Request::from_parts(parts, body);
 
             next.run(request).await
         }
@@ -1514,7 +1531,7 @@ async fn verify_agent_request(
     }
 
     // Read body and verify body hash
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
     let bytes = axum::body::to_bytes(body, 10 * 1024 * 1024)
         .await
         .map_err(|_| AgentAuthError::Unauthorized("failed to read body".to_string()))?;
@@ -1591,6 +1608,10 @@ async fn verify_agent_request(
     }
 
     // Reconstruct request and proceed
+    parts.extensions.insert(AuthActor {
+        actor_id: agent_id.to_string(),
+        source: "agent",
+    });
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
 }
@@ -1837,7 +1858,7 @@ async fn validate_oidc_token(
     jwks_cache: Option<&Arc<OidcJwksCache>>,
     method: &str,
     path: &str,
-) -> Result<(), OidcAuthError> {
+) -> Result<String, OidcAuthError> {
     // Step 1: decode header to get kid and alg
     let header = match jsonwebtoken::decode_header(token) {
         Ok(h) => h,
@@ -2004,7 +2025,7 @@ async fn validate_oidc_token(
     }
 
     tracing::debug!(actor_id = %actor_id, role = ?role, "oidc auth succeeded");
-    Ok(())
+    Ok(actor_id)
 }
 
 /// Validates that `resource_bindings` is a subset of `resource_scope`.
@@ -8971,5 +8992,426 @@ rules:
             serde_json::from_slice(&body).unwrap();
         assert_eq!(resp.items.len(), 1);
         assert!(resp.next_cursor.is_some());
+    }
+
+    // ── Audit Actor Identity Tests ──
+
+    #[tokio::test]
+    async fn test_scoped_auth_actor_recorded_in_audit() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let target_token = ferrum_proto::ScopedToken {
+            token_id: "tok_target_1".to_string(),
+            actor_id: "someone".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: hash_token_value(&generate_token_value()),
+            token_hash: hash_token_with_salt(&generate_token_value(), &generate_token_salt()),
+            token_salt: generate_token_salt(),
+        };
+        runtime.store.tokens().insert(&target_token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/tokens/tok_target_1")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&ferrum_proto::RevokeTokenRequest {
+                            reason: Some("test".to_string()),
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let (items, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::TokenRevoke),
+                Some(AuditResourceType::Token),
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!items.is_empty(), "expected TokenRevoke audit entry");
+        let entry = items
+            .iter()
+            .find(|e| e.action == AuditAction::TokenRevoke)
+            .expect("TokenRevoke audit entry");
+        assert_eq!(entry.actor_id, "admin");
+    }
+
+    #[tokio::test]
+    async fn test_oidc_auth_actor_recorded_in_audit() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::RegisterAgentRequest {
+            agent_id: "agent_oidc_revoke".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: None,
+            description: None,
+        };
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("oidc-user-99"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-admins"]));
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/agents/agent_oidc_revoke")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&ferrum_proto::RevokeAgentRequest {
+                            reason: Some("test".to_string()),
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let (items, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::AgentRevoke),
+                Some(AuditResourceType::Agent),
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!items.is_empty(), "expected AgentRevoke audit entry");
+        let entry = items
+            .iter()
+            .find(|e| e.action == AuditAction::AgentRevoke)
+            .expect("AgentRevoke audit entry");
+        assert_eq!(entry.actor_id, "oidc-user-99");
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_actor_recorded_in_audit() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_revoker",
+            &pk_b64,
+            &fingerprint,
+            vec!["admin:agents".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::RegisterAgentRequest {
+            agent_id: "agent_to_revoke_2".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: None,
+            description: None,
+        };
+        let body_bytes = serde_json::to_vec(&create_req).unwrap();
+        let body_hash = blake3::hash(&body_bytes).to_hex().to_string();
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_revoker",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "POST",
+            "/v1/admin/agents",
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("X-Ferrum-Agent-Id", "agent_revoker")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body_bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let revoke_body_bytes = serde_json::to_vec(&ferrum_proto::RevokeAgentRequest {
+            reason: Some("test".to_string()),
+        })
+        .unwrap();
+        let body_hash = blake3::hash(&revoke_body_bytes).to_hex().to_string();
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_revoker",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "DELETE",
+            "/v1/admin/agents/agent_to_revoke_2",
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/agents/agent_to_revoke_2")
+                    .header("X-Ferrum-Agent-Id", "agent_revoker")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
+                    .header("X-Ferrum-Signature", &signature)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(revoke_body_bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let (items, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::AgentRevoke),
+                Some(AuditResourceType::Agent),
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!items.is_empty(), "expected AgentRevoke audit entry");
+        let entry = items
+            .iter()
+            .find(|e| e.action == AuditAction::AgentRevoke)
+            .expect("AgentRevoke audit entry");
+        assert_eq!(entry.actor_id, "agent_revoker");
+    }
+
+    #[tokio::test]
+    async fn test_bearer_auth_actor_fallback_unknown_in_audit() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            bearer_token: Some("test-bearer".to_string()),
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let target_token = ferrum_proto::ScopedToken {
+            token_id: "tok_bearer_target".to_string(),
+            actor_id: "someone".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: hash_token_value(&generate_token_value()),
+            token_hash: hash_token_with_salt(&generate_token_value(), &generate_token_salt()),
+            token_salt: generate_token_salt(),
+        };
+        runtime.store.tokens().insert(&target_token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/tokens/tok_bearer_target")
+                    .header("Authorization", "Bearer test-bearer")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&ferrum_proto::RevokeTokenRequest {
+                            reason: Some("test".to_string()),
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let (items, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::TokenRevoke),
+                Some(AuditResourceType::Token),
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!items.is_empty(), "expected TokenRevoke audit entry");
+        let entry = items
+            .iter()
+            .find(|e| e.action == AuditAction::TokenRevoke)
+            .expect("TokenRevoke audit entry");
+        assert_eq!(entry.actor_id, "unknown");
+    }
+
+    #[tokio::test]
+    async fn test_disabled_auth_actor_fallback_unknown_in_audit() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Disabled,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let target_token = ferrum_proto::ScopedToken {
+            token_id: "tok_disabled_target".to_string(),
+            actor_id: "someone".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["approval:read".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: hash_token_value(&generate_token_value()),
+            token_hash: hash_token_with_salt(&generate_token_value(), &generate_token_salt()),
+            token_salt: generate_token_salt(),
+        };
+        runtime.store.tokens().insert(&target_token).await.unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/admin/tokens/tok_disabled_target")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&ferrum_proto::RevokeTokenRequest {
+                            reason: Some("test".to_string()),
+                        })
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let (items, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::TokenRevoke),
+                Some(AuditResourceType::Token),
+                None,
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!items.is_empty(), "expected TokenRevoke audit entry");
+        let entry = items
+            .iter()
+            .find(|e| e.action == AuditAction::TokenRevoke)
+            .expect("TokenRevoke audit entry");
+        assert_eq!(entry.actor_id, "unknown");
     }
 }
