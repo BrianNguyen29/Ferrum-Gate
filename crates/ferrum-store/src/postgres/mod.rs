@@ -909,14 +909,14 @@ mod tests {
         store.apply_embedded_migrations().await.unwrap();
 
         let record1 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-activate-revokes",
             ferrum_proto::MfaFactorType::Totp,
             "s1",
             "n1",
             "k1",
         );
         let record2 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-activate-revokes",
             ferrum_proto::MfaFactorType::Totp,
             "s2",
             "n2",
@@ -942,7 +942,11 @@ mod tests {
         assert!(revoked1.revoked_at.is_some());
 
         // Only one active factor per agent
-        let active = repo.get_active_for_agent("agent-1").await.unwrap().unwrap();
+        let active = repo
+            .get_active_for_agent("agent-activate-revokes")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(active.mfa_factor_id, record2.mfa_factor_id);
     }
 
