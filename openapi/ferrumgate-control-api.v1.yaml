@@ -1189,6 +1189,11 @@ paths:
       operationId: disableMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaDisableRequest'
       responses:
         '200':
           description: MFA factor disabled
@@ -1196,6 +1201,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MfaDisableResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
         '403':
           $ref: '#/components/responses/ApiError'
         '404':
@@ -1209,13 +1216,20 @@ paths:
       operationId: rotateMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaRotateRequest'
       responses:
-        '200':
+        '201':
           description: MFA factor rotated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MfaRotateResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
         '403':
           $ref: '#/components/responses/ApiError'
         '404':
@@ -2504,12 +2518,32 @@ components:
         verified:
           type: boolean
 
+    MfaDisableRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Current TOTP code for re-verification. Required unless the caller has break-glass scope.
+        reason:
+          type: string
+          description: Non-empty reason when using break-glass scope.
+
     MfaDisableResponse:
       type: object
       required: [disabled]
       properties:
         disabled:
           type: boolean
+
+    MfaRotateRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Current TOTP code for re-verification. Required when an active factor exists unless the caller has break-glass scope.
+        reason:
+          type: string
+          description: Non-empty reason when using break-glass scope.
 
     MfaRotateResponse:
       type: object

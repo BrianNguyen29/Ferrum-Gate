@@ -6,6 +6,14 @@
 pub(crate) struct AuthActor {
     pub(crate) actor_id: String,
     pub(crate) source: &'static str,
+    pub(crate) scopes: Vec<String>,
+}
+
+impl AuthActor {
+    /// Check whether the actor has the given scope (or the wildcard `*`).
+    pub(crate) fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == "*" || s == scope)
+    }
 }
 
 /// Extract the actor ID from an optional `AuthActor` extension, falling back to `"unknown"`.

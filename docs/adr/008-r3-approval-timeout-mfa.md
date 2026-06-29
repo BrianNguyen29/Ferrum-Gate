@@ -56,3 +56,7 @@ Both controls are opt-in to preserve backward compatibility.
 - SMS or email-based MFA (TOTP is the first concrete adapter; others can follow).
 - Changing the default approval behavior from synchronous, single-factor (no breaking change without operator opt-in).
 - Real-time push notifications to operators (out of scope; can be handled by external alerting).
+
+## Related decisions
+
+- See [ADR 013 — MFA Disable/Rotate Break-Glass](013-mfa-breakglass.md) for TOTP re-verification and break-glass bypass semantics on MFA disable/rotate.

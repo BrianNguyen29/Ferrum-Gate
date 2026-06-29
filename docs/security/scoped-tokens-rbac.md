@@ -84,6 +84,7 @@ The following scopes are currently enforced by `required_scope_for_path()` for H
 | `admin:lifecycle-outbox:write` | Lifecycle outbox retry/resolve routes | Retry reconciliation or mark operator review resolved. |
 | `admin:audit` | Admin audit-log routes | Read audit logs and audit checkpoints. |
 | `admin:mfa` | Admin agent MFA routes | Enroll, verify, rotate, or disable agent MFA. |
+| `admin:mfa:breakglass` | Admin agent MFA break-glass bypass | Disable or rotate an active MFA factor without TOTP re-verification (requires non-empty reason, auditable). |
 | `*` | Admin wildcard | Matches any required scope. |
 
 ### Reserved scopes
