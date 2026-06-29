@@ -68,6 +68,8 @@ store_synchronous = "NORMAL"
 # Must be exactly 64 hex characters (32 bytes). Generate with: openssl rand -hex 32
 # approval_mfa_required = false
 # mfa_totp_issuer = "FerrumGate NonProd"
+# mfa_lockout_max_attempts = 5
+# mfa_lockout_duration_secs = 900
 
 # Rate limiting (tower_governor, per-IP token bucket)
 #

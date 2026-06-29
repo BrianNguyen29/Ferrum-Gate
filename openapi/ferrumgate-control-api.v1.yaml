@@ -1737,6 +1737,7 @@ components:
             - Unauthorized
             - MfaRequired
             - MfaInvalid
+            - MfaLocked
             - Misconfigured
         message:
           type: string
@@ -2600,6 +2601,20 @@ components:
           type: string
           format: date-time
           nullable: true
+        failed_attempts:
+          type: integer
+          default: 0
+        locked_until:
+          type: string
+          format: date-time
+          nullable: true
+        last_failed_at:
+          type: string
+          format: date-time
+          nullable: true
+        lockout_count:
+          type: integer
+          default: 0
 
     ProvenanceQueryRequest:
       type: object

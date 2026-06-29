@@ -52,6 +52,8 @@ pg_acquire_timeout_secs = 5
 # Must be exactly 64 hex characters (32 bytes). Generate with: openssl rand -hex 32
 # approval_mfa_required = false
 # mfa_totp_issuer = "FerrumGate"
+# mfa_lockout_max_attempts = 5
+# mfa_lockout_duration_secs = 900
 
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".

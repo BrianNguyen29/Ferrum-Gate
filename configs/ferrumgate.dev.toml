@@ -43,6 +43,8 @@ pg_acquire_timeout_secs = 5
 # mfa_totp_issuer controls the name shown in authenticator apps.
 # mfa_secret_key = "dev-only-key"
 # mfa_totp_issuer = "FerrumGate Dev"
+# mfa_lockout_max_attempts = 5
+# mfa_lockout_duration_secs = 900
 
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".

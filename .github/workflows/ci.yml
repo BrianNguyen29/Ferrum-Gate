@@ -148,6 +148,9 @@ jobs:
           cargo test -p ferrum-store --features postgres \
             --test postgres_intents -- --nocapture 2>&1 | tee "$log_file"
 
+          cargo test -p ferrum-store --features postgres \
+            -- --ignored --nocapture 2>&1 | tee -a "$log_file"
+
           if grep -Eq 'Skipping postgres live test|apply_embedded_migrations failed' "$log_file"; then
             echo "PostgreSQL live tests reported a skipped or failed database setup." >&2
             exit 1

@@ -1324,7 +1324,25 @@ mod tests {
                 .fetch_one(store.pool())
                 .await
                 .unwrap();
-        assert_eq!(version, 16);
+        assert_eq!(version, 17);
+    }
+
+    #[tokio::test]
+    async fn test_migration_creates_mfa_active_lookup_index() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let idx: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_mfa_credentials_active_lookup'",
+        )
+        .fetch_optional(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            idx,
+            Some("idx_mfa_credentials_active_lookup".to_string()),
+            "expected idx_mfa_credentials_active_lookup to exist after fresh migration"
+        );
     }
 
     #[tokio::test]
