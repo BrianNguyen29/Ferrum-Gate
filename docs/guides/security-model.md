@@ -140,7 +140,7 @@ Tenant
 - `approval:resolve`
 - `policy:read`, `policy:write`
 - `provenance:read`
-- `admin:tokens`, `admin:config`, `admin:mfa`
+- `admin:tokens`, `admin:config`, `admin:mfa`, `admin:mfa:breakglass`
 - `backup:run`
 
 ## Hardening checklist

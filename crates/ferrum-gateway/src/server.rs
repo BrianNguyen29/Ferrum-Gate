@@ -1332,11 +1332,12 @@ async fn auth_middleware(
             match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), &method, &path)
                 .await
             {
-                Ok(actor_id) => {
+                Ok((actor_id, scopes)) => {
                     let (mut parts, body) = request.into_parts();
                     parts.extensions.insert(AuthActor {
                         actor_id,
                         source: "oidc",
+                        scopes,
                     });
                     let request = axum::http::Request::from_parts(parts, body);
                     next.run(request).await
@@ -1431,6 +1432,7 @@ async fn auth_middleware(
             parts.extensions.insert(AuthActor {
                 actor_id: token.actor_id.clone(),
                 source: "scoped",
+                scopes: token.scopes.clone(),
             });
             let request = axum::http::Request::from_parts(parts, body);
 
@@ -1611,6 +1613,7 @@ async fn verify_agent_request(
     parts.extensions.insert(AuthActor {
         actor_id: agent_id.to_string(),
         source: "agent",
+        scopes: agent.allowed_scopes.clone(),
     });
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
@@ -1858,7 +1861,7 @@ async fn validate_oidc_token(
     jwks_cache: Option<&Arc<OidcJwksCache>>,
     method: &str,
     path: &str,
-) -> Result<String, OidcAuthError> {
+) -> Result<(String, Vec<String>), OidcAuthError> {
     // Step 1: decode header to get kid and alg
     let header = match jsonwebtoken::decode_header(token) {
         Ok(h) => h,
@@ -2025,7 +2028,7 @@ async fn validate_oidc_token(
     }
 
     tracing::debug!(actor_id = %actor_id, role = ?role, "oidc auth succeeded");
-    Ok(actor_id)
+    Ok((actor_id, scopes))
 }
 
 /// Validates that `resource_bindings` is a subset of `resource_scope`.
@@ -7793,6 +7796,32 @@ rules:
         (runtime, token_value)
     }
 
+    async fn test_runtime_with_token_scopes(scopes: Vec<String>) -> (GatewayRuntime, String) {
+        let runtime = test_runtime().await;
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_bg_1".to_string(),
+            actor_id: "breakglass-operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes,
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+        (runtime, token_value)
+    }
+
     #[tokio::test]
     async fn test_admin_agent_register_list_revoke() {
         let (runtime, token_value) = test_runtime_with_admin_token().await;
@@ -8727,14 +8756,20 @@ rules:
         let verify_resp: ferrum_proto::MfaVerifyResponse = serde_json::from_slice(&body).unwrap();
         assert!(verify_resp.verified);
 
-        // Disable active factor
+        // Disable active factor with a new TOTP code (next step to avoid replay)
+        let disable_code = crate::mfa::generate_totp_code(&secret, now + 30);
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: Some(disable_code),
+            reason: None,
+        };
         let response = router
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/v1/admin/agents/agent-1/mfa/disable")
-                    .body(Body::empty())
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
                     .unwrap(),
             )
             .await
@@ -8892,14 +8927,20 @@ rules:
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        // Rotate
+        // Rotate with a new TOTP code (next step to avoid replay)
+        let rotate_code = crate::mfa::generate_totp_code(&secret, now + 30);
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: Some(rotate_code),
+            reason: None,
+        };
         let response = router
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/v1/admin/agents/agent-1/mfa/rotate")
-                    .body(Body::empty())
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
                     .unwrap(),
             )
             .await
@@ -8942,6 +8983,902 @@ rules:
             .find(|i| i.mfa_factor_id == rotate_resp.mfa_factor_id)
             .expect("new factor present");
         assert_eq!(new_factor.status, ferrum_proto::MfaFactorStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_empty_body_returns_mfa_required() {
+        let runtime = test_runtime().await;
+        let config = test_mfa_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable with empty body should return MfaRequired
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaRequired);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_reverify_invalid_code() {
+        let runtime = test_runtime().await;
+        let config = test_mfa_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable with invalid code
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: Some("000000".to_string()),
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_reverify_replay() {
+        let runtime = test_runtime().await;
+        let config = test_mfa_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code: code.clone() };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable with same code (replay) should fail
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: Some(code),
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_breakglass_success() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec![
+            "admin:mfa".to_string(),
+            "admin:mfa:breakglass".to_string(),
+        ])
+        .await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable with break-glass reason and no code
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: None,
+            reason: Some("emergency lockout".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let disable_resp: ferrum_proto::MfaDisableResponse = serde_json::from_slice(&body).unwrap();
+        assert!(disable_resp.disabled);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_breakglass_missing_scope() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec![
+            "admin:mfa".to_string(),
+            "admin:agents".to_string(),
+        ])
+        .await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable without code and without break-glass scope
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: None,
+            reason: Some("emergency lockout".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaRequired);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_breakglass_missing_reason() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec![
+            "admin:mfa".to_string(),
+            "admin:mfa:breakglass".to_string(),
+        ])
+        .await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable with break-glass scope but missing reason
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: None,
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::ValidationError);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_disable_breakglass_wildcard_scope() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec!["*".to_string()]).await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Disable with wildcard scope and no code
+        let disable_req = ferrum_proto::MfaDisableRequest {
+            code: None,
+            reason: Some("wildcard breakglass".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/disable")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&disable_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let disable_resp: ferrum_proto::MfaDisableResponse = serde_json::from_slice(&body).unwrap();
+        assert!(disable_resp.disabled);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_rotate_no_active_factor() {
+        let runtime = test_runtime().await;
+        let config = test_mfa_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // Rotate with no active factor should proceed like enrollment
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: None,
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/rotate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let rotate_resp: ferrum_proto::MfaRotateResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!rotate_resp.mfa_factor_id.0.is_nil());
+        assert!(rotate_resp.otpauth_uri.contains("otpauth://totp/"));
+    }
+
+    #[tokio::test]
+    async fn test_mfa_rotate_breakglass_success() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec![
+            "admin:mfa".to_string(),
+            "admin:mfa:breakglass".to_string(),
+        ])
+        .await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rotate with break-glass reason and no code
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: None,
+            reason: Some("emergency rotation".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/rotate")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let rotate_resp: ferrum_proto::MfaRotateResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!rotate_resp.mfa_factor_id.0.is_nil());
+        assert!(rotate_resp.otpauth_uri.contains("otpauth://totp/"));
+    }
+
+    #[tokio::test]
+    async fn test_mfa_rotate_reverify_invalid_code() {
+        let runtime = test_runtime().await;
+        let config = test_mfa_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rotate with invalid code
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: Some("000000".to_string()),
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/rotate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_rotate_reverify_replay() {
+        let runtime = test_runtime().await;
+        let config = test_mfa_config();
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code: code.clone() };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rotate with same code (replay) should fail
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: Some(code),
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/rotate")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_rotate_breakglass_missing_scope() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec![
+            "admin:mfa".to_string(),
+            "admin:agents".to_string(),
+        ])
+        .await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rotate without code and without break-glass scope
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: None,
+            reason: Some("emergency rotation".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/rotate")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaRequired);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_rotate_breakglass_missing_reason() {
+        let (runtime, token_value) = test_runtime_with_token_scopes(vec![
+            "admin:mfa".to_string(),
+            "admin:mfa:breakglass".to_string(),
+        ])
+        .await;
+        let mut config = test_mfa_config();
+        config.auth_mode = AuthMode::Scoped;
+        let router = build_router_with_auth(runtime, config);
+
+        // Enroll
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/enroll")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let enroll_resp: ferrum_proto::MfaEnrollResponse = serde_json::from_slice(&body).unwrap();
+
+        // Verify to activate
+        let secret = extract_secret_from_otpauth(&enroll_resp.otpauth_uri);
+        let now = chrono::Utc::now().timestamp() as u64;
+        let code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_req = ferrum_proto::MfaVerifyRequest { code };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/verify")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rotate with break-glass scope but missing reason
+        let rotate_req = ferrum_proto::MfaRotateRequest {
+            code: None,
+            reason: None,
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/agent-1/mfa/rotate")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::ValidationError);
     }
 
     #[tokio::test]

@@ -160,11 +160,39 @@ pub struct MfaDisableResponse {
     pub disabled: bool,
 }
 
+/// Request body to disable an active MFA factor.
+///
+/// When an active factor exists, callers must either:
+/// - Provide the current `code` to re-verify TOTP, or
+/// - Provide a non-empty `reason` and have the `admin:mfa:breakglass` scope.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MfaDisableRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// Response after rotating an active MFA factor.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MfaRotateResponse {
     pub mfa_factor_id: MfaFactorId,
     pub otpauth_uri: String,
+}
+
+/// Request body to rotate an active MFA factor.
+///
+/// When an active factor exists, callers must either:
+/// - Provide the current `code` to re-verify TOTP, or
+/// - Provide a non-empty `reason` and have the `admin:mfa:breakglass` scope.
+///
+/// When no active factor exists, rotation proceeds like enrollment without re-verification.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MfaRotateRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Sanitized summary of an MFA credential for list/get routes.

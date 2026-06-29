@@ -5,9 +5,9 @@ use axum::{
     response::Response,
 };
 use ferrum_proto::{
-    ApiError, ApiErrorCode, AuditAction, AuditResourceType, MfaCredentialRecord,
+    ApiError, ApiErrorCode, AuditAction, AuditResourceType, MfaCredentialRecord, MfaDisableRequest,
     MfaDisableResponse, MfaEnrollResponse, MfaFactorListResponse, MfaFactorSummary, MfaFactorType,
-    MfaRotateResponse, MfaVerifyRequest, MfaVerifyResponse,
+    MfaRotateRequest, MfaRotateResponse, MfaVerifyRequest, MfaVerifyResponse,
 };
 use std::sync::Arc;
 
@@ -61,6 +61,149 @@ fn resolve_mfa_key(state: &AppState) -> Result<Vec<u8>, Response> {
                 &error,
             ))
         }
+    }
+}
+
+/// Verify the active factor's TOTP code or authorize a break-glass bypass.
+///
+/// When `code` is present, decrypts the active factor secret, verifies the TOTP code,
+/// and atomically records use via CAS. When `code` is absent, requires the actor to have
+/// the `admin:mfa:breakglass` scope (or `*`) and a non-empty `reason`.
+///
+/// Returns `Ok(())` on success, or an HTTP error `Response` on failure.
+async fn verify_or_breakglass(
+    state: &AppState,
+    active: &MfaCredentialRecord,
+    code: Option<String>,
+    reason: Option<String>,
+    auth_actor: Option<&AuthActor>,
+    route: GovernanceRoute,
+) -> Result<(), Response> {
+    if let Some(code) = code {
+        let key_bytes = match resolve_mfa_key(state) {
+            Ok(b) => b,
+            Err(response) => return Err(response),
+        };
+
+        let secret =
+            match mfa::decrypt_secret(&key_bytes, &active.encrypted_secret, &active.secret_nonce) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = %e, "mfa decrypt_secret failed");
+                    state.metrics.increment_governance_error(route);
+                    let error = ApiError {
+                        code: ApiErrorCode::Internal,
+                        message: "failed to decrypt MFA secret".to_string(),
+                        correlation_id: uuid::Uuid::new_v4().to_string(),
+                        retriable: false,
+                        details: serde_json::json!({}),
+                    };
+                    return Err(sanitized_api_error_response(
+                        &state.runtime.firewall,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &error,
+                    ));
+                }
+            };
+
+        let now = chrono::Utc::now().timestamp() as u64;
+        let matched_counter = match mfa::verify_totp_code_with_counter(&secret, &code, now) {
+            Ok(c) => c,
+            Err(_) => {
+                state.metrics.increment_governance_error(route);
+                let error = ApiError {
+                    code: ApiErrorCode::MfaInvalid,
+                    message: "invalid TOTP code".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                return Err(sanitized_api_error_response(
+                    &state.runtime.firewall,
+                    StatusCode::FORBIDDEN,
+                    &error,
+                ));
+            }
+        };
+
+        match state
+            .runtime
+            .store
+            .mfa_credentials()
+            .record_use(active.mfa_factor_id, matched_counter)
+            .await
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                state.metrics.increment_governance_error(route);
+                let error = ApiError {
+                    code: ApiErrorCode::MfaInvalid,
+                    message: "invalid TOTP code".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                Err(sanitized_api_error_response(
+                    &state.runtime.firewall,
+                    StatusCode::FORBIDDEN,
+                    &error,
+                ))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "mfa record_use failed");
+                state.metrics.increment_governance_error(route);
+                let error = ApiError {
+                    code: ApiErrorCode::Internal,
+                    message: "MFA state update failed".to_string(),
+                    correlation_id: uuid::Uuid::new_v4().to_string(),
+                    retriable: false,
+                    details: serde_json::json!({}),
+                };
+                Err(sanitized_api_error_response(
+                    &state.runtime.firewall,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error,
+                ))
+            }
+        }
+    } else {
+        let has_breakglass = auth_actor
+            .map(|a| a.has_scope("admin:mfa:breakglass"))
+            .unwrap_or(false);
+        if !has_breakglass {
+            state.metrics.increment_governance_error(route);
+            let error = ApiError {
+                code: ApiErrorCode::MfaRequired,
+                message: "MFA code required or break-glass scope needed".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return Err(sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::FORBIDDEN,
+                &error,
+            ));
+        }
+
+        let reason = reason.unwrap_or_default();
+        if reason.trim().is_empty() {
+            state.metrics.increment_governance_error(route);
+            let error = ApiError {
+                code: ApiErrorCode::ValidationError,
+                message: "break-glass reason is required".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return Err(sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::BAD_REQUEST,
+                &error,
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -383,7 +526,12 @@ pub(crate) async fn disable_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
     auth_actor: Option<Extension<AuthActor>>,
+    req: Option<Json<MfaDisableRequest>>,
 ) -> Response {
+    let req = req.map(|j| j.0).unwrap_or(MfaDisableRequest {
+        code: None,
+        reason: None,
+    });
     let active = match state
         .runtime
         .store
@@ -429,6 +577,25 @@ pub(crate) async fn disable_mfa(
         }
     };
 
+    let is_reverify = req.code.is_some();
+    if let Err(response) = verify_or_breakglass(
+        &state,
+        &active,
+        req.code,
+        req.reason.clone(),
+        auth_actor.as_deref(),
+        GovernanceRoute::MfaDisable,
+    )
+    .await
+    {
+        return response;
+    }
+
+    let mode = if is_reverify {
+        "reverify"
+    } else {
+        "break_glass"
+    };
     match state
         .runtime
         .store
@@ -440,6 +607,21 @@ pub(crate) async fn disable_mfa(
             state
                 .metrics
                 .increment_governance_success(GovernanceRoute::MfaDisable);
+            let mut audit_details = serde_json::json!({
+                "agent_id": agent_id,
+                "mode": mode,
+            });
+            if let serde_json::Value::Object(ref mut map) = audit_details {
+                if mode == "reverify" {
+                    map.insert(
+                        "reverified_factor_id".to_string(),
+                        serde_json::Value::String(active.mfa_factor_id.to_string()),
+                    );
+                }
+                if let Some(reason) = req.reason {
+                    map.insert("reason".to_string(), serde_json::Value::String(reason));
+                }
+            }
             if let Err(problem) = audit::append_audit_checked(
                 &state,
                 audit_actor(auth_actor.as_deref()),
@@ -447,9 +629,7 @@ pub(crate) async fn disable_mfa(
                 AuditResourceType::MfaCredential,
                 &active.mfa_factor_id.to_string(),
                 "success",
-                Some(serde_json::json!({
-                    "agent_id": agent_id,
-                })),
+                Some(audit_details),
                 Some(GovernanceRoute::MfaDisable),
             )
             .await
@@ -497,13 +677,17 @@ pub(crate) async fn rotate_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
     auth_actor: Option<Extension<AuthActor>>,
+    req: Option<Json<MfaRotateRequest>>,
 ) -> Response {
+    let req = req.map(|j| j.0).unwrap_or(MfaRotateRequest {
+        code: None,
+        reason: None,
+    });
     let key_bytes = match resolve_mfa_key(&state) {
         Ok(b) => b,
         Err(response) => return response,
     };
 
-    // Revoke existing active factor
     let active = match state
         .runtime
         .store
@@ -533,7 +717,21 @@ pub(crate) async fn rotate_mfa(
         }
     };
 
-    if let Some(ref active) = active {
+    let (mode, previous_factor_id) = if let Some(ref active) = active {
+        let is_reverify = req.code.is_some();
+        if let Err(response) = verify_or_breakglass(
+            &state,
+            active,
+            req.code,
+            req.reason.clone(),
+            auth_actor.as_deref(),
+            GovernanceRoute::MfaRotate,
+        )
+        .await
+        {
+            return response;
+        }
+
         if let Err(e) = state
             .runtime
             .store
@@ -558,7 +756,16 @@ pub(crate) async fn rotate_mfa(
                 &error,
             );
         }
-    }
+
+        let mode = if is_reverify {
+            "reverify"
+        } else {
+            "break_glass"
+        };
+        (mode, Some(active.mfa_factor_id.to_string()))
+    } else {
+        ("no_active_factor", None)
+    };
 
     // Create new pending factor
     let secret = mfa::generate_totp_secret();
@@ -617,6 +824,29 @@ pub(crate) async fn rotate_mfa(
     state
         .metrics
         .increment_governance_success(GovernanceRoute::MfaRotate);
+    let mut audit_details = serde_json::json!({
+        "agent_id": agent_id,
+        "mode": mode,
+    });
+    if let serde_json::Value::Object(ref mut map) = audit_details {
+        if let Some(prev) = previous_factor_id {
+            map.insert(
+                "previous_factor_id".to_string(),
+                serde_json::Value::String(prev),
+            );
+        }
+        if let Some(reason) = req.reason {
+            map.insert("reason".to_string(), serde_json::Value::String(reason));
+        }
+        if mode == "reverify" {
+            if let Some(ref active) = active {
+                map.insert(
+                    "reverified_factor_id".to_string(),
+                    serde_json::Value::String(active.mfa_factor_id.to_string()),
+                );
+            }
+        }
+    }
     if let Err(problem) = audit::append_audit_checked(
         &state,
         audit_actor(auth_actor.as_deref()),
@@ -624,10 +854,7 @@ pub(crate) async fn rotate_mfa(
         AuditResourceType::MfaCredential,
         &mfa_factor_id.to_string(),
         "success",
-        Some(serde_json::json!({
-            "agent_id": agent_id,
-            "previous_factor_id": active.as_ref().map(|a| a.mfa_factor_id.to_string()),
-        })),
+        Some(audit_details),
         Some(GovernanceRoute::MfaRotate),
     )
     .await
