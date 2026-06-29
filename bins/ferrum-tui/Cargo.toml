@@ -20,7 +20,7 @@ ratatui = { version = "0.30.1", default-features = false, features = [
     "macros",
     "underline-color",
 ] }
-crossterm = "0.28"
+crossterm = "0.29"
 
 [dev-dependencies]
 tempfile.workspace = true
