@@ -1,15 +1,9 @@
-//! MFA verifier seam and cryptographic helpers.
+//! MFA cryptographic helpers.
 //!
-//! Phase 1 (ADR008): defines the `MfaVerifier` trait and a no-op placeholder
-//! implementation. No concrete factor verification (TOTP, WebAuthn, etc.) is
-//! wired yet. When `approval_mfa_required` is enabled, `resolve_approval` fails
-//! closed with `403 mfa_required` because client factor transport is not yet
-//! implemented.
-//!
-//! Phase 2 introduces TOTP helpers (secret generation, AES-256-GCM encryption,
-//! and RFC 6238 verification) behind this module. The admin routes use these
-//! helpers directly; the `MfaVerifier` trait will be wired to a store-backed
-//! implementation in a later slice.
+//! TOTP support is implemented (PR #209): the module provides RFC 6238 TOTP
+//! helpers (secret generation, AES-256-GCM encryption, verification, and
+//! otpauth URI building). Admin routes use these helpers directly. WebAuthn,
+//! backup codes, key rotation, and lockout remain deferred.
 
 use std::fmt;
 
@@ -41,33 +35,6 @@ impl fmt::Display for MfaError {
 }
 
 impl std::error::Error for MfaError {}
-
-/// Pluggable MFA verifier interface.
-///
-/// Implementations may perform TOTP, WebAuthn, or out-of-band cryptographic
-/// verification. The trait is `Send + Sync` so it can be held in `AppState`.
-pub trait MfaVerifier: Send + Sync {
-    /// Verify a second factor for the given actor.
-    ///
-    /// `factor` is an opaque payload whose interpretation is adapter-specific
-    /// (e.g. a TOTP code string, a WebAuthn assertion JSON blob, etc.).
-    fn verify(&self, actor_id: &str, factor: &str) -> Result<(), MfaError>;
-}
-
-/// No-op MFA verifier that accepts any factor.
-///
-/// This is a placeholder for Phase 1. It allows tests to exercise the seam
-/// without a real MFA backend. Production deployments should replace this with
-/// a concrete adapter (TOTP, WebAuthn, etc.) in Phase 2+.
-pub struct NoopMfaVerifier;
-
-impl MfaVerifier for NoopMfaVerifier {
-    fn verify(&self, _actor_id: &str, _factor: &str) -> Result<(), MfaError> {
-        // Placeholder: accepts any factor. Future adapters will perform
-        // real cryptographic or time-based verification here.
-        Ok(())
-    }
-}
 
 // ── TOTP cryptographic helpers ──
 
@@ -261,14 +228,6 @@ pub fn decode_hex_key(hex_key: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_noop_mfa_verifier_accepts_any_factor() {
-        let verifier = NoopMfaVerifier;
-        assert!(verifier.verify("actor-1", "123456").is_ok());
-        assert!(verifier.verify("actor-2", "totp-code").is_ok());
-        assert!(verifier.verify("actor-3", "").is_ok());
-    }
 
     #[test]
     fn test_mfa_error_display() {

@@ -18,12 +18,13 @@ use crate::{
     state::AppState,
 };
 
-// ── Admin MFA Handlers ──
-
-pub(crate) async fn enroll_mfa(
-    State(state): State<Arc<AppState>>,
-    Path(agent_id): Path<String>,
-) -> Response {
+/// Resolve and decode the MFA secret key from server config.
+///
+/// Returns the 32-byte key on success, or an HTTP `Response` with
+/// `Misconfigured` on failure. Used by enroll, verify, and rotate
+/// to keep the lookup/decode block identical and fail-closed.
+#[allow(clippy::result_large_err)]
+fn resolve_mfa_key(state: &AppState) -> Result<Vec<u8>, Response> {
     let key_hex = match &state.server_config.mfa_secret_key {
         Some(k) => k,
         None => {
@@ -34,16 +35,16 @@ pub(crate) async fn enroll_mfa(
                 retriable: false,
                 details: serde_json::json!({}),
             };
-            return sanitized_api_error_response(
+            return Err(sanitized_api_error_response(
                 &state.runtime.firewall,
                 StatusCode::FORBIDDEN,
                 &error,
-            );
+            ));
         }
     };
 
-    let key_bytes = match mfa::decode_hex_key(key_hex) {
-        Ok(b) => b,
+    match mfa::decode_hex_key(key_hex) {
+        Ok(b) => Ok(b),
         Err(msg) => {
             let error = ApiError {
                 code: ApiErrorCode::Misconfigured,
@@ -52,12 +53,24 @@ pub(crate) async fn enroll_mfa(
                 retriable: false,
                 details: serde_json::json!({}),
             };
-            return sanitized_api_error_response(
+            Err(sanitized_api_error_response(
                 &state.runtime.firewall,
                 StatusCode::FORBIDDEN,
                 &error,
-            );
+            ))
         }
+    }
+}
+
+// ── Admin MFA Handlers ──
+
+pub(crate) async fn enroll_mfa(
+    State(state): State<Arc<AppState>>,
+    Path(agent_id): Path<String>,
+) -> Response {
+    let key_bytes = match resolve_mfa_key(&state) {
+        Ok(b) => b,
+        Err(response) => return response,
     };
 
     let secret = mfa::generate_totp_secret();
@@ -148,40 +161,9 @@ pub(crate) async fn verify_mfa(
     Path(agent_id): Path<String>,
     Json(req): Json<MfaVerifyRequest>,
 ) -> Response {
-    let key_hex = match &state.server_config.mfa_secret_key {
-        Some(k) => k,
-        None => {
-            let error = ApiError {
-                code: ApiErrorCode::Misconfigured,
-                message: "mfa_secret_key is not configured".to_string(),
-                correlation_id: uuid::Uuid::new_v4().to_string(),
-                retriable: false,
-                details: serde_json::json!({}),
-            };
-            return sanitized_api_error_response(
-                &state.runtime.firewall,
-                StatusCode::FORBIDDEN,
-                &error,
-            );
-        }
-    };
-
-    let key_bytes = match mfa::decode_hex_key(key_hex) {
+    let key_bytes = match resolve_mfa_key(&state) {
         Ok(b) => b,
-        Err(msg) => {
-            let error = ApiError {
-                code: ApiErrorCode::Misconfigured,
-                message: msg,
-                correlation_id: uuid::Uuid::new_v4().to_string(),
-                retriable: false,
-                details: serde_json::json!({}),
-            };
-            return sanitized_api_error_response(
-                &state.runtime.firewall,
-                StatusCode::FORBIDDEN,
-                &error,
-            );
-        }
+        Err(response) => return response,
     };
 
     // Find the most recent pending factor for the agent
@@ -262,22 +244,71 @@ pub(crate) async fn verify_mfa(
         };
 
     let now = chrono::Utc::now().timestamp() as u64;
-    if mfa::verify_totp_code(&secret, &req.code, now).is_err() {
-        state
-            .metrics
-            .increment_governance_error(GovernanceRoute::MfaVerify);
-        let error = ApiError {
-            code: ApiErrorCode::Forbidden,
-            message: "invalid TOTP code".to_string(),
-            correlation_id: uuid::Uuid::new_v4().to_string(),
-            retriable: false,
-            details: serde_json::json!({}),
-        };
-        return sanitized_api_error_response(
-            &state.runtime.firewall,
-            StatusCode::FORBIDDEN,
-            &error,
-        );
+    let matched_counter = match mfa::verify_totp_code_with_counter(&secret, &req.code, now) {
+        Ok(c) => c,
+        Err(_) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::MfaVerify);
+            let error = ApiError {
+                code: ApiErrorCode::MfaInvalid,
+                message: "invalid TOTP code".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::FORBIDDEN,
+                &error,
+            );
+        }
+    };
+
+    // Record successful use with counter for replay protection (CAS in DB)
+    match state
+        .runtime
+        .store
+        .mfa_credentials()
+        .record_use(record.mfa_factor_id, matched_counter)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::MfaVerify);
+            let error = ApiError {
+                code: ApiErrorCode::MfaInvalid,
+                message: "invalid TOTP code".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::FORBIDDEN,
+                &error,
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "mfa record_use failed during verify");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::MfaVerify);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "MFA state update failed".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &error,
+            );
+        }
     }
 
     match state
@@ -461,40 +492,9 @@ pub(crate) async fn rotate_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
 ) -> Response {
-    let key_hex = match &state.server_config.mfa_secret_key {
-        Some(k) => k,
-        None => {
-            let error = ApiError {
-                code: ApiErrorCode::Misconfigured,
-                message: "mfa_secret_key is not configured".to_string(),
-                correlation_id: uuid::Uuid::new_v4().to_string(),
-                retriable: false,
-                details: serde_json::json!({}),
-            };
-            return sanitized_api_error_response(
-                &state.runtime.firewall,
-                StatusCode::FORBIDDEN,
-                &error,
-            );
-        }
-    };
-
-    let key_bytes = match mfa::decode_hex_key(key_hex) {
+    let key_bytes = match resolve_mfa_key(&state) {
         Ok(b) => b,
-        Err(msg) => {
-            let error = ApiError {
-                code: ApiErrorCode::Misconfigured,
-                message: msg,
-                correlation_id: uuid::Uuid::new_v4().to_string(),
-                retriable: false,
-                details: serde_json::json!({}),
-            };
-            return sanitized_api_error_response(
-                &state.runtime.firewall,
-                StatusCode::FORBIDDEN,
-                &error,
-            );
-        }
+        Err(response) => return response,
     };
 
     // Revoke existing active factor

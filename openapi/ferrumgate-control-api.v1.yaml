@@ -1140,7 +1140,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/AgentId'
       responses:
-        '200':
+        '201':
           description: MFA factor enrolled
           content:
             application/json:

@@ -35,6 +35,7 @@ Feature-complete for standard use; local and CI-validated:
 - Prometheus metrics; rate limiting; Helm chart
 - Store-backed `CapabilityService` for production capability mint/get/revoke/use paths, with in-memory service retained for tests/dev
 - Schema-drift checker that refuses startup when the database schema version is newer than the binary-supported version
+- **MFA TOTP second factor** — TOTP verification for high-risk approval resolution; includes enrollment replay CAS, key parsing cleanup, admin route tests, store counter overflow guard, active lookup index migrations, and Postgres MFA repo tests
 
 ## Beta
 
@@ -54,8 +55,6 @@ These are **deferred to upcoming separate PRs**. They are not implemented and ha
 
 - **Approval timeout / auto-deny** — Auto-deny stale approvals after a configurable timeout. See ADR 008 (separate PR from MFA).
   - Acceptance: `approval_timeout_seconds` parsed/validated; pending approvals transition to `timed_out`; reflected in lifecycle outbox and CLI.
-- **MFA TOTP second factor** — TOTP verification for high-risk approval resolution. See ADR 008 (separate PR from approval timeout).
-  - Acceptance: `MfaVerifier` trait with TOTP implementation behind `mfa-totp` feature; `approval_mfa_required` config; resolve endpoint returns `403` with `mfa_required` when factor missing/invalid.
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access. See ADR 009.
   - Acceptance: `ferrumctl audit export` produces `.jsonl` + `manifest.json`; `ferrumctl audit verify` checks hash chain and Merkle root.
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
@@ -85,6 +84,10 @@ These require broader design decisions, additional evidence, or an ADR before th
 - **HA leader election** — Distributed leader election for coordinated multi-node operations beyond per-task reconciliation leases. Not implemented; requires PostgreSQL HA design.
 - **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.
+- **Admin audit actor identity** — Authenticated actor identity in admin audit endpoints. Cross-cutting auth context; requires ADR and separate PR.
+- **TOTP disable/rotate and break-glass** — Disable or rotate current TOTP factor and break-glass semantics. Requires API/ADR review; separate PR.
+- **Per-factor/per-agent lockout** — Failed-attempt lockout per factor or per agent. Requires schema, config, and API changes; separate PR.
+- **Stress coverage / server.rs refactor** — Broad stress scenario coverage and `server.rs`/`execution.rs` refactors. Separate quality/refactor PR.
 
 ## Not implemented / out of scope
 

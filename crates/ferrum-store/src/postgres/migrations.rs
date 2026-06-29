@@ -122,12 +122,20 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/011_add_mfa_credentials.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 12,
+        name: "012_add_mfa_credentials_active_index",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/012_add_mfa_credentials_active_index.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 11;
+pub const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 #[cfg(test)]
 mod tests {
