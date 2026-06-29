@@ -60,7 +60,7 @@ fn row_to_record(row: &sqlx::postgres::PgRow) -> Result<MfaCredentialRecord> {
         })
         .transpose()?;
 
-    let failed_attempts: i64 = row.try_get("failed_attempts")?;
+    let failed_attempts: i32 = row.try_get("failed_attempts")?;
     let locked_until_str: Option<String> = row.try_get("locked_until")?;
     let locked_until = locked_until_str
         .map(|s| {
@@ -79,7 +79,7 @@ fn row_to_record(row: &sqlx::postgres::PgRow) -> Result<MfaCredentialRecord> {
         })
         .transpose()?;
 
-    let lockout_count: i64 = row.try_get("lockout_count")?;
+    let lockout_count: i32 = row.try_get("lockout_count")?;
 
     let raw_json_str: String = row.try_get("raw_json")?;
     let raw_json: serde_json::Value = serde_json::from_str(&raw_json_str)
@@ -135,10 +135,10 @@ impl MfaCredentialRepo for PostgresMfaCredentialRepo {
         .bind(record.last_used_at.map(|t| t.to_rfc3339()))
         .bind(record.last_used_counter.map(|c| c as i64))
         .bind(record.revoked_at.map(|t| t.to_rfc3339()))
-        .bind(record.failed_attempts as i64)
+        .bind(record.failed_attempts as i32)
         .bind(record.locked_until.map(|t| t.to_rfc3339()))
         .bind(record.last_failed_at.map(|t| t.to_rfc3339()))
-        .bind(record.lockout_count as i64)
+        .bind(record.lockout_count as i32)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -264,7 +264,7 @@ impl MfaCredentialRepo for PostgresMfaCredentialRepo {
              WHERE mfa_factor_id = $4",
         )
         .bind(now_str)
-        .bind(max_attempts as i64)
+        .bind(max_attempts as i32)
         .bind(locked_until_str)
         .bind(mfa_factor_id.to_string())
         .execute(&self.pool)
