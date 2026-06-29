@@ -33,7 +33,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Turnkey HA product | Not implemented | Operator must design HA topology |
 | Store-backed CapabilityService | Not implemented | Deferred to separate PR |
 | PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
-| MFA TOTP | Not implemented | Deferred to separate PR |
+| MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; WebAuthn/backup codes/lockout deferred |
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
 | WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
 | Behavioral anomaly detection | Not implemented | Backlog; see ADR 010 |

@@ -1324,7 +1324,7 @@ mod tests {
                 .fetch_one(store.pool())
                 .await
                 .unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
     }
 
     #[tokio::test]

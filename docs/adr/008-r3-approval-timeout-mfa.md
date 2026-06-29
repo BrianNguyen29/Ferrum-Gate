@@ -1,7 +1,7 @@
 # ADR 008 — R3 Approval Timeout and Second Factor
 
 ## Status
-Proposed (Phase 1 MFA stub completed; split into **separate PRs** — approval timeout auto-deny; MFA TOTP adapter)
+Accepted (TOTP implemented in PR #209; approval timeout auto-deny, WebAuthn, backup codes, key rotation, and lockout deferred)
 
 ## Context
 
@@ -22,12 +22,12 @@ Propose two independent but complementary controls, each targeting a **separate 
 - A background task (or cron-like reconciliation) evaluates pending approvals on a configurable interval (`approval_reconciliation_interval_seconds`, default `300`).
 - Metrics: `ferrumgate_approval_timeouts_total`.
 
-### 2. Second-factor confirmation / MFA TOTP (separate PR)
+### 2. Second-factor confirmation / MFA TOTP (implemented in PR #209)
 - Introduce an optional `approval_mfa_required: bool` (config default `false`).
 - When enabled, the `POST /v1/approvals/{id}/resolve` endpoint requires a second factor in addition to the scoped token.
 - The second factor is **pluggable by design**: a TOTP code, a WebAuthn assertion, or an out-of-band cryptographic acknowledge (e.g., signed JWT from a separate identity provider).
-- Phase 1 (completed): document the interface (`MfaVerifier` trait) and provide a no-op implementation. `approval_mfa_required` is parsed and wired; when enabled the endpoint returns `403 MfaRequired` because client factor transport is not yet modeled.
-- Phase 2 (separate PR): implement TOTP verification as the first concrete adapter.
+- Phase 1 (completed): document the interface and provide module-level helpers. `approval_mfa_required` is parsed and wired; when enabled the endpoint returns `403 MfaRequired` if the `mfa_factor.code` is missing in the resolve request, or `MfaInvalid` if the TOTP code is wrong. (The earlier no-op trait seam was removed in post-MFA-hardening cleanup; TOTP is now implemented directly via module helpers.)
+- Phase 2 (implemented in PR #209): TOTP verification is the first concrete adapter. Admin routes (`/v1/admin/agents/{agent_id}/mfa/*`) support enrollment, verification, disable, rotate, and list. Secrets are AES-256-GCM encrypted at rest.
 - Phase 3 (future): operator-provided WebAuthn or IdP integration.
 
 Both controls are opt-in to preserve backward compatibility.
@@ -45,11 +45,11 @@ Both controls are opt-in to preserve backward compatibility.
 1. Approval timeout config is parsed, validated (min `60`, max `86400`), and applied.
 2. Pending approvals exceeding the timeout are transitioned to `timed_out` with an audit entry.
 3. Timeout rejections are reflected in the lifecycle outbox and CLI (`ferrumctl admin approvals`).
-4. `MfaVerifier` trait is defined with a `verify(actor_id, factor_payload) -> Result<(), MfaError>` interface. ✅ Phase 1
-5. No-op and TOTP implementations exist behind a feature gate (`mfa-totp`). (No-op complete; TOTP deferred to Phase 2)
-6. When `approval_mfa_required=true`, approval resolve returns `403` with `mfa_required` detail if the second factor is missing or invalid. ✅ Phase 1 (fails closed because client factor transport is not yet modeled)
+4. TOTP verification interface is defined and implemented. ✅ Phase 1 & 2
+5. TOTP is implemented directly via module helpers. (The earlier no-op trait seam was removed in post-MFA-hardening cleanup.)
+6. When `approval_mfa_required=true`, approval resolve returns `403` with `mfa_required` detail if the second factor is missing or invalid, and `MfaInvalid` if the code is wrong. ✅ TOTP implemented
 7. Documentation updated: `docs/guides/security-model.md`, `docs/operations/runbook.md`, and `docs/security/threat-model-stride.md`.
-8. Integration tests cover timeout and MFA rejection paths. ✅ Phase 1 MFA stub tests added
+8. Integration tests cover timeout and MFA rejection paths (invalid, valid, replay). ✅ Real TOTP tests
 
 ## Non-goals
 

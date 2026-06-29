@@ -44,7 +44,7 @@
 - Revoked token returns 401 (SEC-4).
 - Expired token returns 401 (SEC-5).
 - Audit log records actor, action, and result for current scope (SEC-6).
-- R3 approval requires explicit operator resolve (SEC-7); MFA stub implemented (ADR 008 Phase 1); timeout auto-deny pending.
+- R3 approval requires explicit operator resolve (SEC-7); MFA TOTP implemented for approval resolve when enabled; timeout auto-deny pending.
 - Tenant A cannot read tenant B data — not available by single-tenant design decision; no multi-tenant claim.
 
 ## Bearer auth hardening
@@ -140,7 +140,7 @@ Tenant
 - `approval:resolve`
 - `policy:read`, `policy:write`
 - `provenance:read`
-- `admin:tokens`, `admin:config`
+- `admin:tokens`, `admin:config`, `admin:mfa`
 - `backup:run`
 
 ## Hardening checklist

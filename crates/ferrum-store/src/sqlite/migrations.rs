@@ -72,8 +72,13 @@ pub const INIT_MIGRATION: &str = concat!(
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/migrations/015_add_mfa_credentials.sql"
+    )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/016_add_mfa_credentials_active_index.sql"
     ))
 );
 
 /// Current schema version for the SQLite embedded migration.
-pub const CURRENT_SCHEMA_VERSION: i64 = 15;
+pub const CURRENT_SCHEMA_VERSION: i64 = 16;

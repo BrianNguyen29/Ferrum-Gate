@@ -38,6 +38,8 @@ pg_acquire_timeout_secs = 5
 
 # ── MFA Configuration (optional) ──
 # mfa_secret_key is loaded from FERRUMD_MFA_SECRET_KEY env var if not set here.
+# Must be exactly 64 hex characters (32 bytes). Generate with: openssl rand -hex 32
+# approval_mfa_required = false
 # mfa_totp_issuer controls the name shown in authenticator apps.
 # mfa_secret_key = "dev-only-key"
 # mfa_totp_issuer = "FerrumGate Dev"

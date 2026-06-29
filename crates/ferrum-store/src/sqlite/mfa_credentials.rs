@@ -196,6 +196,12 @@ impl MfaCredentialRepo for SqliteMfaCredentialRepo {
         mfa_factor_id: ferrum_proto::MfaFactorId,
         counter: u64,
     ) -> Result<bool> {
+        if counter > i64::MAX as u64 {
+            return Err(crate::StoreError::InvalidState(format!(
+                "counter {} exceeds i64::MAX",
+                counter
+            )));
+        }
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(
             "UPDATE mfa_credentials SET last_used_at = ?1, last_used_counter = ?2 WHERE mfa_factor_id = ?3 AND (last_used_counter IS NULL OR last_used_counter < ?2)",
@@ -316,6 +322,26 @@ mod tests {
         assert!(!repo.record_use(record.mfa_factor_id, 41).await.unwrap());
         // Higher counter should succeed
         assert!(repo.record_use(record.mfa_factor_id, 43).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_mfa_credential_record_use_rejects_overflow() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = MfaCredentialRecord::new("agent-1", MfaFactorType::Totp, "s", "n", "k");
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        let err = repo
+            .record_use(record.mfa_factor_id, i64::MAX as u64 + 1)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::StoreError::InvalidState(_)),
+            "expected InvalidState for counter overflow, got: {}",
+            err
+        );
     }
 
     #[tokio::test]

@@ -49,6 +49,8 @@ pg_acquire_timeout_secs = 5
 # ── MFA Configuration (optional) ──
 # mfa_secret_key should be set via FERRUMD_MFA_SECRET_KEY environment variable
 # in production to avoid committing secrets to version control.
+# Must be exactly 64 hex characters (32 bytes). Generate with: openssl rand -hex 32
+# approval_mfa_required = false
 # mfa_totp_issuer = "FerrumGate"
 
 # ── OIDC Configuration (Phase 4.4) ──

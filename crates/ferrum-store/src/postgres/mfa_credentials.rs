@@ -196,6 +196,12 @@ impl MfaCredentialRepo for PostgresMfaCredentialRepo {
         mfa_factor_id: ferrum_proto::MfaFactorId,
         counter: u64,
     ) -> Result<bool> {
+        if counter > i64::MAX as u64 {
+            return Err(crate::StoreError::InvalidState(format!(
+                "counter {} exceeds i64::MAX",
+                counter
+            )));
+        }
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(
             "UPDATE mfa_credentials SET last_used_at = $1, last_used_counter = $2 WHERE mfa_factor_id = $3 AND (last_used_counter IS NULL OR last_used_counter < $2)",

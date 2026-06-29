@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 11);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 12);
     }
 
     #[test]
@@ -737,5 +737,212 @@ mod tests {
         repo.revoke(record.mfa_factor_id).await.unwrap();
         let revoked = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
         assert_eq!(revoked.status, ferrum_proto::MfaFactorStatus::Inactive);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_get_active_for_agent() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "encrypted-secret-b64",
+            "nonce-b64",
+            "key-1",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Pending is not active
+        let active = repo.get_active_for_agent("agent-1").await.unwrap();
+        assert!(active.is_none());
+
+        // Activate it
+        repo.activate(record.mfa_factor_id).await.unwrap();
+        let active = repo.get_active_for_agent("agent-1").await.unwrap();
+        assert!(active.is_some());
+        assert_eq!(
+            active.unwrap().status,
+            ferrum_proto::MfaFactorStatus::Active
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_list_by_agent() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let repo = store.mfa_credentials();
+        let r1 = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s1",
+            "n1",
+            "k1",
+        );
+        let r2 = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s2",
+            "n2",
+            "k2",
+        );
+        repo.insert(&r1).await.unwrap();
+        repo.insert(&r2).await.unwrap();
+
+        let list = repo.list_by_agent("agent-1").await.unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_record_use() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        assert!(repo.record_use(record.mfa_factor_id, 42).await.unwrap());
+        let retrieved = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(retrieved.last_used_at.is_some());
+        assert_eq!(retrieved.last_used_counter, Some(42));
+
+        // Same counter should fail (CAS replay protection)
+        assert!(!repo.record_use(record.mfa_factor_id, 42).await.unwrap());
+        // Lower counter should also fail
+        assert!(!repo.record_use(record.mfa_factor_id, 41).await.unwrap());
+        // Higher counter should succeed
+        assert!(repo.record_use(record.mfa_factor_id, 43).await.unwrap());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_record_use_rejects_overflow() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        let err = repo
+            .record_use(record.mfa_factor_id, i64::MAX as u64 + 1)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::StoreError::InvalidState(_)),
+            "expected InvalidState for counter overflow, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_revoke() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        assert!(repo.revoke(record.mfa_factor_id).await.unwrap());
+        let retrieved = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(retrieved.status, ferrum_proto::MfaFactorStatus::Inactive);
+        assert!(retrieved.revoked_at.is_some());
+
+        // Idempotent: revoking again should return false
+        assert!(!repo.revoke(record.mfa_factor_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_activate_revokes_existing_active_factor() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record1 = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s1",
+            "n1",
+            "k1",
+        );
+        let record2 = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s2",
+            "n2",
+            "k2",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record1).await.unwrap();
+        repo.insert(&record2).await.unwrap();
+
+        // Activate first factor
+        assert!(repo.activate(record1.mfa_factor_id).await.unwrap());
+        let active1 = repo.get(record1.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(active1.status, ferrum_proto::MfaFactorStatus::Active);
+
+        // Activate second factor - should revoke the first one
+        assert!(repo.activate(record2.mfa_factor_id).await.unwrap());
+        let active2 = repo.get(record2.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(active2.status, ferrum_proto::MfaFactorStatus::Active);
+
+        // First factor should now be inactive
+        let revoked1 = repo.get(record1.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(revoked1.status, ferrum_proto::MfaFactorStatus::Inactive);
+        assert!(revoked1.revoked_at.is_some());
+
+        // Only one active factor per agent
+        let active = repo.get_active_for_agent("agent-1").await.unwrap().unwrap();
+        assert_eq!(active.mfa_factor_id, record2.mfa_factor_id);
     }
 }
