@@ -20,9 +20,9 @@ use axum::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, ApprovalId, ApprovalListEnvelope, ApprovalResolveRequest,
-    ApprovalState, AuditAction, AuditResourceType, EventId, HashChainRef, MfaFactorStatus,
-    ObjectRef, ObjectType, ProvenanceEvent, ProvenanceEventKind,
+    ActorRef, ActorType, ApiError, ApiErrorCode, ApprovalId, ApprovalListEnvelope,
+    ApprovalResolveRequest, ApprovalState, AuditAction, AuditResourceType, EventId, HashChainRef,
+    MfaFactorStatus, ObjectRef, ObjectType, ProvenanceEvent, ProvenanceEventKind,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -400,6 +400,29 @@ pub(crate) async fn resolve_approval(
             );
         }
 
+        // Check lockout before attempting verification.
+        if let Some(locked_until) = record.locked_until {
+            let now = chrono::Utc::now();
+            if locked_until > now {
+                let retry_after_secs = (locked_until - now).num_seconds().max(0) as u64;
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem(
+                        ApiError {
+                            code: ApiErrorCode::MfaLocked,
+                            message: "MFA factor is locked due to too many failed attempts"
+                                .to_string(),
+                            correlation_id: uuid::Uuid::new_v4().to_string(),
+                            retriable: false,
+                            details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
+                        },
+                        StatusCode::FORBIDDEN,
+                    )
+                );
+            }
+        }
+
         let secret = match crate::mfa::decrypt_secret(
             &key_bytes,
             &record.encrypted_secret,
@@ -439,6 +462,35 @@ pub(crate) async fn resolve_approval(
         let matched_counter = match crate::mfa::verify_totp_code_with_counter(&secret, code, now) {
             Ok(c) => c,
             Err(_) => {
+                let repo = state.runtime.store.mfa_credentials();
+                let locked = repo
+                    .record_failed_attempt(
+                        mfa_factor.id,
+                        state.server_config.mfa_lockout_max_attempts,
+                        state.server_config.mfa_lockout_duration_secs,
+                    )
+                    .await;
+                if let Ok(true) = locked {
+                    let retry_after_secs = state.server_config.mfa_lockout_duration_secs;
+                    return governance_err!(
+                        state,
+                        GovernanceRoute::ApprovalsResolve,
+                        ApiProblem(
+                            ApiError {
+                                code: ApiErrorCode::MfaLocked,
+                                message: "MFA factor is locked due to too many failed attempts"
+                                    .to_string(),
+                                correlation_id: uuid::Uuid::new_v4().to_string(),
+                                retriable: false,
+                                details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
+                            },
+                            StatusCode::FORBIDDEN,
+                        )
+                    );
+                }
+                if let Err(ref e) = locked {
+                    tracing::warn!(error = %e, "record_failed_attempt failed during approval resolve");
+                }
                 return governance_err!(
                     state,
                     GovernanceRoute::ApprovalsResolve,
@@ -450,6 +502,17 @@ pub(crate) async fn resolve_approval(
                 );
             }
         };
+
+        // Reset lockout on successful verification.
+        if let Err(e) = state
+            .runtime
+            .store
+            .mfa_credentials()
+            .reset_lockout(mfa_factor.id)
+            .await
+        {
+            tracing::warn!(error = %e, "reset_lockout failed during approval resolve");
+        }
 
         // Record successful use with counter for replay protection (CAS in DB)
         match state

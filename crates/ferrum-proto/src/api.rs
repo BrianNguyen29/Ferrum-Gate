@@ -157,6 +157,7 @@ pub enum ApiErrorCode {
     PayloadTooLarge,
     MfaRequired,
     MfaInvalid,
+    MfaLocked,
     Misconfigured,
 }
 

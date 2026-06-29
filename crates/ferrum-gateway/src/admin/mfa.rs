@@ -64,6 +64,30 @@ fn resolve_mfa_key(state: &AppState) -> Result<Vec<u8>, Response> {
     }
 }
 
+/// Build a standardized `MfaLocked` error response with `retry_after_seconds`.
+fn mfa_locked_response(state: &AppState, retry_after_secs: u64) -> Response {
+    let error = ApiError {
+        code: ApiErrorCode::MfaLocked,
+        message: "MFA factor is locked due to too many failed attempts".to_string(),
+        correlation_id: uuid::Uuid::new_v4().to_string(),
+        retriable: false,
+        details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
+    };
+    sanitized_api_error_response(&state.runtime.firewall, StatusCode::FORBIDDEN, &error)
+}
+
+/// Check whether an MFA factor is currently locked and return an error response if so.
+fn check_mfa_lockout(state: &AppState, record: &MfaCredentialRecord) -> Option<Response> {
+    if let Some(locked_until) = record.locked_until {
+        let now = chrono::Utc::now();
+        if locked_until > now {
+            let retry_after_secs = (locked_until - now).num_seconds().max(0) as u64;
+            return Some(mfa_locked_response(state, retry_after_secs));
+        }
+    }
+    None
+}
+
 /// Verify the active factor's TOTP code or authorize a break-glass bypass.
 ///
 /// When `code` is present, decrypts the active factor secret, verifies the TOTP code,
@@ -80,6 +104,12 @@ async fn verify_or_breakglass(
     route: GovernanceRoute,
 ) -> Result<(), Response> {
     if let Some(code) = code {
+        // Check lockout before attempting verification.
+        if let Some(response) = check_mfa_lockout(state, active) {
+            state.metrics.increment_governance_error(route);
+            return Err(response);
+        }
+
         let key_bytes = match resolve_mfa_key(state) {
             Ok(b) => b,
             Err(response) => return Err(response),
@@ -111,6 +141,21 @@ async fn verify_or_breakglass(
             Ok(c) => c,
             Err(_) => {
                 state.metrics.increment_governance_error(route);
+                let repo = state.runtime.store.mfa_credentials();
+                let locked = repo
+                    .record_failed_attempt(
+                        active.mfa_factor_id,
+                        state.server_config.mfa_lockout_max_attempts,
+                        state.server_config.mfa_lockout_duration_secs,
+                    )
+                    .await;
+                if let Ok(true) = locked {
+                    let retry_after_secs = state.server_config.mfa_lockout_duration_secs;
+                    return Err(mfa_locked_response(state, retry_after_secs));
+                }
+                if let Err(ref e) = locked {
+                    tracing::warn!(error = %e, "record_failed_attempt failed during MFA verification");
+                }
                 let error = ApiError {
                     code: ApiErrorCode::MfaInvalid,
                     message: "invalid TOTP code".to_string(),
@@ -125,6 +170,17 @@ async fn verify_or_breakglass(
                 ));
             }
         };
+
+        // Reset lockout on successful verification.
+        if let Err(e) = state
+            .runtime
+            .store
+            .mfa_credentials()
+            .reset_lockout(active.mfa_factor_id)
+            .await
+        {
+            tracing::warn!(error = %e, "reset_lockout failed during MFA verification");
+        }
 
         match state
             .runtime
@@ -367,6 +423,14 @@ pub(crate) async fn verify_mfa(
         }
     };
 
+    // Check lockout before attempting verification.
+    if let Some(response) = check_mfa_lockout(&state, &record) {
+        state
+            .metrics
+            .increment_governance_error(GovernanceRoute::MfaVerify);
+        return response;
+    }
+
     let secret =
         match mfa::decrypt_secret(&key_bytes, &record.encrypted_secret, &record.secret_nonce) {
             Ok(s) => s,
@@ -397,6 +461,21 @@ pub(crate) async fn verify_mfa(
             state
                 .metrics
                 .increment_governance_error(GovernanceRoute::MfaVerify);
+            let repo = state.runtime.store.mfa_credentials();
+            let locked = repo
+                .record_failed_attempt(
+                    record.mfa_factor_id,
+                    state.server_config.mfa_lockout_max_attempts,
+                    state.server_config.mfa_lockout_duration_secs,
+                )
+                .await;
+            if let Ok(true) = locked {
+                let retry_after_secs = state.server_config.mfa_lockout_duration_secs;
+                return mfa_locked_response(&state, retry_after_secs);
+            }
+            if let Err(ref e) = locked {
+                tracing::warn!(error = %e, "record_failed_attempt failed during MFA verify");
+            }
             let error = ApiError {
                 code: ApiErrorCode::MfaInvalid,
                 message: "invalid TOTP code".to_string(),
@@ -412,7 +491,17 @@ pub(crate) async fn verify_mfa(
         }
     };
 
-    // Record successful use with counter for replay protection (CAS in DB)
+    // Reset lockout and record successful use with counter for replay protection (CAS in DB)
+    if let Err(e) = state
+        .runtime
+        .store
+        .mfa_credentials()
+        .reset_lockout(record.mfa_factor_id)
+        .await
+    {
+        tracing::warn!(error = %e, "reset_lockout failed during MFA verify");
+    }
+
     match state
         .runtime
         .store
@@ -913,6 +1002,10 @@ pub(crate) async fn list_mfa_factors(
             last_used_at: r.last_used_at,
             last_used_counter: r.last_used_counter,
             revoked_at: r.revoked_at,
+            failed_attempts: r.failed_attempts,
+            locked_until: r.locked_until,
+            last_failed_at: r.last_failed_at,
+            lockout_count: r.lockout_count,
         })
         .collect();
 
@@ -1004,6 +1097,10 @@ pub(crate) async fn get_mfa_factor(
         last_used_at: record.last_used_at,
         last_used_counter: record.last_used_counter,
         revoked_at: record.revoked_at,
+        failed_attempts: record.failed_attempts,
+        locked_until: record.locked_until,
+        last_failed_at: record.last_failed_at,
+        lockout_count: record.lockout_count,
     };
     sanitized_response(&state.runtime.firewall, StatusCode::OK, &summary)
 }

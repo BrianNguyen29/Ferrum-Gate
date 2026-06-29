@@ -1,7 +1,7 @@
 # ADR 008 — R3 Approval Timeout and Second Factor
 
 ## Status
-Accepted (TOTP implemented in PR #209; approval timeout auto-deny, WebAuthn, backup codes, key rotation, and lockout deferred)
+Accepted (TOTP implemented in PR #209; lockout implemented in PR #213; approval timeout auto-deny, WebAuthn, and backup codes remain deferred)
 
 ## Context
 

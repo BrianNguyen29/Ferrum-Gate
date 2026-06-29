@@ -60,6 +60,27 @@ fn row_to_record(row: &sqlx::sqlite::SqliteRow) -> Result<MfaCredentialRecord> {
         })
         .transpose()?;
 
+    let failed_attempts: i64 = row.try_get("failed_attempts")?;
+    let locked_until_str: Option<String> = row.try_get("locked_until")?;
+    let locked_until = locked_until_str
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| crate::StoreError::Other(format!("invalid locked_until: {}", e)))
+        })
+        .transpose()?;
+
+    let last_failed_at_str: Option<String> = row.try_get("last_failed_at")?;
+    let last_failed_at = last_failed_at_str
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| crate::StoreError::Other(format!("invalid last_failed_at: {}", e)))
+        })
+        .transpose()?;
+
+    let lockout_count: i64 = row.try_get("lockout_count")?;
+
     let raw_json_str: String = row.try_get("raw_json")?;
     let raw_json: serde_json::Value = serde_json::from_str(&raw_json_str)
         .map_err(|e| crate::StoreError::Other(format!("invalid raw_json: {}", e)))?;
@@ -81,6 +102,10 @@ fn row_to_record(row: &sqlx::sqlite::SqliteRow) -> Result<MfaCredentialRecord> {
         last_used_at,
         last_used_counter: last_used_counter.map(|c| c as u64),
         revoked_at,
+        failed_attempts: failed_attempts as u32,
+        locked_until,
+        last_failed_at,
+        lockout_count: lockout_count as u32,
         raw_json,
     })
 }
@@ -93,8 +118,9 @@ impl MfaCredentialRepo for SqliteMfaCredentialRepo {
             "INSERT INTO mfa_credentials (
                 mfa_factor_id, agent_id, factor_type, status,
                 encrypted_secret, secret_nonce, encryption_key_id, label,
-                created_at, verified_at, last_used_at, last_used_counter, revoked_at, raw_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                created_at, verified_at, last_used_at, last_used_counter, revoked_at,
+                failed_attempts, locked_until, last_failed_at, lockout_count, raw_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )
         .bind(record.mfa_factor_id.to_string())
         .bind(&record.agent_id)
@@ -109,6 +135,10 @@ impl MfaCredentialRepo for SqliteMfaCredentialRepo {
         .bind(record.last_used_at.map(|t| t.to_rfc3339()))
         .bind(record.last_used_counter.map(|c| c as i64))
         .bind(record.revoked_at.map(|t| t.to_rfc3339()))
+        .bind(record.failed_attempts as i64)
+        .bind(record.locked_until.map(|t| t.to_rfc3339()))
+        .bind(record.last_failed_at.map(|t| t.to_rfc3339()))
+        .bind(record.lockout_count as i64)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -208,6 +238,60 @@ impl MfaCredentialRepo for SqliteMfaCredentialRepo {
         )
         .bind(now)
         .bind(counter as i64)
+        .bind(mfa_factor_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn record_failed_attempt(
+        &self,
+        mfa_factor_id: ferrum_proto::MfaFactorId,
+        max_attempts: u32,
+        lockout_duration_secs: u64,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
+        let locked_until = now + chrono::Duration::seconds(lockout_duration_secs as i64);
+        let locked_until_str = locked_until.to_rfc3339();
+
+        // Atomically increment failed_attempts, set last_failed_at, and if threshold
+        // is reached, lock the factor and increment lockout_count.
+        let result = sqlx::query(
+            "UPDATE mfa_credentials
+             SET failed_attempts = failed_attempts + 1,
+                 last_failed_at = ?1,
+                 locked_until = CASE WHEN (failed_attempts + 1) >= ?2 THEN ?3 ELSE locked_until END,
+                 lockout_count = CASE WHEN (failed_attempts + 1) >= ?2 THEN lockout_count + 1 ELSE lockout_count END
+             WHERE mfa_factor_id = ?4",
+        )
+        .bind(now_str)
+        .bind(max_attempts as i64)
+        .bind(locked_until_str)
+        .bind(mfa_factor_id.to_string())
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+
+        // Check if the factor is now locked by reading it back.
+        let record = self.get(mfa_factor_id).await?;
+        let locked = record
+            .map(|r| r.locked_until.map(|lu| lu > now).unwrap_or(false))
+            .unwrap_or(false);
+        Ok(locked)
+    }
+
+    async fn reset_lockout(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE mfa_credentials
+             SET failed_attempts = 0,
+                 locked_until = NULL,
+                 last_failed_at = NULL
+             WHERE mfa_factor_id = ?1",
+        )
         .bind(mfa_factor_id.to_string())
         .execute(&self.pool)
         .await?;
@@ -391,6 +475,133 @@ mod tests {
         // Only one active factor per agent
         let active = repo.get_active_for_agent("agent-1").await.unwrap().unwrap();
         assert_eq!(active.mfa_factor_id, record2.mfa_factor_id);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_credential_record_failed_attempt_and_lockout() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = MfaCredentialRecord::new("agent-1", MfaFactorType::Totp, "s", "n", "k");
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // After 4 failed attempts, still not locked
+        for _ in 0..4 {
+            let locked = repo
+                .record_failed_attempt(record.mfa_factor_id, 5, 900)
+                .await
+                .unwrap();
+            assert!(!locked);
+        }
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 4);
+        assert!(r.locked_until.is_none());
+
+        // 5th attempt triggers lockout
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 5, 900)
+            .await
+            .unwrap();
+        assert!(locked);
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 5);
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.lockout_count, 1);
+        assert!(r.last_failed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mfa_credential_reset_lockout() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = MfaCredentialRecord::new("agent-1", MfaFactorType::Totp, "s", "n", "k");
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 900)
+            .await
+            .unwrap();
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 1);
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.lockout_count, 1);
+
+        repo.reset_lockout(record.mfa_factor_id).await.unwrap();
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 0);
+        assert!(r.locked_until.is_none());
+        assert!(r.last_failed_at.is_none());
+        assert_eq!(r.lockout_count, 1); // preserved
+    }
+
+    #[tokio::test]
+    async fn test_mfa_credential_lockout_then_expired() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = MfaCredentialRecord::new("agent-1", MfaFactorType::Totp, "s", "n", "k");
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Lock with 1 second duration
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+
+        // Wait for lock to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        let now = chrono::Utc::now();
+        // locked_until should be in the past
+        assert!(r.locked_until.map(|lu| lu <= now).unwrap_or(true));
+    }
+
+    #[tokio::test]
+    async fn test_mfa_credential_lockout_recovery_one_strike_relock() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = MfaCredentialRecord::new("agent-1", MfaFactorType::Totp, "s", "n", "k");
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Lock with 1 second duration
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.failed_attempts, 1);
+
+        // Wait for lock to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // After expiry, a single failed attempt re-locks immediately because
+        // failed_attempts is still 1 (equal to max_attempts). This is the
+        // post-expiry one-strike re-lock behavior.
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+        assert!(
+            locked,
+            "expected immediate re-lock after expiry with one strike"
+        );
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+        assert!(r.locked_until.unwrap() > chrono::Utc::now());
+        assert_eq!(r.lockout_count, 2);
     }
 
     #[tokio::test]
