@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -12,6 +12,7 @@ use ferrum_proto::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::auth_actor::{AuthActor, audit_actor};
 use crate::{
     audit, generate_token_salt, generate_token_value, hash_token_value, hash_token_with_salt,
     response::{sanitized_api_error_response, sanitized_response},
@@ -165,6 +166,7 @@ pub(crate) struct ListTokensQuery {
 pub(crate) async fn revoke_token(
     State(state): State<Arc<AppState>>,
     Path(token_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<RevokeTokenRequest>,
 ) -> Response {
     match state
@@ -178,7 +180,7 @@ pub(crate) async fn revoke_token(
             // Audit log: token revoked
             if let Err(problem) = audit::append_audit_checked(
                 &state,
-                "unknown",
+                audit_actor(auth_actor.as_deref()),
                 AuditAction::TokenRevoke,
                 AuditResourceType::Token,
                 &token_id,

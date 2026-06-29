@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::Response,
 };
@@ -12,7 +12,9 @@ use ferrum_proto::{
 use std::sync::Arc;
 
 use crate::{
-    audit, mfa,
+    audit,
+    auth_actor::{AuthActor, audit_actor},
+    mfa,
     monitoring::GovernanceRoute,
     response::{sanitized_api_error_response, sanitized_response},
     state::AppState,
@@ -67,6 +69,7 @@ fn resolve_mfa_key(state: &AppState) -> Result<Vec<u8>, Response> {
 pub(crate) async fn enroll_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Response {
     let key_bytes = match resolve_mfa_key(&state) {
         Ok(b) => b,
@@ -115,7 +118,7 @@ pub(crate) async fn enroll_mfa(
                 .increment_governance_success(GovernanceRoute::MfaEnroll);
             if let Err(problem) = audit::append_audit_checked(
                 &state,
-                "unknown",
+                audit_actor(auth_actor.as_deref()),
                 AuditAction::MfaEnroll,
                 AuditResourceType::MfaCredential,
                 &mfa_factor_id.to_string(),
@@ -159,6 +162,7 @@ pub(crate) async fn enroll_mfa(
 pub(crate) async fn verify_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<MfaVerifyRequest>,
 ) -> Response {
     let key_bytes = match resolve_mfa_key(&state) {
@@ -324,7 +328,7 @@ pub(crate) async fn verify_mfa(
                 .increment_governance_success(GovernanceRoute::MfaVerify);
             if let Err(problem) = audit::append_audit_checked(
                 &state,
-                "unknown",
+                audit_actor(auth_actor.as_deref()),
                 AuditAction::MfaVerify,
                 AuditResourceType::MfaCredential,
                 &record.mfa_factor_id.to_string(),
@@ -378,6 +382,7 @@ pub(crate) async fn verify_mfa(
 pub(crate) async fn disable_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Response {
     let active = match state
         .runtime
@@ -437,7 +442,7 @@ pub(crate) async fn disable_mfa(
                 .increment_governance_success(GovernanceRoute::MfaDisable);
             if let Err(problem) = audit::append_audit_checked(
                 &state,
-                "unknown",
+                audit_actor(auth_actor.as_deref()),
                 AuditAction::MfaDisable,
                 AuditResourceType::MfaCredential,
                 &active.mfa_factor_id.to_string(),
@@ -491,6 +496,7 @@ pub(crate) async fn disable_mfa(
 pub(crate) async fn rotate_mfa(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Response {
     let key_bytes = match resolve_mfa_key(&state) {
         Ok(b) => b,
@@ -613,7 +619,7 @@ pub(crate) async fn rotate_mfa(
         .increment_governance_success(GovernanceRoute::MfaRotate);
     if let Err(problem) = audit::append_audit_checked(
         &state,
-        "unknown",
+        audit_actor(auth_actor.as_deref()),
         AuditAction::MfaRotate,
         AuditResourceType::MfaCredential,
         &mfa_factor_id.to_string(),

@@ -3,6 +3,7 @@
 mod admin;
 mod approval;
 mod audit;
+mod auth_actor;
 mod bridge;
 mod capabilities;
 mod execution;
@@ -20,6 +21,7 @@ mod response;
 mod server;
 mod state;
 
+pub(crate) use auth_actor::AuthActor;
 pub use capabilities::StoreCapabilityService;
 pub use mfa::*;
 pub use server::*;

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crate::{
     audit,
+    auth_actor::{AuthActor, audit_actor},
     monitoring::GovernanceRoute,
     response::{sanitized_api_error_response, sanitized_response},
     state::AppState,
@@ -289,21 +290,17 @@ pub(crate) async fn list_agents(
 pub(crate) async fn revoke_agent(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<RevokeAgentRequest>,
 ) -> Response {
     match state.runtime.store.agents().revoke(&agent_id).await {
         Ok(true) => {
-            // NOTE: Audit actor is "unknown" because the auth middleware does not
-            // propagate authenticated actor identity to handlers via request
-            // extensions. This is consistent with revoke_token and other admin
-            // handlers. Improving this requires a broader auth-context plumbing
-            // change that is out of scope for this bounded follow-up.
             state
                 .metrics
                 .increment_governance_success(GovernanceRoute::AgentsRevoke);
             if let Err(problem) = audit::append_audit_checked(
                 &state,
-                "unknown",
+                audit_actor(auth_actor.as_deref()),
                 AuditAction::AgentRevoke,
                 AuditResourceType::Agent,
                 &agent_id,
