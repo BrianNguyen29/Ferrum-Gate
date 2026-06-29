@@ -785,14 +785,14 @@ mod tests {
 
         let repo = store.mfa_credentials();
         let r1 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-list-by-agent",
             ferrum_proto::MfaFactorType::Totp,
             "s1",
             "n1",
             "k1",
         );
         let r2 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-list-by-agent",
             ferrum_proto::MfaFactorType::Totp,
             "s2",
             "n2",
@@ -801,7 +801,7 @@ mod tests {
         repo.insert(&r1).await.unwrap();
         repo.insert(&r2).await.unwrap();
 
-        let list = repo.list_by_agent("agent-1").await.unwrap();
+        let list = repo.list_by_agent("agent-list-by-agent").await.unwrap();
         assert_eq!(list.len(), 2);
     }
 
