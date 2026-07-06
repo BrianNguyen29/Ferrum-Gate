@@ -46,6 +46,7 @@ fn clear_test_env() {
         "FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS",
         "FERRUMD_AUDIT_FAIL_CLOSED",
         "FERRUMD_APPROVAL_MFA_REQUIRED",
+        "FERRUMD_PDP_MODE",
         "FERRUMD_MFA_SECRET_KEY",
         "FERRUMD_MFA_TOTP_ISSUER",
         "FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS",
@@ -104,6 +105,7 @@ sqlite_db_roots = ["/from/file/databases"]
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -189,6 +191,7 @@ allow_insecure_nonlocal_bind = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -243,6 +246,7 @@ auth_mode = "bearer"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -296,6 +300,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -355,6 +360,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -414,6 +420,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -467,6 +474,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -519,6 +527,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -574,6 +583,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -629,6 +639,7 @@ rate_limit_burst = 100
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -684,6 +695,7 @@ rate_limit_burst = 100
         rate_limit_per_second: Some(10),
         rate_limit_burst: Some(200),
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -744,6 +756,7 @@ rate_limit_burst = 100
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -799,6 +812,7 @@ rate_limit_per_second = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -855,6 +869,7 @@ rate_limit_burst = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -911,6 +926,7 @@ rate_limit_burst = 20000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -966,6 +982,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1018,6 +1035,7 @@ log_format = "json"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1070,6 +1088,7 @@ log_format = "text"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: Some("json".to_string()),
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1126,6 +1145,7 @@ log_format = "text"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1179,6 +1199,7 @@ log_format = "invalid"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1231,6 +1252,7 @@ log_format = "compact"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1285,6 +1307,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1338,6 +1361,7 @@ write_queue_threshold = 500
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1391,6 +1415,7 @@ write_queue_threshold = 500
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: Some(200),
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1448,6 +1473,7 @@ write_queue_threshold = 500
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1501,6 +1527,7 @@ write_queue_threshold = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1557,6 +1584,7 @@ write_queue_threshold = 10001
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1614,6 +1642,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1670,6 +1699,7 @@ pg_acquire_timeout_secs = 10
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1732,6 +1762,7 @@ pg_acquire_timeout_secs = 10
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1790,6 +1821,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: Some(50),
         pg_min_idle: None,
@@ -1843,6 +1875,7 @@ pg_max_connections = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1899,6 +1932,7 @@ pg_acquire_timeout_secs = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1954,6 +1988,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2008,6 +2043,7 @@ pg_idle_in_transaction_timeout_ms = 7000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2067,6 +2103,7 @@ pg_idle_in_transaction_timeout_ms = 7000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2124,6 +2161,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2178,6 +2216,7 @@ pg_idle_in_transaction_timeout_ms = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2246,6 +2285,7 @@ fg-operators = "operator"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2349,6 +2389,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2431,6 +2472,7 @@ audiences = ["ferrumgate-test"]
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2494,6 +2536,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2559,6 +2602,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2632,6 +2676,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2687,6 +2732,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2747,6 +2793,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2800,6 +2847,7 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2856,6 +2904,7 @@ lifecycle_reconciliation_batch_limit = 200
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2912,6 +2961,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2966,6 +3016,7 @@ approval_reconciliation_interval_secs = 600
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3025,6 +3076,7 @@ approval_reconciliation_interval_secs = 600
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3083,6 +3135,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3138,6 +3191,7 @@ approval_timeout_seconds = 30
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3195,6 +3249,7 @@ approval_reconciliation_interval_secs = 1
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3250,6 +3305,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3303,6 +3359,7 @@ approval_timeout_enabled = true
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3357,6 +3414,7 @@ lifecycle_reconciliation_interval_secs = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3414,6 +3472,7 @@ lifecycle_reconciliation_batch_limit = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3469,6 +3528,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3526,6 +3586,7 @@ approval_mfa_required = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3575,6 +3636,7 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3630,6 +3692,7 @@ lifecycle_reconciliation_enabled = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3686,6 +3749,7 @@ audit_fail_closed = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3738,6 +3802,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3799,6 +3864,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3862,6 +3928,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3921,6 +3988,7 @@ mfa_totp_issuer = "FileIssuer"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3978,6 +4046,7 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -4039,6 +4108,7 @@ mfa_lockout_max_attempts = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -4095,6 +4165,7 @@ mfa_lockout_duration_secs = 90000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -4146,6 +4217,7 @@ fn test_resolve_config_mfa_lockout_from_env() {
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -4171,4 +4243,275 @@ fn test_resolve_config_mfa_lockout_from_env() {
     assert_eq!(config.mfa_lockout_duration_secs, 300);
 
     clear_test_env();
+}
+
+// === PDP mode config tests ===
+
+#[test]
+fn test_resolve_config_pdp_mode_defaults_to_dual() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Dual);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pdp_mode_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "static"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Static);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pdp_mode_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "static"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_PDP_MODE", "bundles");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Bundles);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_pdp_mode_cli_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "static"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: Some("dual".to_string()),
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Dual);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_pdp_mode() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "unknown"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(error.to_string().contains("invalid pdp mode"));
+
+    let _ = fs::remove_file(path);
 }

@@ -36,6 +36,7 @@ Feature-complete for standard use; local and CI-validated:
 - Store-backed `CapabilityService` for production capability mint/get/revoke/use paths, with in-memory service retained for tests/dev
 - Schema-drift checker that refuses startup when the database schema version is newer than the binary-supported version
 - **MFA TOTP second factor** — TOTP verification for high-risk approval resolution; includes enrollment replay CAS, key parsing cleanup, admin route tests, store counter overflow guard, active lookup index migrations, and Postgres MFA repo tests
+- **PolicyBundle PDP engine (Phase 1)** — Policy decision point with bundle-scoped rule evaluation. Phase 1 implemented (`PolicyBundlePdpEngine`, static-default bundle, parity tests, `PdpMode` config). Phase 2 (bundle identity propagation, obligations, quarantine disposition) remains deferred
 
 ## Beta
 
@@ -70,8 +71,6 @@ These require broader design decisions, additional evidence, or an ADR before th
   - Acceptance: `BehavioralProfiler` trait with `ThresholdDetector`; anomaly events written to audit log; Prometheus metric `ferrumgate_behavioral_anomaly_detected_total`.
 - **Performance regression gate** — Automated CI gate that blocks changes regressing established baselines. See ADR 011.
   - Acceptance: `make perf-gate` runs short `ferrum-stress` scenarios and compares against baselines; advisory in CI until baselines are authoritative.
-- **PolicyBundle PDP engine** — Policy decision point with bundle-scoped rule evaluation. **Blocked** on rule semantics ADR (needed before engine contract can be finalized).
-  - Acceptance: Rule semantics ADR accepted; PDP engine compiles bundle rules to a decision graph; integration tests for permit/deny/obligate cases.
 - **MCP resumability** — Session resumability. Not implemented; no committed timeline.
   - Acceptance: Resume checkpoint persisted to store; session ID rehydration restores tool context and pending capability state.
 - **Production MCP HTTP/SSE** — Production-ready Streamable HTTP / SSE transport. Requires target-host smoke, load, and reconnect evidence first.

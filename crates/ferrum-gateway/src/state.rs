@@ -334,6 +334,47 @@ impl std::str::FromStr for LogFormat {
     }
 }
 
+/// PDP evaluation mode.
+///
+/// - `Static`: use the built-in static PDP engine only.
+/// - `Bundles`: use active policy-bundle rules only; default Allow when no
+///   active bundle matches.
+/// - `Dual`: evaluate active bundles first, then fall back to the static PDP
+///   engine (default; preserves existing behavior).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PdpMode {
+    Static,
+    Bundles,
+    #[default]
+    Dual,
+}
+
+impl std::fmt::Display for PdpMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PdpMode::Static => write!(f, "static"),
+            PdpMode::Bundles => write!(f, "bundles"),
+            PdpMode::Dual => write!(f, "dual"),
+        }
+    }
+}
+
+impl std::str::FromStr for PdpMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "static" => Ok(PdpMode::Static),
+            "bundles" => Ok(PdpMode::Bundles),
+            "dual" => Ok(PdpMode::Dual),
+            _ => Err(format!(
+                "invalid pdp mode: {} (expected 'static', 'bundles', or 'dual')",
+                s
+            )),
+        }
+    }
+}
+
 /// Server configuration for the gateway.
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -397,6 +438,9 @@ pub struct ServerConfig {
     /// Interval between periodic lifecycle reconciliation runs in seconds.
     /// Default: 60.
     pub lifecycle_reconciliation_interval_secs: u64,
+    /// PDP evaluation mode.
+    /// Default: Dual.
+    pub pdp_mode: PdpMode,
     /// Enable periodic background approval timeout reconciliation.
     /// Default: false.
     pub approval_timeout_enabled: bool,
@@ -486,6 +530,7 @@ impl std::fmt::Debug for ServerConfig {
             "approval_reconciliation_interval_secs",
             &self.approval_reconciliation_interval_secs,
         );
+        d.field("pdp_mode", &self.pdp_mode);
         d.field("audit_fail_closed", &self.audit_fail_closed);
         d.field("approval_mfa_required", &self.approval_mfa_required);
         d.field(
@@ -529,6 +574,7 @@ impl Default for ServerConfig {
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: 60,
             lifecycle_reconciliation_batch_limit: 1000,
+            pdp_mode: PdpMode::Dual,
             approval_timeout_enabled: false,
             approval_timeout_seconds: 3600,
             approval_reconciliation_interval_secs: 300,

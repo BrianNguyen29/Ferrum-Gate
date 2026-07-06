@@ -63,6 +63,10 @@ pub struct Args {
     #[arg(long)]
     log_format: Option<String>,
 
+    /// PDP mode: "static", "bundles", or "dual" (default "dual").
+    #[arg(long)]
+    pdp_mode: Option<String>,
+
     /// Write queue depth threshold for deep readiness probe (1..=10000).
     #[arg(long)]
     write_queue_threshold: Option<u64>,
@@ -215,6 +219,8 @@ struct ServerSection {
     rate_limit_burst: Option<u32>,
     #[serde(default)]
     log_format: Option<String>,
+    #[serde(default)]
+    pdp_mode: Option<String>,
     #[serde(default)]
     write_queue_threshold: Option<u64>,
     #[serde(default)]
@@ -446,6 +452,17 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
     let log_format_parsed: ferrum_gateway::LogFormat = log_format
         .parse()
         .map_err(|e: String| anyhow::anyhow!("invalid log format: {}", e))?;
+
+    let pdp_mode = args
+        .pdp_mode
+        .clone()
+        .or(get_env("FERRUMD_PDP_MODE")?)
+        .or_else(|| server.as_ref().and_then(|s| s.pdp_mode.clone()))
+        .unwrap_or_else(|| "dual".to_string());
+
+    let pdp_mode_parsed: ferrum_gateway::PdpMode = pdp_mode
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("invalid pdp mode: {}", e))?;
 
     let store_synchronous = args
         .store_synchronous
@@ -833,6 +850,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         allow_insecure_nonlocal_bind,
         log_filter,
         log_format: log_format_parsed,
+        pdp_mode: pdp_mode_parsed,
         store_synchronous,
         store_wal_autocheckpoint,
         rate_limit_per_second,

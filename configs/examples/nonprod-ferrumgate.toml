@@ -48,6 +48,10 @@ sqlite_db_roots = ["/var/lib/ferrumgate"]
 # Log filter (info, debug, warn, error)
 log_filter = "info"
 
+# PDP evaluation mode: "static", "bundles", or "dual" (default "dual").
+# Dual preserves the existing bundle-first / static-fallback behavior.
+pdp_mode = "dual"
+
 # Log format: "text" (human-readable, default) or "json" (structured)
 # Use "json" in production for log aggregation systems (ELK, Loki, etc.)
 # log_format = "text"

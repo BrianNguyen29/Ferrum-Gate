@@ -15,9 +15,9 @@
 //!
 //! All success paths increment the `GovernanceRoute` counter and apply the
 //! output sanitizer to the response payload. Policy evaluation helpers
-//! (`evaluate_active_policy_bundles`, `evaluate_bundle_rules`, ...) are
-//! imported from `crate::policy_eval` since they are shared with
-//! `proposals::evaluate_proposal`.
+//! (`evaluate_active_policy_bundles`) are imported from `crate::policy_eval`
+//! since they are shared with `proposals::evaluate_proposal`; pure rule
+//! evaluation lives in `ferrum_pdp::matchers`.
 
 use axum::{
     Json,
@@ -41,13 +41,14 @@ use crate::audit;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::policy_eval::{
-    build_firewall_context, evaluate_active_policy_bundles, evaluate_bundle_rules,
-    has_tool_output_label, has_untrusted_text_label, intent_has_external_label, minimal_intent_for,
+    build_firewall_context, evaluate_active_policy_bundles, has_tool_output_label,
+    has_untrusted_text_label, intent_has_external_label, minimal_intent_for,
     proposal_has_external_metadata,
 };
 use crate::problem::ApiProblem;
 use crate::response::sanitize_json;
 use crate::state::AppState;
+use ferrum_pdp::evaluate_bundle_rules;
 
 pub(crate) async fn create_policy_bundle(
     State(state): State<Arc<AppState>>,
@@ -576,11 +577,11 @@ pub(crate) async fn simulate_policy_bundle(
 
     // Evaluate the provided bundle rules against the sample context.
     let response = evaluate_bundle_rules(&bundle, &intent, &request.proposal, &trust)
-        .map(|eval| PolicyBundleSimulateResponse {
-            decision: eval.decision,
-            reason: eval.reason,
-            matched_rule_ids: eval.matched_rule_ids,
-            warnings: eval.warnings,
+        .map(|(rule_id, decision, reason)| PolicyBundleSimulateResponse {
+            decision,
+            reason,
+            matched_rule_ids: vec![rule_id],
+            warnings: Vec::new(),
         })
         .unwrap_or_else(|| PolicyBundleSimulateResponse {
             decision: Decision::Allow,

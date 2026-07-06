@@ -81,6 +81,10 @@ pub enum Matcher {
     RollbackClassEquals { value: String },
     /// Match when action type equals the specified value.
     ActionTypeEquals { value: String },
+    /// Match when proposal risk tier is critical and intent approval mode is None.
+    CriticalRiskNoApproval,
+    /// Match when intent approval mode equals the specified value.
+    ApprovalModeEquals { value: String },
     /// Catch-all for unknown matcher types.
     Unknown {
         #[serde(flatten)]
@@ -193,6 +197,14 @@ impl YamlMatcher {
                     .map(|v| v.as_str().unwrap_or("").to_string())
                     .unwrap_or_default();
                 Matcher::ActionTypeEquals { value }
+            }
+            "critical_risk_no_approval" => Matcher::CriticalRiskNoApproval,
+            "approval_mode_equals" => {
+                let value = self
+                    .value
+                    .map(|v| v.as_str().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                Matcher::ApprovalModeEquals { value }
             }
             other => Matcher::Unknown {
                 extra: serde_json::json!({
@@ -312,5 +324,46 @@ rules:
         // Instead, verify that the hash is computed correctly (64 char hex string)
         assert_eq!(bundle1.content_hash.unwrap().len(), 64);
         assert_eq!(bundle2.content_hash.unwrap().len(), 64);
+    }
+
+    #[test]
+    fn test_parse_critical_risk_no_approval_matcher() {
+        let yaml = r#"version: "0.1.0"
+bundle_id: "test"
+rules:
+  - id: "critical.risk.no.approval"
+    description: "Critical risk with no approval requires approval"
+    decision: "RequireApproval"
+    priority: 90
+    matchers:
+      - type: "critical_risk_no_approval"
+"#;
+        let bundle = parse_policy_bundle_yaml(yaml).unwrap();
+        assert_eq!(bundle.rules.len(), 1);
+        assert!(matches!(
+            bundle.rules[0].matchers[0],
+            Matcher::CriticalRiskNoApproval
+        ));
+    }
+
+    #[test]
+    fn test_parse_approval_mode_equals_matcher() {
+        let yaml = r#"version: "0.1.0"
+bundle_id: "test"
+rules:
+  - id: "draft.only"
+    description: "Draft-only approval mode"
+    decision: "AllowDraftOnly"
+    priority: 80
+    matchers:
+      - type: "approval_mode_equals"
+        value: "DraftOnly"
+"#;
+        let bundle = parse_policy_bundle_yaml(yaml).unwrap();
+        assert_eq!(bundle.rules.len(), 1);
+        assert!(matches!(
+            bundle.rules[0].matchers[0],
+            Matcher::ApprovalModeEquals { ref value } if value == "DraftOnly"
+        ));
     }
 }
