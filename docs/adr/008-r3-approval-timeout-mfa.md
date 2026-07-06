@@ -17,9 +17,10 @@ This gap was identified in the threat model (B8 — unauthorized approval) and t
 Propose two independent but complementary controls, each targeting a **separate follow-up PR** to keep review scope bounded:
 
 ### 1. Approval timeout with auto-deny (separate PR)
+- Introduce `approval_timeout_enabled: bool` (config default `false`) so deployments opt in explicitly and preserve backward compatibility.
 - Introduce `approval_timeout_seconds: u64` (config default `3600`, max `86400`).
-- Pending approvals older than the timeout are automatically rejected with status `timed_out`.
-- A background task (or cron-like reconciliation) evaluates pending approvals on a configurable interval (`approval_reconciliation_interval_seconds`, default `300`).
+- Pending approvals older than the timeout are automatically rejected with status `Expired`.
+- A background task (or cron-like reconciliation) evaluates pending approvals on a configurable interval (`approval_reconciliation_interval_secs`, default `300`).
 - Metrics: `ferrumgate_approval_timeouts_total`.
 
 ### 2. Second-factor confirmation / MFA TOTP (implemented in PR #209)
@@ -43,8 +44,8 @@ Both controls are opt-in to preserve backward compatibility.
 ## Acceptance criteria
 
 1. Approval timeout config is parsed, validated (min `60`, max `86400`), and applied.
-2. Pending approvals exceeding the timeout are transitioned to `timed_out` with an audit entry.
-3. Timeout rejections are reflected in the lifecycle outbox and CLI (`ferrumctl admin approvals`).
+2. Pending approvals exceeding the timeout are transitioned to `Expired` with an audit entry.
+3. Timeout rejections are reflected via provenance and CLI (`ferrumctl admin approvals`).
 4. TOTP verification interface is defined and implemented. ✅ Phase 1 & 2
 5. TOTP is implemented directly via module helpers. (The earlier no-op trait seam was removed in post-MFA-hardening cleanup.)
 6. When `approval_mfa_required=true`, approval resolve returns `403` with `mfa_required` detail if the second factor is missing or invalid, and `MfaInvalid` if the code is wrong. ✅ TOTP implemented

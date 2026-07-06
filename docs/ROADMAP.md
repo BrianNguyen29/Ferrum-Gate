@@ -54,7 +54,7 @@ Skeleton or partial implementation; not ready for production use:
 These are **deferred to upcoming separate PRs**. They are not implemented and have no committed timeline, but acceptance criteria are defined and they are prioritized over open-ended backlog items.
 
 - **Approval timeout / auto-deny** — Auto-deny stale approvals after a configurable timeout. See ADR 008 (separate PR from MFA).
-  - Acceptance: `approval_timeout_seconds` parsed/validated; pending approvals transition to `timed_out`; reflected in lifecycle outbox and CLI.
+  - Acceptance: `approval_timeout_enabled` parsed; `approval_timeout_seconds` parsed/validated; pending approvals transition to `Expired`; reflected via provenance and CLI.
 - **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access. See ADR 009.
   - Acceptance: `ferrumctl audit export` produces `.jsonl` + `manifest.json`; `ferrumctl audit verify` checks hash chain and Merkle root.
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).

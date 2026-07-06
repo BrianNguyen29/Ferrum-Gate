@@ -41,6 +41,7 @@ pub enum ProvenanceEventKind {
     ApprovalRequested,
     ApprovalGranted,
     ApprovalDenied,
+    ApprovalTimedOut,
     ToolCallPrepared,
     ToolCallIntercepted,
     ToolCallExecuted,
@@ -96,7 +97,9 @@ pub fn lineage_parent_spec(
             ProvenanceEventKind::CapabilityMinted,
             ProvenanceEdgeType::References,
         )),
-        ProvenanceEventKind::ApprovalGranted | ProvenanceEventKind::ApprovalDenied => Some((
+        ProvenanceEventKind::ApprovalGranted
+        | ProvenanceEventKind::ApprovalDenied
+        | ProvenanceEventKind::ApprovalTimedOut => Some((
             ProvenanceEventKind::PolicyEvaluated,
             ProvenanceEdgeType::ApprovedBy,
         )),

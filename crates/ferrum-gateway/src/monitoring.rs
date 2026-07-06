@@ -286,6 +286,10 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .readyz_deep_requests_503
         .load(Ordering::Relaxed);
     let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
+    let approval_timeouts_total = state
+        .metrics
+        .approval_timeouts_total
+        .load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
@@ -804,6 +808,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
          # TYPE ferrumgate_metrics_scrapes_total counter\n\
          ferrumgate_metrics_scrapes_total {}\n\
+         # HELP ferrumgate_approval_timeouts_total Number of pending approvals automatically expired due to timeout\n\
+         # TYPE ferrumgate_approval_timeouts_total counter\n\
+         ferrumgate_approval_timeouts_total {}\n\
          # HELP ferrumgate_governance_errors_total Governance errors by route and method\n\
          # TYPE ferrumgate_governance_errors_total counter\n\
          ferrumgate_governance_errors_total{{route=\"/v1/intents/compile\",method=\"POST\"}} {}\n\
@@ -903,6 +910,7 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         state.server_config.rate_limit_burst,
         lifecycle_outbox_operator_review,
         metrics_count,
+        approval_timeouts_total,
         gov_err_intents_compile,
         gov_err_intents_list,
         gov_err_proposals_evaluate,

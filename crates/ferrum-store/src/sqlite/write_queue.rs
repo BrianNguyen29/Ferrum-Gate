@@ -18,7 +18,7 @@ use ferrum_proto::{
     ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, LifecycleOutboxRecord, ProvenanceEdge, ProvenanceEvent,
-    RollbackContract, RollbackContractId, RollbackState,
+    RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -122,6 +122,12 @@ pub enum WriteOp {
         state: ApprovalState,
         reply: oneshot::Sender<Result<()>>,
     },
+    ExpireStalePending {
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+        reply: oneshot::Sender<Result<Vec<ApprovalRequest>>>,
+    },
 
     // Provenance operations
     AppendProvenanceEvent {
@@ -179,6 +185,32 @@ impl WriteQueue {
         }
 
         // Wait for result; decrement happens in writer_loop after execute_write_op
+        recv.await
+            .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
+    }
+
+    /// Send an approval expiration operation and wait for the transitioned approvals.
+    pub async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> crate::Result<Vec<ApprovalRequest>> {
+        let (reply, recv) = oneshot::channel();
+        let op = WriteOp::ExpireStalePending {
+            now,
+            max_age_seconds,
+            batch_size,
+            reply,
+        };
+
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
+        let send_result = self.sender.send(op).await;
+        if send_result.is_err() {
+            self.pending_ops.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::Other("write queue closed".to_string()));
+        }
+
         recv.await
             .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
     }
@@ -284,6 +316,17 @@ impl WriteQueue {
             } => WriteOp::ResolveApproval {
                 approval_id,
                 state,
+                reply,
+            },
+            WriteOp::ExpireStalePending {
+                now,
+                max_age_seconds,
+                batch_size,
+                reply,
+            } => WriteOp::ExpireStalePending {
+                now,
+                max_age_seconds,
+                batch_size,
                 reply,
             },
             WriteOp::AppendProvenanceEvent { data, .. } => {
@@ -427,6 +470,21 @@ async fn execute_write_op(pool: &SqlitePool, op: WriteOp) -> Result<()> {
         } => {
             let repo = SqliteApprovalRepo::new(pool.clone());
             let result = repo.resolve(approval_id, state).await;
+            let _ = reply.send(result);
+        }
+        WriteOp::ExpireStalePending {
+            now,
+            max_age_seconds,
+            batch_size,
+            reply,
+        } => {
+            let result = super::approvals::expire_stale_pending_sqlite(
+                pool,
+                now,
+                max_age_seconds,
+                batch_size,
+            )
+            .await;
             let _ = reply.send(result);
         }
         WriteOp::AppendProvenanceEvent { data, reply } => {

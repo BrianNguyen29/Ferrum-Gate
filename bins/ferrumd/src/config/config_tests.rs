@@ -41,6 +41,9 @@ fn clear_test_env() {
         "FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED",
         "FERRUMD_LIFECYCLE_RECONCILIATION_INTERVAL_SECS",
         "FERRUMD_LIFECYCLE_RECONCILIATION_BATCH_LIMIT",
+        "FERRUMD_APPROVAL_TIMEOUT_ENABLED",
+        "FERRUMD_APPROVAL_TIMEOUT_SECONDS",
+        "FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS",
         "FERRUMD_AUDIT_FAIL_CLOSED",
         "FERRUMD_APPROVAL_MFA_REQUIRED",
         "FERRUMD_MFA_SECRET_KEY",
@@ -110,6 +113,9 @@ sqlite_db_roots = ["/from/file/databases"]
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -192,6 +198,9 @@ allow_insecure_nonlocal_bind = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -243,6 +252,9 @@ auth_mode = "bearer"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -293,6 +305,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -349,6 +364,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -405,6 +423,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -455,6 +476,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -504,6 +528,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -556,6 +583,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -608,6 +638,9 @@ rate_limit_burst = 100
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -660,6 +693,9 @@ rate_limit_burst = 100
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -717,6 +753,9 @@ rate_limit_burst = 100
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -769,6 +808,9 @@ rate_limit_per_second = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -822,6 +864,9 @@ rate_limit_burst = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -875,6 +920,9 @@ rate_limit_burst = 20000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -927,6 +975,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -976,6 +1027,9 @@ log_format = "json"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1025,6 +1079,9 @@ log_format = "text"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1078,6 +1135,9 @@ log_format = "text"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1128,6 +1188,9 @@ log_format = "invalid"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1177,6 +1240,9 @@ log_format = "compact"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1228,6 +1294,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1278,6 +1347,9 @@ write_queue_threshold = 500
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1328,6 +1400,9 @@ write_queue_threshold = 500
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1382,6 +1457,9 @@ write_queue_threshold = 500
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1432,6 +1510,9 @@ write_queue_threshold = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1485,6 +1566,9 @@ write_queue_threshold = 10001
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1539,6 +1623,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1592,6 +1679,9 @@ pg_acquire_timeout_secs = 10
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1651,6 +1741,9 @@ pg_acquire_timeout_secs = 10
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1706,6 +1799,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1756,6 +1852,9 @@ pg_max_connections = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1809,6 +1908,9 @@ pg_acquire_timeout_secs = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1861,6 +1963,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1912,6 +2017,9 @@ pg_idle_in_transaction_timeout_ms = 7000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -1968,6 +2076,9 @@ pg_idle_in_transaction_timeout_ms = 7000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2022,6 +2133,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2073,6 +2187,9 @@ pg_idle_in_transaction_timeout_ms = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2138,6 +2255,9 @@ fg-operators = "operator"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2238,6 +2358,9 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2317,6 +2440,9 @@ audiences = ["ferrumgate-test"]
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2377,6 +2503,9 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2439,6 +2568,9 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2509,6 +2641,9 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2561,6 +2696,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2618,6 +2756,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2668,6 +2809,9 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         lifecycle_reconciliation_enabled: true,
         lifecycle_reconciliation_interval_secs: Some(30),
         lifecycle_reconciliation_batch_limit: Some(2500),
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2721,6 +2865,9 @@ lifecycle_reconciliation_batch_limit = 200
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2733,6 +2880,451 @@ lifecycle_reconciliation_batch_limit = 200
     assert!(config.lifecycle_reconciliation_enabled);
     assert_eq!(config.lifecycle_reconciliation_interval_secs, 90);
     assert_eq!(config.lifecycle_reconciliation_batch_limit, 200);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+// === approval timeout config tests ===
+
+#[test]
+fn test_resolve_config_approval_timeout_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 3600);
+    assert_eq!(config.approval_reconciliation_interval_secs, 300);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_seconds = 7200
+approval_reconciliation_interval_secs = 600
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 7200);
+    assert_eq!(config.approval_reconciliation_interval_secs, 600);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_seconds = 7200
+approval_reconciliation_interval_secs = 600
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_APPROVAL_TIMEOUT_SECONDS", "1800");
+        std::env::set_var("FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS", "120");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 1800);
+    assert_eq!(config.approval_reconciliation_interval_secs, 120);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_APPROVAL_TIMEOUT_SECONDS", "1800");
+        std::env::set_var("FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS", "120");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: Some(900),
+        approval_reconciliation_interval_secs: Some(60),
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 900);
+    assert_eq!(config.approval_reconciliation_interval_secs, 60);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_approval_timeout_too_small() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_enabled = true
+approval_timeout_seconds = 30
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("approval_timeout_seconds must be between 60 and 86400")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_approval_reconciliation_interval_too_small() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_enabled = true
+approval_reconciliation_interval_secs = 1
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("approval_reconciliation_interval_secs must be between 5 and 86400")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_enabled_defaults_to_false() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.approval_timeout_enabled);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_enabled_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_enabled = true
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.approval_timeout_enabled);
 
     let _ = fs::remove_file(path);
     clear_test_env();
@@ -2774,6 +3366,9 @@ lifecycle_reconciliation_interval_secs = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2828,6 +3423,9 @@ lifecycle_reconciliation_batch_limit = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2880,6 +3478,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2934,6 +3535,9 @@ approval_mfa_required = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -2980,6 +3584,9 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: true,
         mfa_secret_key: None,
@@ -3032,6 +3639,9 @@ lifecycle_reconciliation_enabled = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3085,6 +3695,9 @@ audit_fail_closed = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3134,6 +3747,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3192,6 +3808,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3252,6 +3871,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: Some(
@@ -3308,6 +3930,9 @@ mfa_totp_issuer = "FileIssuer"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3362,6 +3987,9 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3420,6 +4048,9 @@ mfa_lockout_max_attempts = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3473,6 +4104,9 @@ mfa_lockout_duration_secs = 90000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3521,6 +4155,9 @@ fn test_resolve_config_mfa_lockout_from_env() {
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,

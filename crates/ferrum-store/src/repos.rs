@@ -286,6 +286,18 @@ pub trait ApprovalRepo: Send + Sync {
         approval_id_after: ApprovalId,
         limit: u32,
     ) -> Result<Vec<ApprovalRequest>>;
+    /// Find pending approvals that are stale and transition them to `Expired`.
+    ///
+    /// An approval is considered stale when its `expires_at` is before `now`,
+    /// or when its `created_at` is older than `max_age_seconds` relative to `now`.
+    /// Only approvals in the `Pending` state are considered; terminal approvals
+    /// are never re-transitioned. Returns the approvals that were expired.
+    async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
 }
 
 #[async_trait]

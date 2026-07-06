@@ -99,6 +99,20 @@ pub struct Args {
     #[arg(long)]
     lifecycle_reconciliation_batch_limit: Option<u32>,
 
+    /// Enable periodic background approval timeout reconciliation (default: false).
+    #[arg(long)]
+    approval_timeout_enabled: bool,
+
+    /// Maximum age in seconds before a pending approval is expired by the
+    /// background reconciler (default: 3600, min: 60, max: 86400).
+    #[arg(long)]
+    approval_timeout_seconds: Option<u64>,
+
+    /// Interval in seconds between approval timeout reconciliation runs
+    /// (default: 300, min: 5, max: 86400).
+    #[arg(long)]
+    approval_reconciliation_interval_secs: Option<u64>,
+
     /// When true, audit append failures block the action and return 503 (default: false).
     #[arg(long)]
     audit_fail_closed: bool,
@@ -225,6 +239,12 @@ struct ServerSection {
     lifecycle_reconciliation_interval_secs: Option<u64>,
     #[serde(default)]
     lifecycle_reconciliation_batch_limit: Option<u32>,
+    #[serde(default)]
+    approval_timeout_enabled: Option<bool>,
+    #[serde(default)]
+    approval_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    approval_reconciliation_interval_secs: Option<u64>,
     #[serde(default)]
     audit_fail_closed: Option<bool>,
     #[serde(default)]
@@ -522,6 +542,30 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(1000);
 
+    let approval_timeout_enabled = if args.approval_timeout_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_APPROVAL_TIMEOUT_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.approval_timeout_enabled))
+            .unwrap_or(false)
+    };
+
+    let approval_timeout_seconds = args
+        .approval_timeout_seconds
+        .or(get_env("FERRUMD_APPROVAL_TIMEOUT_SECONDS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.approval_timeout_seconds))
+        .unwrap_or(3600);
+
+    let approval_reconciliation_interval_secs = args
+        .approval_reconciliation_interval_secs
+        .or(get_env("FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.approval_reconciliation_interval_secs)
+        })
+        .unwrap_or(300);
+
     let audit_fail_closed = if args.audit_fail_closed {
         true
     } else {
@@ -809,6 +853,9 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         lifecycle_reconciliation_enabled,
         lifecycle_reconciliation_interval_secs,
         lifecycle_reconciliation_batch_limit,
+        approval_timeout_enabled,
+        approval_timeout_seconds,
+        approval_reconciliation_interval_secs,
         audit_fail_closed,
         approval_mfa_required,
         mfa_secret_key,

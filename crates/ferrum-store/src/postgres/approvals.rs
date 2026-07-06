@@ -180,4 +180,55 @@ impl ApprovalRepo for PostgresApprovalRepo {
             .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
             .collect()
     }
+
+    async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> Result<Vec<ApprovalRequest>> {
+        let age_cutoff = now - chrono::Duration::seconds(max_age_seconds as i64);
+        // Lock candidate rows to prevent concurrent reconcilers from racing; skip
+        // rows that are already locked by another worker.
+        let sql = "SELECT approval_id, raw_json FROM approvals
+            WHERE state = $1
+              AND (expires_at < $2 OR created_at < $3)
+            LIMIT $4
+            FOR UPDATE SKIP LOCKED";
+        let rows = sqlx::query(sql)
+            .bind("Pending")
+            .bind(now.to_rfc3339())
+            .bind(age_cutoff.to_rfc3339())
+            .bind(batch_size as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut expired = Vec::with_capacity(rows.len());
+        for row in rows {
+            let approval_id_str: String = row.try_get("approval_id")?;
+            let raw_json: String = row.try_get("raw_json")?;
+            let mut approval: ApprovalRequest = from_json(&raw_json)?;
+            approval.state = ApprovalState::Expired;
+            let new_raw_json = to_json(&approval)?;
+
+            let result = sqlx::query(
+                "UPDATE approvals
+                 SET state = $2,
+                     raw_json = $3
+                 WHERE approval_id = $1
+                   AND state = $4",
+            )
+            .bind(&approval_id_str)
+            .bind(enum_text(&ApprovalState::Expired)?)
+            .bind(&new_raw_json)
+            .bind("Pending")
+            .execute(&self.pool)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                expired.push(approval);
+            }
+        }
+        Ok(expired)
+    }
 }

@@ -457,7 +457,9 @@ paths:
       description: |
         Resolves a pending approval by granting or denying it.
         Only pending approvals can be resolved; terminal approvals return 409 Conflict.
-        Expired approvals return 403 Forbidden.
+        Expired approvals return 403 Forbidden. Pending approvals are also
+        automatically transitioned to `Expired` by the background reconciler when
+        their `expires_at` passes or when they exceed `approval_timeout_seconds`.
         When `approval_mfa_required` is enabled, the request must include a valid
         active `mfa_factor` with a correct `code` (e.g. TOTP code). Missing factor
         returns 403 with `MfaRequired`; invalid factor or code returns 403 with
@@ -2644,6 +2646,7 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2717,6 +2720,7 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2869,6 +2873,7 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4001,6 +4006,7 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4031,6 +4037,7 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4166,6 +4173,7 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted

@@ -1958,6 +1958,87 @@ async fn postgres_approval_list_pending_by_proposal_cursor() {
     assert!(page.is_empty());
 }
 
+#[tokio::test]
+async fn postgres_approval_expire_stale_pending_by_expires_at() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let now = chrono::Utc::now();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    approval.created_at = now - chrono::Duration::hours(2);
+    approval.expires_at = now - chrono::Duration::minutes(1);
+
+    repo.insert(&approval).await.unwrap();
+
+    let expired = repo.expire_stale_pending(now, 3600, 100).await.unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0].approval_id, approval_id);
+    assert!(matches!(expired[0].state, ApprovalState::Expired));
+
+    let fetched = repo.get(approval_id).await.unwrap().unwrap();
+    assert!(matches!(fetched.state, ApprovalState::Expired));
+}
+
+#[tokio::test]
+async fn postgres_approval_expire_stale_pending_by_max_age() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let now = chrono::Utc::now();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    approval.created_at = now - chrono::Duration::hours(2);
+    approval.expires_at = now + chrono::Duration::hours(1);
+
+    repo.insert(&approval).await.unwrap();
+
+    let expired = repo.expire_stale_pending(now, 3600, 100).await.unwrap();
+    assert_eq!(expired.len(), 1);
+    assert!(matches!(expired[0].state, ApprovalState::Expired));
+}
+
+#[tokio::test]
+async fn postgres_approval_expire_stale_pending_leaves_fresh() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let now = chrono::Utc::now();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    approval.created_at = now - chrono::Duration::minutes(30);
+    approval.expires_at = now + chrono::Duration::hours(1);
+
+    repo.insert(&approval).await.unwrap();
+
+    let expired = repo.expire_stale_pending(now, 3600, 100).await.unwrap();
+    assert!(expired.is_empty());
+
+    let fetched = repo.get(approval_id).await.unwrap().unwrap();
+    assert!(matches!(fetched.state, ApprovalState::Pending));
+}
+
 fn make_test_provenance_event(
     event_id: EventId,
     kind: ProvenanceEventKind,

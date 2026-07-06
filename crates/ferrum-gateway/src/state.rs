@@ -394,9 +394,19 @@ pub struct ServerConfig {
     /// Enable periodic background lifecycle outbox reconciliation.
     /// Default: false.
     pub lifecycle_reconciliation_enabled: bool,
-    /// Interval between periodic reconciliation runs in seconds.
+    /// Interval between periodic lifecycle reconciliation runs in seconds.
     /// Default: 60.
     pub lifecycle_reconciliation_interval_secs: u64,
+    /// Enable periodic background approval timeout reconciliation.
+    /// Default: false.
+    pub approval_timeout_enabled: bool,
+    /// Maximum age in seconds before a pending approval is considered stale
+    /// and transitioned to `Expired` by the background reconciler.
+    /// Default: 3600. Valid range: 60..=86400.
+    pub approval_timeout_seconds: u64,
+    /// Interval between periodic approval timeout reconciliation runs in seconds.
+    /// Default: 300. Valid range: 5..=86400.
+    pub approval_reconciliation_interval_secs: u64,
     /// Maximum number of outbox records to reconcile per periodic batch.
     /// Default: 1000.
     pub lifecycle_reconciliation_batch_limit: u32,
@@ -470,6 +480,12 @@ impl std::fmt::Debug for ServerConfig {
             "lifecycle_reconciliation_batch_limit",
             &self.lifecycle_reconciliation_batch_limit,
         );
+        d.field("approval_timeout_enabled", &self.approval_timeout_enabled);
+        d.field("approval_timeout_seconds", &self.approval_timeout_seconds);
+        d.field(
+            "approval_reconciliation_interval_secs",
+            &self.approval_reconciliation_interval_secs,
+        );
         d.field("audit_fail_closed", &self.audit_fail_closed);
         d.field("approval_mfa_required", &self.approval_mfa_required);
         d.field(
@@ -513,6 +529,9 @@ impl Default for ServerConfig {
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: 60,
             lifecycle_reconciliation_batch_limit: 1000,
+            approval_timeout_enabled: false,
+            approval_timeout_seconds: 3600,
+            approval_reconciliation_interval_secs: 300,
             audit_fail_closed: false,
             approval_mfa_required: false,
             mfa_secret_key: None,
@@ -620,6 +639,12 @@ impl ServerConfig {
                  periodic lifecycle outbox reconciliation is disabled"
             );
         }
+        if production_like && !self.approval_timeout_enabled {
+            tracing::warn!(
+                "approval_timeout_enabled is false in a production-like configuration; \
+                 stale pending approvals will not be expired automatically"
+            );
+        }
         if production_like && !self.audit_fail_closed {
             tracing::warn!(
                 "audit_fail_closed is false in a production-like configuration; \
@@ -674,6 +699,22 @@ impl ServerConfig {
                 return Err(
                     "lifecycle_reconciliation_batch_limit must be at most 10000".to_string()
                 );
+            }
+        }
+
+        // Validate approval timeout settings only when the reconciler is enabled.
+        if self.approval_timeout_enabled {
+            if !(60..=86_400).contains(&self.approval_timeout_seconds) {
+                return Err(format!(
+                    "approval_timeout_seconds must be between 60 and 86400, got {}",
+                    self.approval_timeout_seconds
+                ));
+            }
+            if !(5..=86_400).contains(&self.approval_reconciliation_interval_secs) {
+                return Err(format!(
+                    "approval_reconciliation_interval_secs must be between 5 and 86400, got {}",
+                    self.approval_reconciliation_interval_secs
+                ));
             }
         }
 

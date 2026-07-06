@@ -9,15 +9,16 @@ use ferrum_cap::InMemoryCapabilityService;
 use ferrum_pdp::StaticPdpEngine;
 #[allow(unused_imports)] // IntentStatus is used in `mod tests` via `use super::*;`.
 use ferrum_proto::{
-    AgentListResponse, ApiError, ApiErrorCode, AuditAction, AuditLogEntry, AuditResourceType,
-    Decision, DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse, EvaluateProposalResponse,
-    ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope, IntentStatus,
-    ListPolicyBundleVersionsResponse, Matcher, OutcomeClause, OutcomeReport, PolicyBundle,
-    PolicyBundleId, PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule,
-    PolicySimulateRequest, ProposalId, ProvenanceEventKind, ProvenanceQueryRequest,
-    RegisterAgentRequest, RegisterAgentResponse, ResourceSelector, RevokeAgentRequest, RiskTier,
-    RollbackClass, RollbackPolicyBundleRequest, RollbackPolicyBundleResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
+    ActorRef, ActorType, AgentListResponse, ApiError, ApiErrorCode, AuditAction, AuditLogEntry,
+    AuditResourceType, Decision, DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse,
+    EvaluateProposalResponse, EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
+    IntentEnvelope, IntentStatus, ListPolicyBundleVersionsResponse, Matcher, ObjectRef, ObjectType,
+    OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId, PolicyBundleSimulateRequest,
+    PolicyBundleSimulateResponse, PolicyRule, PolicySimulateRequest, ProposalId, ProvenanceEvent,
+    ProvenanceEventKind, ProvenanceQueryRequest, RegisterAgentRequest, RegisterAgentResponse,
+    ResourceSelector, RevokeAgentRequest, RiskTier, RollbackClass, RollbackPolicyBundleRequest,
+    RollbackPolicyBundleResponse, RollbackState, RollbackTarget, TimeBudget, TrustContextSummary,
+    TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::SqliteStore;
@@ -225,6 +226,8 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_mfa_get: AtomicU64,
     // Audit fail-closed rejection counter
     pub(crate) audit_fail_closed_rejections: AtomicU64,
+    // Approval timeout counter
+    pub(crate) approval_timeouts_total: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -341,6 +344,7 @@ impl Metrics {
             governance_success_v1_mfa_list: AtomicU64::new(0),
             governance_success_v1_mfa_get: AtomicU64::new(0),
             audit_fail_closed_rejections: AtomicU64::new(0),
+            approval_timeouts_total: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -849,6 +853,110 @@ pub(crate) enum PublicRoute {
 // I11 Output Sanitization helpers
 // ---------------------------------------------------------------------------
 
+const APPROVAL_TIMEOUT_BATCH_SIZE: u32 = 100;
+
+/// Emit a provenance event recording that an approval timed out.
+async fn emit_approval_timed_out_provenance(
+    state: &AppState,
+    approval: &ferrum_proto::ApprovalRequest,
+) {
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "approval_id".to_string(),
+        serde_json::json!(approval.approval_id.to_string()),
+    );
+    metadata.insert(
+        "previous_state".to_string(),
+        serde_json::json!(format!("{:?}", approval.state)),
+    );
+
+    let event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::ApprovalTimedOut,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("FerrumGate Gateway".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Approval,
+            object_id: approval.approval_id.to_string(),
+            summary: Some("Approval timed out and was transitioned to Expired".to_string()),
+        },
+        intent_id: Some(approval.intent_id),
+        proposal_id: Some(approval.proposal_id),
+        execution_id: approval.execution_id,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+
+    if let Err(e) = state.runtime.store.provenance().append_event(&event).await {
+        tracing::warn!(
+            error = %e,
+            approval_id = %approval.approval_id,
+            "failed to append ApprovalTimedOut provenance event"
+        );
+    }
+}
+
+/// Background task that periodically reconciles stale pending approvals.
+async fn approval_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::sync::Notify>) {
+    let interval_secs = state.server_config.approval_reconciliation_interval_secs;
+    let timeout_seconds = state.server_config.approval_timeout_seconds;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let now = chrono::Utc::now();
+                match state
+                    .runtime
+                    .store
+                    .approvals()
+                    .expire_stale_pending(now, timeout_seconds, APPROVAL_TIMEOUT_BATCH_SIZE)
+                    .await
+                {
+                    Ok(expired) => {
+                        for approval in &expired {
+                            state
+                                .metrics
+                                .approval_timeouts_total
+                                .fetch_add(1, Ordering::Relaxed);
+                            emit_approval_timed_out_provenance(&state, approval).await;
+                        }
+                        if !expired.is_empty() {
+                            tracing::info!(
+                                count = expired.len(),
+                                "approval timeout reconciliation expired stale pending approvals"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "approval timeout reconciliation failed");
+                    }
+                }
+            }
+            _ = shutdown.notified() => {
+                tracing::info!("approval timeout reconciler shutting down");
+                break;
+            }
+        }
+    }
+}
+
 /// Wait for shutdown signal (Ctrl+C or SIGTERM on unix).
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -887,6 +995,16 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
         jwks_cache,
         nonce_cache: Arc::new(Mutex::new(HashMap::new())),
     });
+
+    let approval_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    let approval_reconciler_handle = if config.approval_timeout_enabled {
+        Some(tokio::spawn(approval_timeout_reconciler(
+            Arc::clone(&state),
+            Arc::clone(&approval_reconciler_shutdown),
+        )))
+    } else {
+        None
+    };
 
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
@@ -941,6 +1059,12 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
+
+    approval_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = approval_reconciler_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
     Ok(())
 }
 
@@ -2237,7 +2361,11 @@ mod tests {
     use chrono::DurationRound;
     use ferrum_cap::InMemoryCapabilityService;
     use ferrum_pdp::StaticPdpEngine;
-    use ferrum_proto::{DeepHealthResponse, ProvenanceIngestRequest, ProvenanceIngestResponse};
+    use ferrum_proto::{
+        ActorRef, ActorType, ApprovalId, DeepHealthResponse, IntentId, PrincipalId,
+        ProvenanceEventKind, ProvenanceIngestRequest, ProvenanceIngestResponse,
+        ProvenanceQueryRequest,
+    };
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
         AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
@@ -10801,5 +10929,137 @@ rules:
             .find(|e| e.action == AuditAction::TokenRevoke)
             .expect("TokenRevoke audit entry");
         assert_eq!(entry.actor_id, "unknown");
+    }
+
+    #[tokio::test]
+    async fn approval_timeout_reconciler_emits_provenance_and_increments_metric() {
+        let runtime = test_runtime().await;
+        let store = runtime.store.clone();
+
+        let intent_id = IntentId::new();
+        let proposal_id = ProposalId::new();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        };
+        store.intents().insert(&intent).await.unwrap();
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test-effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+        store.proposals().insert(&proposal).await.unwrap();
+
+        let approval_id = ApprovalId::new();
+        let now = chrono::Utc::now();
+        let approval = ferrum_proto::ApprovalRequest {
+            approval_id,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ActorRef {
+                actor_type: ActorType::User,
+                actor_id: "test-actor".to_string(),
+                display_name: Some("Test Actor".to_string()),
+            },
+            reason: "test approval".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: now - chrono::Duration::minutes(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: now - chrono::Duration::hours(2),
+        };
+        store.approvals().insert(&approval).await.unwrap();
+
+        let config = ServerConfig {
+            approval_timeout_seconds: 3600,
+            approval_reconciliation_interval_secs: 300,
+            ..Default::default()
+        };
+        let timeout_seconds = config.approval_timeout_seconds;
+        let state = AppState::test_new(runtime, config);
+
+        let expired = store
+            .approvals()
+            .expire_stale_pending(now, timeout_seconds, 100)
+            .await
+            .unwrap();
+        assert_eq!(expired.len(), 1);
+
+        for approval in &expired {
+            state
+                .metrics
+                .approval_timeouts_total
+                .fetch_add(1, Ordering::Relaxed);
+            emit_approval_timed_out_provenance(&state, approval).await;
+        }
+
+        assert_eq!(
+            state
+                .metrics
+                .approval_timeouts_total
+                .load(Ordering::Relaxed),
+            1
+        );
+
+        let events = store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::ApprovalTimedOut),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].object.object_id, approval_id.to_string());
+        assert!(matches!(
+            events[0].kind,
+            ProvenanceEventKind::ApprovalTimedOut
+        ));
     }
 }
