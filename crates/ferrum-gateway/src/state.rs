@@ -57,6 +57,9 @@ impl GatewayRuntime {
 /// Re-export canonical `AuthMode` from `ferrum-proto` to eliminate drift.
 pub use ferrum_proto::token::{AuthMode, TokenRole};
 
+/// Re-export the nonce cache backend selector used by server configuration.
+pub use ferrum_store::NonceCacheBackend;
+
 /// Static key material for offline JWT validation (Phase 4.3).
 ///
 /// Production deployments should use asymmetric algorithms (RSA/EC/Ed)
@@ -432,6 +435,16 @@ pub struct ServerConfig {
     /// Clock skew tolerance for Agent auth timestamps in seconds.
     /// Conservative default: 30.
     pub agent_clock_skew_secs: i64,
+    /// Nonce cache backend selector.
+    /// Default: Auto.
+    pub nonce_cache_backend: NonceCacheBackend,
+    /// Nonce cache TTL in seconds.
+    /// When 0, derived from `agent_clock_skew_secs * 2` with a minimum of 60.
+    /// Default: 0.
+    pub nonce_cache_ttl_secs: u64,
+    /// Maximum number of entries retained by the in-memory nonce cache.
+    /// Default: 10_000.
+    pub nonce_cache_max_entries: usize,
     /// Enable periodic background lifecycle outbox reconciliation.
     /// Default: false.
     pub lifecycle_reconciliation_enabled: bool,
@@ -522,6 +535,9 @@ impl std::fmt::Debug for ServerConfig {
         d.field("s3_config", &self.s3_config);
         d.field("oidc_config", &self.oidc_config);
         d.field("agent_clock_skew_secs", &self.agent_clock_skew_secs);
+        d.field("nonce_cache_backend", &self.nonce_cache_backend);
+        d.field("nonce_cache_ttl_secs", &self.nonce_cache_ttl_secs);
+        d.field("nonce_cache_max_entries", &self.nonce_cache_max_entries);
         d.field(
             "lifecycle_reconciliation_enabled",
             &self.lifecycle_reconciliation_enabled,
@@ -593,6 +609,9 @@ impl Default for ServerConfig {
             s3_config: None,
             oidc_config: None,
             agent_clock_skew_secs: 30,
+            nonce_cache_backend: NonceCacheBackend::Auto,
+            nonce_cache_ttl_secs: 0,
+            nonce_cache_max_entries: 10_000,
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: 60,
             lifecycle_reconciliation_batch_limit: 1000,
@@ -758,6 +777,15 @@ impl ServerConfig {
             return Err("agent_clock_skew_secs must be positive".to_string());
         }
 
+        // Validate nonce cache backend compatibility.
+        if self.nonce_cache_backend == NonceCacheBackend::Postgres
+            && !is_postgres_dsn(&self.store_dsn)
+        {
+            return Err(
+                "nonce_cache_backend='postgres' requires a PostgreSQL store DSN".to_string(),
+            );
+        }
+
         // Validate lifecycle reconciliation settings
         if self.lifecycle_reconciliation_enabled {
             if self.lifecycle_reconciliation_interval_secs == 0 {
@@ -837,6 +865,11 @@ impl ServerConfig {
 
         Ok(())
     }
+}
+
+fn is_postgres_dsn(dsn: &str) -> bool {
+    let dsn_lower = dsn.to_lowercase();
+    dsn_lower.starts_with("postgres://") || dsn_lower.starts_with("postgresql://")
 }
 
 fn is_placeholder_bearer_token(token: &str) -> bool {

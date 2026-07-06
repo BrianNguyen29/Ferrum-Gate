@@ -37,7 +37,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
 | WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
 | Behavioral anomaly detection | Not implemented | Backlog; see ADR 010 |
-| Persistent nonce cache (shared) | Not implemented | Backlog; in-memory cache is process-local; multi-node requires shared cache |
+| Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
 | GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |
 | HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
 | HA leader election | Not implemented | Backlog; requires PostgreSQL HA design and distributed consensus |

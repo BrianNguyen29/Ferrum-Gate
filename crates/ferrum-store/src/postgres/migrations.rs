@@ -1,7 +1,7 @@
 //! PostgreSQL embedded migration parity.
 //!
 //! `MIGRATIONS` is the ordered list of forward-only schema changes.
-//! `CURRENT_SCHEMA_VERSION` is **10** after adding lifecycle outbox fencing.
+//! `CURRENT_SCHEMA_VERSION` is **15** after adding the shared nonce cache table.
 //!
 //! # SQLite-only migrations intentionally skipped
 //!
@@ -146,12 +146,20 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/014_add_quarantine_holds.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 15,
+        name: "015_add_nonce_cache",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/015_add_nonce_cache.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 14;
+pub const CURRENT_SCHEMA_VERSION: i64 = 15;
 
 #[cfg(test)]
 mod tests {

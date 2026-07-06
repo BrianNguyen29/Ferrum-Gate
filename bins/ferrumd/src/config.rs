@@ -155,6 +155,18 @@ pub struct Args {
     /// Duration in seconds to lock a factor after exceeding max attempts (default: 900).
     #[arg(long)]
     mfa_lockout_duration_secs: Option<u64>,
+
+    /// Nonce cache backend: "auto", "memory", or "postgres" (default: "auto").
+    #[arg(long)]
+    nonce_cache_backend: Option<String>,
+
+    /// Nonce cache TTL in seconds. 0 derives from agent_clock_skew_secs*2 (min 60).
+    #[arg(long)]
+    nonce_cache_ttl_secs: Option<u64>,
+
+    /// Maximum entries for the in-memory nonce cache (default: 10000).
+    #[arg(long)]
+    nonce_cache_max_entries: Option<usize>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -283,6 +295,12 @@ struct ServerSection {
     mfa_lockout_max_attempts: u32,
     #[serde(default = "default_mfa_lockout_duration_secs")]
     mfa_lockout_duration_secs: u64,
+    #[serde(default)]
+    nonce_cache_backend: Option<String>,
+    #[serde(default)]
+    nonce_cache_ttl_secs: Option<u64>,
+    #[serde(default)]
+    nonce_cache_max_entries: Option<usize>,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
@@ -331,6 +349,14 @@ fn default_mfa_lockout_max_attempts() -> u32 {
 
 fn default_mfa_lockout_duration_secs() -> u64 {
     900
+}
+
+fn default_nonce_cache_ttl_secs() -> u64 {
+    0
+}
+
+fn default_nonce_cache_max_entries() -> usize {
+    10_000
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -668,6 +694,29 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.mfa_lockout_duration_secs))
         .unwrap_or_else(default_mfa_lockout_duration_secs);
 
+    let nonce_cache_backend = args
+        .nonce_cache_backend
+        .clone()
+        .or(get_env("FERRUMD_NONCE_CACHE_BACKEND")?)
+        .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_backend.clone()))
+        .unwrap_or_else(|| "auto".to_string());
+
+    let nonce_cache_backend_parsed: ferrum_gateway::NonceCacheBackend = nonce_cache_backend
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("invalid nonce cache backend: {}", e))?;
+
+    let nonce_cache_ttl_secs = args
+        .nonce_cache_ttl_secs
+        .or(get_env("FERRUMD_NONCE_CACHE_TTL_SECS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_ttl_secs))
+        .unwrap_or_else(default_nonce_cache_ttl_secs);
+
+    let nonce_cache_max_entries = args
+        .nonce_cache_max_entries
+        .or(get_env("FERRUMD_NONCE_CACHE_MAX_ENTRIES")?)
+        .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_max_entries))
+        .unwrap_or_else(default_nonce_cache_max_entries);
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -912,6 +961,9 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         s3_config,
         oidc_config,
         agent_clock_skew_secs: 30,
+        nonce_cache_backend: nonce_cache_backend_parsed,
+        nonce_cache_ttl_secs,
+        nonce_cache_max_entries,
         lifecycle_reconciliation_enabled,
         lifecycle_reconciliation_interval_secs,
         lifecycle_reconciliation_batch_limit,

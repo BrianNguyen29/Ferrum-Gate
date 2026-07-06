@@ -21,15 +21,12 @@ use ferrum_proto::{
     TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
-use ferrum_store::SqliteStore;
-use ferrum_store::StoreFacade;
+use ferrum_store::{InMemoryNonceCache, SqliteStore, StoreFacade};
 use ferrum_sync::RuntimeBridge;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Duration as StdDuration;
 use tower::ServiceBuilder;
 
 use ed25519_dalek::Verifier;
@@ -41,12 +38,6 @@ use tower_http::trace::TraceLayer;
 
 use crate::AuthActor;
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
-
-/// Maximum number of entries in the agent nonce replay cache.
-/// When the cache exceeds this limit, oldest entries are evicted
-/// after TTL cleanup. This prevents unbounded growth under
-/// high-volume agent traffic.
-const NONCE_CACHE_MAX_ENTRIES: usize = 10_000;
 
 /// Rate-limiting key that buckets authenticated requests by a principal
 /// identifier combined with IP, and anonymous requests by IP alone.
@@ -110,8 +101,8 @@ pub(crate) struct AppState {
     pub(crate) server_config: ServerConfig,
     pub(crate) metrics: Arc<Metrics>,
     pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
-    /// In-memory nonce cache for Agent auth replay protection.
-    nonce_cache: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Nonce cache for Agent auth replay protection.
+    nonce_cache: Arc<dyn ferrum_store::NonceCache>,
 }
 
 #[cfg(test)]
@@ -120,10 +111,12 @@ impl AppState {
     pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
         Arc::new(AppState {
             runtime,
-            server_config,
+            server_config: server_config.clone(),
             metrics: Arc::new(Metrics::new()),
             jwks_cache: None,
-            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
         })
     }
 }
@@ -1127,7 +1120,11 @@ async fn shutdown_signal() {
     tracing::info!("shutdown signal received, draining connections...");
 }
 
-pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
+pub async fn run_http_server(
+    config: ServerConfig,
+    runtime: GatewayRuntime,
+    nonce_cache: Arc<dyn ferrum_store::NonceCache>,
+) -> anyhow::Result<()> {
     let jwks_cache = config.oidc_config.as_ref().and_then(|oidc| {
         oidc.jwks_url
             .as_ref()
@@ -1138,7 +1135,7 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
         server_config: config.clone(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache,
     });
 
     let approval_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
@@ -1236,12 +1233,15 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 /// governance endpoints without credential checks.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn build_router(runtime: GatewayRuntime) -> Router {
+    let server_config = ServerConfig::default();
     let state = Arc::new(AppState {
         runtime,
-        server_config: ServerConfig::default(),
+        server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache: None,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache: Arc::new(InMemoryNonceCache::new(
+            server_config.nonce_cache_max_entries,
+        )),
     });
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state);
@@ -1260,7 +1260,9 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache: Arc::new(InMemoryNonceCache::new(
+            server_config.nonce_cache_max_entries,
+        )),
     });
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
@@ -1307,12 +1309,15 @@ pub fn build_router_with_governor(
         .finish()
         .unwrap();
 
+    let server_config = ServerConfig::default();
     let state = Arc::new(AppState {
         runtime,
-        server_config: ServerConfig::default(),
+        server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
         jwks_cache: None,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache: Arc::new(InMemoryNonceCache::new(
+            server_config.nonce_cache_max_entries,
+        )),
     });
 
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
@@ -1815,18 +1820,27 @@ async fn verify_agent_request(
     }
 
     // Verify nonce (replay protection)
-    let nonce_ttl =
-        StdDuration::from_secs((state.server_config.agent_clock_skew_secs * 2).max(60) as u64);
-    {
-        let mut cache = state.nonce_cache.lock().unwrap();
-        let now_instant = Instant::now();
-        cache.retain(|_, &mut inserted| now_instant.duration_since(inserted) < nonce_ttl);
-        // Enforce max capacity to prevent unbounded growth
-        prune_nonce_cache_oldest(&mut cache, NONCE_CACHE_MAX_ENTRIES.saturating_sub(1));
-        if cache.contains_key(nonce) {
+    if nonce.chars().count() > 256 {
+        return Err(AgentAuthError::Unauthorized(
+            "nonce exceeds maximum length".to_string(),
+        ));
+    }
+    let nonce_ttl = if state.server_config.nonce_cache_ttl_secs > 0 {
+        StdDuration::from_secs(state.server_config.nonce_cache_ttl_secs)
+    } else {
+        StdDuration::from_secs((state.server_config.agent_clock_skew_secs * 2).max(60) as u64)
+    };
+    match state.nonce_cache.check_and_insert(nonce, nonce_ttl).await {
+        Ok(true) => {}
+        Ok(false) => {
             return Err(AgentAuthError::Unauthorized("replayed nonce".to_string()));
         }
-        cache.insert(nonce.to_string(), now_instant);
+        Err(error) => {
+            tracing::error!(%error, "nonce cache check failed");
+            return Err(AgentAuthError::Unauthorized(
+                "nonce cache unavailable".to_string(),
+            ));
+        }
     }
 
     // Read body and verify body hash
@@ -1914,23 +1928,6 @@ async fn verify_agent_request(
     });
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
-}
-
-/// Prune the oldest entries from the nonce cache until it is at or below
-/// `max_entries`. This is called after TTL cleanup to enforce a hard
-/// capacity bound and prevent unbounded growth.
-fn prune_nonce_cache_oldest(cache: &mut HashMap<String, Instant>, max_entries: usize) {
-    while cache.len() > max_entries {
-        let oldest = cache
-            .iter()
-            .min_by_key(|(_, instant)| *instant)
-            .map(|(k, _)| k.clone());
-        if let Some(key) = oldest {
-            cache.remove(&key);
-        } else {
-            break;
-        }
-    }
 }
 
 fn auth_error(message: &str) -> Response {
@@ -7735,12 +7732,15 @@ rules:
         let _ = cache.get_key("test-rsa-key").await.unwrap();
 
         let runtime = test_runtime().await;
+        let server_config = ServerConfig::default();
         let state = Arc::new(AppState {
             runtime,
-            server_config: ServerConfig::default(),
+            server_config: server_config.clone(),
             metrics: Arc::new(Metrics::new()),
             jwks_cache: Some(cache),
-            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
         });
 
         let response = crate::monitoring::metrics_handler(axum::extract::State(state)).await;
@@ -7948,26 +7948,6 @@ rules:
         assert_eq!(response2.status(), StatusCode::UNAUTHORIZED);
     }
 
-    #[test]
-    fn test_nonce_cache_prune_oldest_enforces_max_capacity() {
-        let mut cache = HashMap::new();
-        let now = Instant::now();
-        // Insert 5 entries with staggered times
-        for i in 0..5 {
-            cache.insert(format!("nonce-{}", i), now - StdDuration::from_secs(i));
-        }
-        assert_eq!(cache.len(), 5);
-        // Prune to max 3
-        prune_nonce_cache_oldest(&mut cache, 3);
-        assert_eq!(cache.len(), 3);
-        // The oldest entries (nonce-4, nonce-3) should have been removed
-        assert!(!cache.contains_key("nonce-4"));
-        assert!(!cache.contains_key("nonce-3"));
-        assert!(cache.contains_key("nonce-2"));
-        assert!(cache.contains_key("nonce-1"));
-        assert!(cache.contains_key("nonce-0"));
-    }
-
     #[tokio::test]
     async fn test_agent_auth_body_hash_mismatch() {
         let runtime = test_runtime().await;
@@ -8014,6 +7994,62 @@ rules:
                     .header("X-Ferrum-Timestamp", &timestamp)
                     .header("X-Ferrum-Nonce", &nonce)
                     .header("X-Ferrum-Body-Hash", "wrong_hash")
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_long_nonce_rejected() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:read".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = "x".repeat(257);
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
                     .header("X-Ferrum-Signature", &signature)
                     .body(Body::empty())
                     .unwrap(),

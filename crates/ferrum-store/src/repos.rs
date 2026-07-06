@@ -10,6 +10,7 @@ use ferrum_proto::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::Result;
 
@@ -657,5 +658,72 @@ pub trait StoreFacade: Send + Sync {
     /// for them to drain. The default implementation is a no-op.
     async fn shutdown(&self) -> crate::Result<()> {
         Ok(())
+    }
+}
+
+/// Shared nonce cache for agent-auth replay protection.
+///
+/// Implementations must be thread-safe and `Send + Sync`. The trait is
+/// intentionally small: a single `check_and_insert` call atomically decides
+/// whether a nonce is fresh (returns `Ok(true)`), a replay (`Ok(false)`), or
+/// encounters an internal error (`Err`). Callers must treat any error as
+/// fail-closed and reject the request.
+///
+/// A separate `vacuum` method allows background reconcilers to reclaim
+/// expired entries so the cache does not grow without bound.
+#[async_trait]
+pub trait NonceCache: Send + Sync {
+    /// Atomically check whether `nonce` is present and, if not, insert it.
+    ///
+    /// `ttl` is the duration the nonce must be retained. After `ttl` has
+    /// elapsed the same nonce may be accepted again.
+    ///
+    /// Returns `Ok(true)` when the nonce was newly inserted, `Ok(false)` when
+    /// it is a replay, and `Err` on cache failure.
+    async fn check_and_insert(&self, nonce: &str, ttl: Duration) -> Result<bool>;
+
+    /// Remove expired entries and return the number of rows/evictions.
+    ///
+    /// Implementations should treat this as best-effort; errors are logged by
+    /// the caller and do not fail the gateway.
+    async fn vacuum(&self) -> Result<usize>;
+}
+
+/// Configuration backend selector for the nonce cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NonceCacheBackend {
+    /// Select `Postgres` when the store backend is PostgreSQL, otherwise
+    /// `Memory`.
+    #[default]
+    Auto,
+    /// Process-local in-memory cache.
+    Memory,
+    /// PostgreSQL-backed shared cache.
+    Postgres,
+}
+
+impl std::fmt::Display for NonceCacheBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NonceCacheBackend::Auto => write!(f, "auto"),
+            NonceCacheBackend::Memory => write!(f, "memory"),
+            NonceCacheBackend::Postgres => write!(f, "postgres"),
+        }
+    }
+}
+
+impl std::str::FromStr for NonceCacheBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(NonceCacheBackend::Auto),
+            "memory" => Ok(NonceCacheBackend::Memory),
+            "postgres" => Ok(NonceCacheBackend::Postgres),
+            _ => Err(format!(
+                "invalid nonce cache backend: {} (expected 'auto', 'memory', or 'postgres')",
+                s
+            )),
+        }
     }
 }

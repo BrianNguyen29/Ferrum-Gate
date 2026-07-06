@@ -79,7 +79,7 @@ These require broader design decisions, additional evidence, or an ADR before th
   - Acceptance: Adapter implements `AdapterPort` with put/delete/get/copy; versioning-based rollback; local emulator integration tests.
 - **HA reconciler** — Background task to reconcile capability and execution state across restarted or failed-over instances.
   - Acceptance: Reconciler scans stale `in_flight` executions and transitions them to `failed` or `compensated` with audit entries; works with PostgreSQL and SQLite.
-- **Persistent nonce cache** — Agent auth replay protection uses a bounded in-memory cache. Multi-process or multi-node deployments require a shared persistent cache layer. Not implemented.
+- **Persistent nonce cache** — ✅ Implemented in ADR-015: `NonceCache` seam with `InMemoryNonceCache` (default) and `PostgresNonceCache` (multi-process).
 - **HA leader election** — Distributed leader election for coordinated multi-node operations beyond per-task reconciliation leases. Not implemented; requires PostgreSQL HA design.
 - **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.

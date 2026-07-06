@@ -35,6 +35,7 @@ mod ledger;
 mod lifecycle_outbox;
 mod mfa_credentials;
 mod migrations;
+mod nonce_cache;
 mod policy_bundles;
 mod proposals;
 mod provenance;
@@ -53,6 +54,7 @@ pub use intents::PostgresIntentRepo;
 pub use ledger::PostgresLedgerRepo;
 pub use lifecycle_outbox::PostgresLifecycleOutboxRepo;
 pub use mfa_credentials::PostgresMfaCredentialRepo;
+pub use nonce_cache::PostgresNonceCache;
 pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
@@ -664,7 +666,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 13);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 15);
     }
 
     #[test]

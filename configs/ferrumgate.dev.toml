@@ -45,6 +45,12 @@ pg_acquire_timeout_secs = 5
 # approval_timeout_seconds = 3600
 # approval_reconciliation_interval_secs = 300
 
+# Nonce cache backend: "auto" (default), "memory", or "postgres".
+# Auto selects Postgres when store_dsn is PostgreSQL, otherwise memory.
+# nonce_cache_backend = "auto"
+# nonce_cache_ttl_secs = 0
+# nonce_cache_max_entries = 10000
+
 # ── MFA Configuration (optional) ──
 # mfa_secret_key is loaded from FERRUMD_MFA_SECRET_KEY env var if not set here.
 # Must be exactly 64 hex characters (32 bytes). Generate with: openssl rand -hex 32

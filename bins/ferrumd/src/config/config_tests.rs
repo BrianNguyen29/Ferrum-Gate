@@ -1,4 +1,5 @@
 use super::*;
+use ferrum_gateway::NonceCacheBackend;
 use std::fs;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,6 +52,9 @@ fn clear_test_env() {
         "FERRUMD_MFA_TOTP_ISSUER",
         "FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS",
         "FERRUMD_MFA_LOCKOUT_DURATION_SECS",
+        "FERRUMD_NONCE_CACHE_BACKEND",
+        "FERRUMD_NONCE_CACHE_TTL_SECS",
+        "FERRUMD_NONCE_CACHE_MAX_ENTRIES",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -4590,4 +4594,134 @@ pdp_mode = "unknown"
     assert!(error.to_string().contains("invalid pdp mode"));
 
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args::default();
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Auto);
+    assert_eq!(config.nonce_cache_ttl_secs, 0);
+    assert_eq!(config.nonce_cache_max_entries, 10_000);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_cli_overrides() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args {
+        nonce_cache_backend: Some("memory".to_string()),
+        nonce_cache_ttl_secs: Some(120),
+        nonce_cache_max_entries: Some(500),
+        ..Default::default()
+    };
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 120);
+    assert_eq!(config.nonce_cache_max_entries, 500);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_env_overrides_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_NONCE_CACHE_BACKEND", "memory");
+        std::env::set_var("FERRUMD_NONCE_CACHE_TTL_SECS", "180");
+        std::env::set_var("FERRUMD_NONCE_CACHE_MAX_ENTRIES", "250");
+    }
+
+    let args = Args::default();
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 180);
+    assert_eq!(config.nonce_cache_max_entries, 250);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_NONCE_CACHE_BACKEND", "postgres");
+        std::env::set_var("FERRUMD_NONCE_CACHE_TTL_SECS", "180");
+        std::env::set_var("FERRUMD_NONCE_CACHE_MAX_ENTRIES", "250");
+    }
+
+    let args = Args {
+        nonce_cache_backend: Some("memory".to_string()),
+        nonce_cache_ttl_secs: Some(120),
+        nonce_cache_max_entries: Some(500),
+        ..Default::default()
+    };
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 120);
+    assert_eq!(config.nonce_cache_max_entries, 500);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+nonce_cache_backend = "memory"
+nonce_cache_ttl_secs = 240
+nonce_cache_max_entries = 1000
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 240);
+    assert_eq!(config.nonce_cache_max_entries, 1000);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_postgres_nonce_cache_with_sqlite_store() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args {
+        nonce_cache_backend: Some("postgres".to_string()),
+        store_dsn: Some("sqlite::memory:".to_string()),
+        ..Default::default()
+    };
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("PostgreSQL store DSN"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_nonce_cache_backend() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args {
+        nonce_cache_backend: Some("redis".to_string()),
+        ..Default::default()
+    };
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("invalid nonce cache backend"),
+        "unexpected error: {error}"
+    );
 }

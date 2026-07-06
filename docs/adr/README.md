@@ -19,6 +19,7 @@ This directory records significant architecture decisions made in the FerrumGate
 | [012](012-policy-bundle-rule-semantics.md) | PolicyBundle PDP Rule Semantics | Proposed |
 | [013](013-mfa-breakglass.md) | MFA Disable/Rotate Break-Glass | Accepted |
 | [014](014-quarantine-holds.md) | Quarantine Holds for Policy-Flagged Proposals | Accepted |
+| [015](015-shared-nonce-cache.md) | Shared Nonce Cache for Agent Auth Replay Protection | Accepted |
 
 ## Format
 
