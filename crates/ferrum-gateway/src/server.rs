@@ -156,6 +156,9 @@ pub(crate) struct Metrics {
     pub(crate) governance_errors_v1_approvals: AtomicU64,
     pub(crate) governance_errors_v1_approvals_approval_id: AtomicU64,
     pub(crate) governance_errors_v1_approvals_resolve: AtomicU64,
+    pub(crate) governance_errors_v1_quarantines: AtomicU64,
+    pub(crate) governance_errors_v1_quarantines_hold_id: AtomicU64,
+    pub(crate) governance_errors_v1_quarantines_resolve: AtomicU64,
     pub(crate) governance_errors_v1_policy_bundles_create: AtomicU64,
     pub(crate) governance_errors_v1_policy_bundles_list: AtomicU64,
     pub(crate) governance_errors_v1_policy_bundles_get: AtomicU64,
@@ -199,6 +202,9 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_approvals: AtomicU64,
     pub(crate) governance_success_v1_approvals_approval_id: AtomicU64,
     pub(crate) governance_success_v1_approvals_resolve: AtomicU64,
+    pub(crate) governance_success_v1_quarantines: AtomicU64,
+    pub(crate) governance_success_v1_quarantines_hold_id: AtomicU64,
+    pub(crate) governance_success_v1_quarantines_resolve: AtomicU64,
     pub(crate) governance_success_v1_policy_bundles_create: AtomicU64,
     pub(crate) governance_success_v1_policy_bundles_list: AtomicU64,
     pub(crate) governance_success_v1_policy_bundles_get: AtomicU64,
@@ -228,6 +234,8 @@ pub(crate) struct Metrics {
     pub(crate) audit_fail_closed_rejections: AtomicU64,
     // Approval timeout counter
     pub(crate) approval_timeouts_total: AtomicU64,
+    // Quarantine hold timeout counter
+    pub(crate) quarantine_timeouts_total: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -276,6 +284,9 @@ impl Metrics {
             governance_errors_v1_approvals: AtomicU64::new(0),
             governance_errors_v1_approvals_approval_id: AtomicU64::new(0),
             governance_errors_v1_approvals_resolve: AtomicU64::new(0),
+            governance_errors_v1_quarantines: AtomicU64::new(0),
+            governance_errors_v1_quarantines_hold_id: AtomicU64::new(0),
+            governance_errors_v1_quarantines_resolve: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_create: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_list: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_get: AtomicU64::new(0),
@@ -318,6 +329,9 @@ impl Metrics {
             governance_success_v1_approvals: AtomicU64::new(0),
             governance_success_v1_approvals_approval_id: AtomicU64::new(0),
             governance_success_v1_approvals_resolve: AtomicU64::new(0),
+            governance_success_v1_quarantines: AtomicU64::new(0),
+            governance_success_v1_quarantines_hold_id: AtomicU64::new(0),
+            governance_success_v1_quarantines_resolve: AtomicU64::new(0),
             governance_success_v1_policy_bundles_create: AtomicU64::new(0),
             governance_success_v1_policy_bundles_list: AtomicU64::new(0),
             governance_success_v1_policy_bundles_get: AtomicU64::new(0),
@@ -345,6 +359,7 @@ impl Metrics {
             governance_success_v1_mfa_get: AtomicU64::new(0),
             audit_fail_closed_rejections: AtomicU64::new(0),
             approval_timeouts_total: AtomicU64::new(0),
+            quarantine_timeouts_total: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -417,6 +432,15 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ApprovalsResolve => self
                 .governance_errors_v1_approvals_resolve
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::Quarantines => self
+                .governance_errors_v1_quarantines
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesHoldId => self
+                .governance_errors_v1_quarantines_hold_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesResolve => self
+                .governance_errors_v1_quarantines_resolve
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesCreate => self
                 .governance_errors_v1_policy_bundles_create
@@ -549,6 +573,15 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ApprovalsResolve => self
                 .governance_success_v1_approvals_resolve
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::Quarantines => self
+                .governance_success_v1_quarantines
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesHoldId => self
+                .governance_success_v1_quarantines_hold_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesResolve => self
+                .governance_success_v1_quarantines_resolve
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesCreate => self
                 .governance_success_v1_policy_bundles_create
@@ -710,6 +743,9 @@ pub(crate) enum GovernanceRoute {
     Approvals,
     ApprovalsApprovalId,
     ApprovalsResolve,
+    Quarantines,
+    QuarantinesHoldId,
+    QuarantinesResolve,
     PolicyBundlesCreate,
     PolicyBundlesList,
     PolicyBundlesGet,
@@ -760,6 +796,9 @@ impl GovernanceRoute {
             GovernanceRoute::Approvals => "/v1/approvals",
             GovernanceRoute::ApprovalsApprovalId => "/v1/approvals/{approval_id}",
             GovernanceRoute::ApprovalsResolve => "/v1/approvals/{approval_id}/resolve",
+            GovernanceRoute::Quarantines => "/v1/quarantines",
+            GovernanceRoute::QuarantinesHoldId => "/v1/quarantines/{hold_id}",
+            GovernanceRoute::QuarantinesResolve => "/v1/quarantines/{hold_id}/resolve",
             GovernanceRoute::PolicyBundlesCreate => "/v1/policy-bundles",
             GovernanceRoute::PolicyBundlesList => "/v1/policy-bundles",
             GovernanceRoute::PolicyBundlesGet => "/v1/policy-bundles/{bundle_id}",
@@ -811,6 +850,9 @@ impl GovernanceRoute {
             GovernanceRoute::Approvals => "GET",
             GovernanceRoute::ApprovalsApprovalId => "GET",
             GovernanceRoute::ApprovalsResolve => "POST",
+            GovernanceRoute::Quarantines => "GET",
+            GovernanceRoute::QuarantinesHoldId => "GET",
+            GovernanceRoute::QuarantinesResolve => "POST",
             GovernanceRoute::PolicyBundlesCreate => "POST",
             GovernanceRoute::PolicyBundlesList => "GET",
             GovernanceRoute::PolicyBundlesGet => "GET",
@@ -854,6 +896,7 @@ pub(crate) enum PublicRoute {
 // ---------------------------------------------------------------------------
 
 const APPROVAL_TIMEOUT_BATCH_SIZE: u32 = 100;
+const QUARANTINE_TIMEOUT_BATCH_SIZE: u32 = 100;
 
 /// Emit a provenance event recording that an approval timed out.
 async fn emit_approval_timed_out_provenance(
@@ -957,6 +1000,108 @@ async fn approval_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::
     }
 }
 
+/// Emit a provenance event recording that a quarantine hold timed out.
+async fn emit_quarantine_timed_out_provenance(
+    state: &AppState,
+    hold: &ferrum_proto::QuarantineHold,
+) {
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "hold_id".to_string(),
+        serde_json::json!(hold.hold_id.to_string()),
+    );
+    metadata.insert(
+        "previous_state".to_string(),
+        serde_json::json!(format!("{:?}", hold.state)),
+    );
+
+    let event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::QuarantineTimedOut,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("FerrumGate Gateway".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::QuarantineHold,
+            object_id: hold.hold_id.to_string(),
+            summary: Some("Quarantine hold timed out and was transitioned to Expired".to_string()),
+        },
+        intent_id: Some(hold.intent_id),
+        proposal_id: Some(hold.proposal_id),
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+
+    if let Err(e) = crate::provenance::append_governance_event(&state.runtime.store, event).await {
+        tracing::warn!(
+            error = %e,
+            hold_id = %hold.hold_id,
+            "failed to append QuarantineTimedOut provenance event"
+        );
+    }
+}
+
+/// Background task that periodically reconciles stale pending quarantine holds.
+async fn quarantine_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::sync::Notify>) {
+    let interval_secs = state.server_config.quarantine_reconciliation_interval_secs;
+    let timeout_seconds = state.server_config.quarantine_timeout_seconds;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let now = chrono::Utc::now();
+                match state
+                    .runtime
+                    .store
+                    .quarantine_holds()
+                    .expire_stale_pending(now, timeout_seconds, QUARANTINE_TIMEOUT_BATCH_SIZE)
+                    .await
+                {
+                    Ok(expired) => {
+                        for hold in &expired {
+                            state
+                                .metrics
+                                .quarantine_timeouts_total
+                                .fetch_add(1, Ordering::Relaxed);
+                            emit_quarantine_timed_out_provenance(&state, hold).await;
+                        }
+                        if !expired.is_empty() {
+                            tracing::info!(
+                                count = expired.len(),
+                                "quarantine timeout reconciliation expired stale pending holds"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "quarantine timeout reconciliation failed");
+                    }
+                }
+            }
+            _ = shutdown.notified() => {
+                tracing::info!("quarantine timeout reconciler shutting down");
+                break;
+            }
+        }
+    }
+}
+
 /// Wait for shutdown signal (Ctrl+C or SIGTERM on unix).
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -1001,6 +1146,16 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
         Some(tokio::spawn(approval_timeout_reconciler(
             Arc::clone(&state),
             Arc::clone(&approval_reconciler_shutdown),
+        )))
+    } else {
+        None
+    };
+
+    let quarantine_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    let quarantine_reconciler_handle = if config.quarantine_timeout_enabled {
+        Some(tokio::spawn(quarantine_timeout_reconciler(
+            Arc::clone(&state),
+            Arc::clone(&quarantine_reconciler_shutdown),
         )))
     } else {
         None
@@ -1062,6 +1217,11 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 
     approval_reconciler_shutdown.notify_waiters();
     if let Some(handle) = approval_reconciler_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    quarantine_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = quarantine_reconciler_handle {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
     }
 
@@ -1202,6 +1362,19 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/approvals/{approval_id}/resolve",
             post(crate::approval::resolve_approval),
+        )
+        // Quarantine hold endpoints
+        .route(
+            "/v1/quarantines",
+            get(crate::quarantine::list_quarantine_holds),
+        )
+        .route(
+            "/v1/quarantines/{hold_id}",
+            get(crate::quarantine::get_quarantine_hold),
+        )
+        .route(
+            "/v1/quarantines/{hold_id}/resolve",
+            post(crate::quarantine::resolve_quarantine_hold),
         )
         // Policy/evaluation endpoints
         .route("/v1/intents/compile", post(crate::intents::compile_intent))
@@ -1866,6 +2039,14 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
         ("POST", p) if p.starts_with("/v1/approvals/") && p.ends_with("/resolve") => {
             Some("approval:resolve")
         }
+        // Quarantine holds (Phase 1: mirror approval scopes)
+        ("GET", "/v1/quarantines") => Some("approval:read"),
+        ("GET", p) if p.starts_with("/v1/quarantines/") && !p.ends_with("/resolve") => {
+            Some("approval:read")
+        }
+        ("POST", p) if p.starts_with("/v1/quarantines/") && p.ends_with("/resolve") => {
+            Some("approval:resolve")
+        }
         // Policy bundles
         ("POST", "/v1/policy-bundles") => Some("policy:write"),
         ("GET", "/v1/policy-bundles") => Some("policy:read"),
@@ -2370,7 +2551,8 @@ mod tests {
     use ferrum_store::repos::{
         AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
         CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
-        MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
+        MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo,
+        RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
@@ -2457,6 +2639,9 @@ mod tests {
         }
         fn approvals(&self) -> Arc<dyn ApprovalRepo> {
             self.inner.approvals()
+        }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
         }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
@@ -2776,6 +2961,9 @@ mod tests {
         fn approvals(&self) -> Arc<dyn ApprovalRepo> {
             self.inner.approvals()
         }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
+        }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
         }
@@ -2915,6 +3103,9 @@ mod tests {
         }
         fn approvals(&self) -> Arc<dyn ApprovalRepo> {
             self.inner.approvals()
+        }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
         }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
@@ -4260,6 +4451,9 @@ mod tests {
                 GovernanceRoute::Approvals,
                 GovernanceRoute::ApprovalsApprovalId,
                 GovernanceRoute::ApprovalsResolve,
+                GovernanceRoute::Quarantines,
+                GovernanceRoute::QuarantinesHoldId,
+                GovernanceRoute::QuarantinesResolve,
                 GovernanceRoute::PolicyBundlesCreate,
                 GovernanceRoute::PolicyBundlesList,
                 GovernanceRoute::PolicyBundlesGet,
@@ -4308,6 +4502,9 @@ mod tests {
                 GovernanceRoute::Approvals => (),
                 GovernanceRoute::ApprovalsApprovalId => (),
                 GovernanceRoute::ApprovalsResolve => (),
+                GovernanceRoute::Quarantines => (),
+                GovernanceRoute::QuarantinesHoldId => (),
+                GovernanceRoute::QuarantinesResolve => (),
                 GovernanceRoute::PolicyBundlesCreate => (),
                 GovernanceRoute::PolicyBundlesList => (),
                 GovernanceRoute::PolicyBundlesGet => (),
@@ -11061,5 +11258,35 @@ rules:
             events[0].kind,
             ProvenanceEventKind::ApprovalTimedOut
         ));
+    }
+
+    #[test]
+    fn test_required_scope_for_quarantine_paths() {
+        assert_eq!(
+            required_scope_for_path("GET", "/v1/quarantines"),
+            Some("approval:read")
+        );
+        assert_eq!(
+            required_scope_for_path(
+                "GET",
+                "/v1/quarantines/550e8400-e29b-41d4-a716-446655440000"
+            ),
+            Some("approval:read")
+        );
+        assert_eq!(
+            required_scope_for_path(
+                "POST",
+                "/v1/quarantines/550e8400-e29b-41d4-a716-446655440000/resolve"
+            ),
+            Some("approval:resolve")
+        );
+        // Unknown quarantine sub-resource should fall through to deny-by-default.
+        assert_eq!(
+            required_scope_for_path(
+                "DELETE",
+                "/v1/quarantines/550e8400-e29b-41d4-a716-446655440000"
+            ),
+            Some("admin:tokens")
+        );
     }
 }

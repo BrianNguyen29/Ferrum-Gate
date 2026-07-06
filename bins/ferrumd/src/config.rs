@@ -11,7 +11,7 @@ const DEFAULT_STORE_DSN: &str = "sqlite::memory:";
 const DEFAULT_LOG_FILTER: &str = "info";
 const AUTO_CONFIG_FILE: &str = "configs/ferrumgate.dev.toml";
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 #[command(name = "ferrumd")]
 #[command(about = "FerrumGate daemon")]
 pub struct Args {
@@ -116,6 +116,20 @@ pub struct Args {
     /// (default: 300, min: 5, max: 86400).
     #[arg(long)]
     approval_reconciliation_interval_secs: Option<u64>,
+
+    /// Enable periodic background quarantine hold timeout reconciliation (default: false).
+    #[arg(long)]
+    quarantine_timeout_enabled: bool,
+
+    /// Maximum age in seconds before a pending quarantine hold is expired by the
+    /// background reconciler (default: 86400, min: 60, max: 604800).
+    #[arg(long)]
+    quarantine_timeout_seconds: Option<u64>,
+
+    /// Interval in seconds between quarantine hold timeout reconciliation runs
+    /// (default: 300, min: 5, max: 86400).
+    #[arg(long)]
+    quarantine_reconciliation_interval_secs: Option<u64>,
 
     /// When true, audit append failures block the action and return 503 (default: false).
     #[arg(long)]
@@ -251,6 +265,12 @@ struct ServerSection {
     approval_timeout_seconds: Option<u64>,
     #[serde(default)]
     approval_reconciliation_interval_secs: Option<u64>,
+    #[serde(default)]
+    quarantine_timeout_enabled: Option<bool>,
+    #[serde(default)]
+    quarantine_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    quarantine_reconciliation_interval_secs: Option<u64>,
     #[serde(default)]
     audit_fail_closed: Option<bool>,
     #[serde(default)]
@@ -583,6 +603,30 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(300);
 
+    let quarantine_timeout_enabled = if args.quarantine_timeout_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_QUARANTINE_TIMEOUT_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.quarantine_timeout_enabled))
+            .unwrap_or(false)
+    };
+
+    let quarantine_timeout_seconds = args
+        .quarantine_timeout_seconds
+        .or(get_env("FERRUMD_QUARANTINE_TIMEOUT_SECONDS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.quarantine_timeout_seconds))
+        .unwrap_or(86400);
+
+    let quarantine_reconciliation_interval_secs = args
+        .quarantine_reconciliation_interval_secs
+        .or(get_env("FERRUMD_QUARANTINE_RECONCILIATION_INTERVAL_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.quarantine_reconciliation_interval_secs)
+        })
+        .unwrap_or(300);
+
     let audit_fail_closed = if args.audit_fail_closed {
         true
     } else {
@@ -874,6 +918,9 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         approval_timeout_enabled,
         approval_timeout_seconds,
         approval_reconciliation_interval_secs,
+        quarantine_timeout_enabled,
+        quarantine_timeout_seconds,
+        quarantine_reconciliation_interval_secs,
         audit_fail_closed,
         approval_mfa_required,
         mfa_secret_key,

@@ -137,6 +137,7 @@ pub enum ObjectType {
     SideEffect,
     RollbackContract,
     Approval,
+    QuarantineHold,
     PolicyBundle,
     Message,
     File,

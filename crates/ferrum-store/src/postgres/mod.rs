@@ -38,6 +38,7 @@ mod migrations;
 mod policy_bundles;
 mod proposals;
 mod provenance;
+mod quarantine;
 mod rollback;
 mod tokens;
 
@@ -55,6 +56,7 @@ pub use mfa_credentials::PostgresMfaCredentialRepo;
 pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
+pub use quarantine::PostgresQuarantineHoldRepo;
 pub use rollback::PostgresRollbackRepo;
 pub use tokens::PostgresTokenRepo;
 
@@ -62,7 +64,8 @@ use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
     CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, MfaCredentialRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo, RollbackRepo, StoreFacade,
+    TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -304,6 +307,10 @@ impl PostgresStore {
         PostgresApprovalRepo::new(self.pool.clone())
     }
 
+    pub fn quarantine_holds(&self) -> PostgresQuarantineHoldRepo {
+        PostgresQuarantineHoldRepo::new(self.pool.clone())
+    }
+
     pub fn provenance(&self) -> PostgresProvenanceRepo {
         PostgresProvenanceRepo::new(self.pool.clone())
     }
@@ -453,6 +460,10 @@ impl StoreFacade for PostgresStore {
 
     fn approvals(&self) -> Arc<dyn ApprovalRepo> {
         Arc::new(self.approvals())
+    }
+
+    fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+        Arc::new(self.quarantine_holds())
     }
 
     fn provenance(&self) -> Arc<dyn ProvenanceRepo> {

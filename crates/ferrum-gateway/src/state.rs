@@ -451,6 +451,16 @@ pub struct ServerConfig {
     /// Interval between periodic approval timeout reconciliation runs in seconds.
     /// Default: 300. Valid range: 5..=86400.
     pub approval_reconciliation_interval_secs: u64,
+    /// Enable periodic background quarantine hold timeout reconciliation.
+    /// Default: false.
+    pub quarantine_timeout_enabled: bool,
+    /// Maximum age in seconds before a pending quarantine hold is considered stale
+    /// and transitioned to `Expired` by the background reconciler.
+    /// Default: 86400. Valid range: 60..=604800.
+    pub quarantine_timeout_seconds: u64,
+    /// Interval between periodic quarantine hold timeout reconciliation runs in seconds.
+    /// Default: 300. Valid range: 5..=86400.
+    pub quarantine_reconciliation_interval_secs: u64,
     /// Maximum number of outbox records to reconcile per periodic batch.
     /// Default: 1000.
     pub lifecycle_reconciliation_batch_limit: u32,
@@ -530,6 +540,18 @@ impl std::fmt::Debug for ServerConfig {
             "approval_reconciliation_interval_secs",
             &self.approval_reconciliation_interval_secs,
         );
+        d.field(
+            "quarantine_timeout_enabled",
+            &self.quarantine_timeout_enabled,
+        );
+        d.field(
+            "quarantine_timeout_seconds",
+            &self.quarantine_timeout_seconds,
+        );
+        d.field(
+            "quarantine_reconciliation_interval_secs",
+            &self.quarantine_reconciliation_interval_secs,
+        );
         d.field("pdp_mode", &self.pdp_mode);
         d.field("audit_fail_closed", &self.audit_fail_closed);
         d.field("approval_mfa_required", &self.approval_mfa_required);
@@ -578,6 +600,9 @@ impl Default for ServerConfig {
             approval_timeout_enabled: false,
             approval_timeout_seconds: 3600,
             approval_reconciliation_interval_secs: 300,
+            quarantine_timeout_enabled: false,
+            quarantine_timeout_seconds: 86400,
+            quarantine_reconciliation_interval_secs: 300,
             audit_fail_closed: false,
             approval_mfa_required: false,
             mfa_secret_key: None,
@@ -762,6 +787,29 @@ impl ServerConfig {
                     self.approval_reconciliation_interval_secs
                 ));
             }
+        }
+
+        // Validate quarantine timeout settings only when the reconciler is enabled.
+        if self.quarantine_timeout_enabled {
+            if !(60..=604_800).contains(&self.quarantine_timeout_seconds) {
+                return Err(format!(
+                    "quarantine_timeout_seconds must be between 60 and 604800, got {}",
+                    self.quarantine_timeout_seconds
+                ));
+            }
+            if !(5..=86_400).contains(&self.quarantine_reconciliation_interval_secs) {
+                return Err(format!(
+                    "quarantine_reconciliation_interval_secs must be between 5 and 86400, got {}",
+                    self.quarantine_reconciliation_interval_secs
+                ));
+            }
+        }
+
+        if production_like && !self.quarantine_timeout_enabled {
+            tracing::warn!(
+                "quarantine_timeout_enabled is false in a production-like configuration; \
+                 stale pending quarantine holds will not be expired automatically"
+            );
         }
 
         // Validate mfa_secret_key format if present: must be exactly 64 hex chars (32 bytes).

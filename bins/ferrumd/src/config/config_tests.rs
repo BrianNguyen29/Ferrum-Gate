@@ -124,6 +124,7 @@ sqlite_db_roots = ["/from/file/databases"]
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -210,6 +211,7 @@ allow_insecure_nonlocal_bind = false
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -265,6 +267,7 @@ auth_mode = "bearer"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -319,6 +322,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -379,6 +383,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -439,6 +444,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -493,6 +499,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -546,6 +553,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -602,6 +610,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -658,6 +667,7 @@ rate_limit_burst = 100
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -714,6 +724,7 @@ rate_limit_burst = 100
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -775,6 +786,7 @@ rate_limit_burst = 100
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -831,6 +843,7 @@ rate_limit_per_second = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -888,6 +901,7 @@ rate_limit_burst = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -945,6 +959,7 @@ rate_limit_burst = 20000
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1001,6 +1016,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1054,6 +1070,7 @@ log_format = "json"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1107,6 +1124,7 @@ log_format = "text"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1164,6 +1182,7 @@ log_format = "text"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1218,6 +1237,7 @@ log_format = "invalid"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1271,6 +1291,7 @@ log_format = "compact"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1326,6 +1347,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1380,6 +1402,7 @@ write_queue_threshold = 500
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1434,6 +1457,7 @@ write_queue_threshold = 500
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1492,6 +1516,7 @@ write_queue_threshold = 500
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1546,6 +1571,7 @@ write_queue_threshold = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1603,6 +1629,7 @@ write_queue_threshold = 10001
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1661,6 +1688,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1718,6 +1746,7 @@ pg_acquire_timeout_secs = 10
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1781,6 +1810,7 @@ pg_acquire_timeout_secs = 10
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1840,6 +1870,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1894,6 +1925,7 @@ pg_max_connections = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1951,6 +1983,7 @@ pg_acquire_timeout_secs = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -2007,6 +2040,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2062,6 +2096,7 @@ pg_idle_in_transaction_timeout_ms = 7000
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2122,6 +2157,7 @@ pg_idle_in_transaction_timeout_ms = 7000
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2180,6 +2216,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2235,6 +2272,7 @@ pg_idle_in_transaction_timeout_ms = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2304,6 +2342,7 @@ fg-operators = "operator"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2408,6 +2447,7 @@ fg-admins = "admin"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2491,6 +2531,7 @@ audiences = ["ferrumgate-test"]
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let err = resolve_config(&args).expect_err("expected config error");
@@ -2555,6 +2596,7 @@ fg-admins = "admin"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let err = resolve_config(&args).expect_err("expected config error");
@@ -2621,6 +2663,7 @@ fg-admins = "admin"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2695,6 +2738,7 @@ fg-admins = "admin"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2751,6 +2795,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2812,6 +2857,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2866,6 +2912,7 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2923,6 +2970,7 @@ lifecycle_reconciliation_batch_limit = 200
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2980,6 +3028,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3035,6 +3084,7 @@ approval_reconciliation_interval_secs = 600
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3095,6 +3145,7 @@ approval_reconciliation_interval_secs = 600
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3154,6 +3205,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3210,6 +3262,7 @@ approval_timeout_seconds = 30
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -3268,6 +3321,7 @@ approval_reconciliation_interval_secs = 1
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -3324,6 +3378,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3378,6 +3433,7 @@ approval_timeout_enabled = true
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3433,6 +3489,7 @@ lifecycle_reconciliation_interval_secs = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -3491,6 +3548,7 @@ lifecycle_reconciliation_batch_limit = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -3547,6 +3605,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3605,6 +3664,7 @@ approval_mfa_required = false
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3655,6 +3715,7 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3711,6 +3772,7 @@ lifecycle_reconciliation_enabled = false
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3768,6 +3830,7 @@ audit_fail_closed = false
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3821,6 +3884,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3883,6 +3947,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3949,6 +4014,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4007,6 +4073,7 @@ mfa_totp_issuer = "FileIssuer"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4065,6 +4132,7 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4127,6 +4195,7 @@ mfa_lockout_max_attempts = 0
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -4184,6 +4253,7 @@ mfa_lockout_duration_secs = 90000
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -4236,6 +4306,7 @@ fn test_resolve_config_mfa_lockout_from_env() {
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4291,6 +4362,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4344,6 +4416,7 @@ pdp_mode = "static"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4401,6 +4474,7 @@ pdp_mode = "static"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4455,6 +4529,7 @@ pdp_mode = "static"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -4508,6 +4583,7 @@ pdp_mode = "unknown"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");

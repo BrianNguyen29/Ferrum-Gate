@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use ferrum_proto::{
-    ActionProposal, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
+    ActionProposal, ActorRef, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
     AuditLogEntry, AuditMerkleRoot, AuditResourceType, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, JsonMap, LifecycleOutboxId, LifecycleOutboxRecord,
     LifecycleOutboxStatus, MfaCredentialRecord, PolicyBundle, PolicyBundleVersion, ProposalId,
-    ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId,
-    RollbackState, Timestamp,
+    ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest, QuarantineHold, QuarantineHoldId,
+    RollbackContract, RollbackContractId, RollbackState, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -301,6 +301,35 @@ pub trait ApprovalRepo: Send + Sync {
 }
 
 #[async_trait]
+pub trait QuarantineHoldRepo: Send + Sync {
+    async fn insert(&self, hold: &QuarantineHold) -> Result<()>;
+    async fn get(&self, hold_id: QuarantineHoldId) -> Result<Option<QuarantineHold>>;
+    async fn get_by_proposal(&self, proposal_id: ProposalId) -> Result<Option<QuarantineHold>>;
+    async fn list_pending(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<QuarantineHold>, Option<String>)>;
+    /// Resolve a pending hold to Allowed or Denied once, returning true if the
+    /// row was updated. The conditional update protects against concurrent resolves.
+    async fn resolve(
+        &self,
+        hold_id: QuarantineHoldId,
+        allow: bool,
+        actor: &ActorRef,
+        reason: Option<&str>,
+        resolved_at: Timestamp,
+    ) -> Result<bool>;
+    /// Atomically expire stale Pending holds. Returns the holds that were transitioned.
+    async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> Result<Vec<QuarantineHold>>;
+}
+
+#[async_trait]
 pub trait ProvenanceRepo: Send + Sync {
     async fn append_event(&self, event: &ProvenanceEvent) -> Result<()>;
     /// Append an event and its parent edges atomically.
@@ -592,6 +621,7 @@ pub trait StoreFacade: Send + Sync {
     fn rollback_contracts(&self) -> Arc<dyn RollbackRepo>;
     fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo>;
     fn approvals(&self) -> Arc<dyn ApprovalRepo>;
+    fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo>;
     fn provenance(&self) -> Arc<dyn ProvenanceRepo>;
     fn ledger(&self) -> Arc<dyn LedgerRepo>;
     fn intents(&self) -> Arc<dyn IntentRepo>;

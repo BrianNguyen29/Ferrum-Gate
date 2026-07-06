@@ -18,6 +18,7 @@ This directory records significant architecture decisions made in the FerrumGate
 | [011](011-performance-regression-gate.md) | Performance Regression Gate | Accepted (advisory / non-blocking in regular CI) |
 | [012](012-policy-bundle-rule-semantics.md) | PolicyBundle PDP Rule Semantics | Proposed |
 | [013](013-mfa-breakglass.md) | MFA Disable/Rotate Break-Glass | Accepted |
+| [014](014-quarantine-holds.md) | Quarantine Holds for Policy-Flagged Proposals | Accepted |
 
 ## Format
 

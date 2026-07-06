@@ -179,12 +179,8 @@ pub(crate) async fn evaluate_proposal(
         metadata: policy_metadata,
         source_runtime_id: None,
     };
-    if let Err(e) = state
-        .runtime
-        .store
-        .provenance()
-        .append_event(&policy_event)
-        .await
+    if let Err(e) =
+        crate::provenance::append_governance_event(&state.runtime.store, policy_event).await
     {
         return governance_err!(
             state,
@@ -193,7 +189,95 @@ pub(crate) async fn evaluate_proposal(
         );
     }
 
+    // If the policy decision is Quarantine, create a pending hold so the
+    // proposal cannot be executed until an operator resolves it.
+    if out.decision == Decision::Quarantine {
+        let hold = create_quarantine_hold(&state, &intent, &proposal, &out).await;
+        if let Err(problem) = hold {
+            return governance_err!(state, GovernanceRoute::ProposalsEvaluate, problem);
+        }
+    }
+
     governance_ok!(state, GovernanceRoute::ProposalsEvaluate, Ok(Json(out)))
+}
+
+async fn create_quarantine_hold(
+    state: &Arc<AppState>,
+    intent: &ferrum_proto::IntentEnvelope,
+    proposal: &ferrum_proto::ActionProposal,
+    evaluation: &ferrum_proto::EvaluateProposalResponse,
+) -> Result<(), ApiProblem> {
+    let now = chrono::Utc::now();
+    let expires_at =
+        now + chrono::Duration::seconds(state.server_config.quarantine_timeout_seconds as i64);
+    let hold = ferrum_proto::QuarantineHold {
+        hold_id: ferrum_proto::QuarantineHoldId::new(),
+        intent_id: intent.intent_id,
+        proposal_id: proposal.proposal_id,
+        reason: evaluation.reason.clone(),
+        matched_rule_ids: evaluation.matched_rule_ids.clone(),
+        policy_bundle_id: None,
+        state: ferrum_proto::QuarantineHoldState::Pending,
+        expires_at,
+        created_at: now,
+        resolved_at: None,
+        resolved_by: None,
+        resolution_reason: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    if let Err(e) = state.runtime.store.quarantine_holds().insert(&hold).await {
+        return Err(ApiProblem::internal(anyhow::Error::from(e)));
+    }
+
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "hold_id".to_string(),
+        serde_json::json!(hold.hold_id.to_string()),
+    );
+    metadata.insert(
+        "matched_rule_ids".to_string(),
+        serde_json::json!(hold.matched_rule_ids.clone()),
+    );
+
+    let event = ferrum_proto::ProvenanceEvent {
+        event_id: ferrum_proto::EventId::new(),
+        kind: ferrum_proto::ProvenanceEventKind::QuarantineHoldCreated,
+        occurred_at: now,
+        actor: ferrum_proto::ActorRef {
+            actor_type: ferrum_proto::ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("FerrumGate Gateway".to_string()),
+        },
+        object: ferrum_proto::ObjectRef {
+            object_type: ferrum_proto::ObjectType::QuarantineHold,
+            object_id: hold.hold_id.to_string(),
+            summary: Some("Quarantine hold created for proposal".to_string()),
+        },
+        intent_id: Some(intent.intent_id),
+        proposal_id: Some(proposal.proposal_id),
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: ferrum_proto::HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+
+    if let Err(e) = crate::provenance::append_governance_event(&state.runtime.store, event).await {
+        return Err(ApiProblem::internal(anyhow::Error::from(e)));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -325,6 +409,24 @@ mod tests {
         }
     }
 
+    fn quarantine_all_bundle() -> PolicyBundle {
+        PolicyBundle {
+            bundle_id: "quarantine-all".to_string(),
+            version: "0.1.0".to_string(),
+            rules: vec![PolicyRule {
+                id: "quarantine.everything".to_string(),
+                description: "Quarantine all proposals".to_string(),
+                decision: Decision::Quarantine,
+                priority: 100,
+                matchers: vec![Matcher::ActionIsMutation],
+            }],
+            active: true,
+            content_hash: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
     #[tokio::test]
     async fn test_pdp_mode_static_skips_active_bundle() {
         let runtime = test_runtime().await;
@@ -435,5 +537,67 @@ mod tests {
             .unwrap();
         assert_eq!(result.decision, Decision::Deny);
         assert!(result.reason.contains("scope mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_quarantine_hold_created_on_quarantine_decision() {
+        let runtime = test_runtime().await;
+        let bundle = quarantine_all_bundle();
+        runtime
+            .store
+            .policy_bundles()
+            .insert(&bundle)
+            .await
+            .unwrap();
+
+        let proposal = make_proposal("git.commit", RollbackClass::R1SnapshotRecoverable);
+        let intent = make_intent_with_scope(proposal.intent_id);
+        runtime.store.intents().insert(&intent).await.unwrap();
+
+        let config = ServerConfig {
+            pdp_mode: PdpMode::Bundles,
+            ..ServerConfig::default()
+        };
+        let state = AppState::test_new(runtime, config);
+
+        let result = evaluate_proposal(
+            State(Arc::clone(&state)),
+            Path(proposal.proposal_id.to_string()),
+            Json(proposal.clone()),
+        )
+        .await;
+
+        assert!(result.is_ok(), "evaluate_proposal failed: {:?}", result);
+        let out = result.unwrap().0;
+        assert_eq!(out.decision, Decision::Quarantine);
+
+        let hold = state
+            .runtime
+            .store
+            .quarantine_holds()
+            .get_by_proposal(proposal.proposal_id)
+            .await
+            .unwrap();
+        assert!(hold.is_some(), "expected quarantine hold to be created");
+        let hold = hold.unwrap();
+        assert_eq!(hold.state, ferrum_proto::QuarantineHoldState::Pending);
+        assert_eq!(hold.intent_id, proposal.intent_id);
+
+        let events = state
+            .runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(proposal.intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ferrum_proto::ProvenanceEventKind::QuarantineHoldCreated),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
     }
 }

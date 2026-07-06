@@ -36,7 +36,7 @@ Feature-complete for standard use; local and CI-validated:
 - Store-backed `CapabilityService` for production capability mint/get/revoke/use paths, with in-memory service retained for tests/dev
 - Schema-drift checker that refuses startup when the database schema version is newer than the binary-supported version
 - **MFA TOTP second factor** — TOTP verification for high-risk approval resolution; includes enrollment replay CAS, key parsing cleanup, admin route tests, store counter overflow guard, active lookup index migrations, and Postgres MFA repo tests
-- **PolicyBundle PDP engine (Phase 1)** — Policy decision point with bundle-scoped rule evaluation. Phase 1 implemented (`PolicyBundlePdpEngine`, static-default bundle, parity tests, `PdpMode` config). Phase 2 (bundle identity propagation, obligations, quarantine disposition) remains deferred
+- **PolicyBundle PDP engine (Phase 1)** — Policy decision point with bundle-scoped rule evaluation. Phase 1 implemented (`PolicyBundlePdpEngine`, static-default bundle, parity tests, `PdpMode` config). Quarantine disposition is now enforced via `QuarantineHold`; bundle identity propagation and obligations remain deferred
 
 ## Beta
 

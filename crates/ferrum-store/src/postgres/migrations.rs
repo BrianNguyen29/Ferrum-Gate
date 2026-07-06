@@ -138,12 +138,20 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/013_add_mfa_lockout_columns.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 14,
+        name: "014_add_quarantine_holds",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/014_add_quarantine_holds.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 13;
+pub const CURRENT_SCHEMA_VERSION: i64 = 14;
 
 #[cfg(test)]
 mod tests {

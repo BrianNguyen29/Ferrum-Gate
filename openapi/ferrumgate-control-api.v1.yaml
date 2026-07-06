@@ -497,6 +497,108 @@ paths:
       security:
         - BearerAuth: []
 
+  /v1/quarantines:
+    get:
+      summary: List quarantine holds
+      operationId: listQuarantineHolds
+      parameters:
+        - name: proposal_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter to the hold for this proposal (exact match)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of holds to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of holds to skip
+      responses:
+        '200':
+          description: List of quarantine holds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineListEnvelope'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines/{hold_id}:
+    get:
+      summary: Get quarantine hold
+      operationId: getQuarantineHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+      responses:
+        '200':
+          description: Quarantine hold object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineHold'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines/{hold_id}/resolve:
+    post:
+      summary: Resolve quarantine hold
+      description: |
+        Resolves a pending quarantine hold by allowing or denying it.
+        Only pending holds can be resolved; terminal holds return 409 Conflict.
+        Expired holds return 403 Forbidden. Pending holds are also automatically
+        transitioned to `Expired` by the background reconciler when their
+        `expires_at` passes or when they exceed `quarantine_timeout_seconds`.
+        When `approval_mfa_required` is enabled, the request must include a valid
+        active `mfa_factor` with a correct `code`. Missing factor returns 403 with
+        `MfaRequired`; invalid factor or code returns 403 with `MfaInvalid`.
+      operationId: resolveQuarantineHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuarantineResolveRequest'
+      responses:
+        '200':
+          description: Updated quarantine hold object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineHold'
+        '403':
+          description: Hold has expired or MFA verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Hold is in terminal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+        - BearerAuth: []
+
   /v1/provenance/query:
     post:
       summary: Query provenance events
@@ -1660,6 +1762,13 @@ components:
       schema:
         type: string
         format: uuid
+    HoldId:
+      name: hold_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     EventId:
       name: event_id
       in: path
@@ -2469,6 +2578,90 @@ components:
           $ref: '#/components/schemas/MfaFactor'
           nullable: true
 
+    QuarantineHold:
+      type: object
+      required:
+        - hold_id
+        - intent_id
+        - proposal_id
+        - reason
+        - matched_rule_ids
+        - state
+        - expires_at
+        - created_at
+      properties:
+        hold_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        policy_bundle_id:
+          type: string
+          nullable: true
+        state:
+          type: string
+          enum:
+            - Pending
+            - Allowed
+            - Denied
+            - Expired
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          $ref: '#/components/schemas/Actor'
+          nullable: true
+        resolution_reason:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    QuarantineListEnvelope:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuarantineHold'
+        next_cursor:
+          type: string
+          nullable: true
+
+    QuarantineResolveRequest:
+      type: object
+      required: [actor, allow]
+      properties:
+        actor:
+          $ref: '#/components/schemas/Actor'
+        allow:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        mfa_factor:
+          $ref: '#/components/schemas/MfaFactor'
+          nullable: true
+
     MfaFactor:
       type: object
       required: [id, factor_type, status]
@@ -2647,6 +2840,9 @@ components:
             - ApprovalGranted
             - ApprovalDenied
             - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2721,6 +2917,9 @@ components:
             - ApprovalGranted
             - ApprovalDenied
             - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2874,6 +3073,9 @@ components:
             - ApprovalGranted
             - ApprovalDenied
             - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4007,6 +4209,9 @@ components:
             - ApprovalGranted
             - ApprovalDenied
             - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4038,6 +4243,9 @@ components:
             - ApprovalGranted
             - ApprovalDenied
             - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4174,6 +4382,9 @@ components:
             - ApprovalGranted
             - ApprovalDenied
             - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted

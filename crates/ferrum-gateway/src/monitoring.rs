@@ -290,6 +290,10 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .approval_timeouts_total
         .load(Ordering::Relaxed);
+    let quarantine_timeouts_total = state
+        .metrics
+        .quarantine_timeouts_total
+        .load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
@@ -377,6 +381,18 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     let gov_err_approvals_resolve = state
         .metrics
         .governance_errors_v1_approvals_resolve
+        .load(Ordering::Relaxed);
+    let gov_err_quarantines = state
+        .metrics
+        .governance_errors_v1_quarantines
+        .load(Ordering::Relaxed);
+    let gov_err_quarantines_hold_id = state
+        .metrics
+        .governance_errors_v1_quarantines_hold_id
+        .load(Ordering::Relaxed);
+    let gov_err_quarantines_resolve = state
+        .metrics
+        .governance_errors_v1_quarantines_resolve
         .load(Ordering::Relaxed);
     let gov_err_policy_bundles_create = state
         .metrics
@@ -547,6 +563,18 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     let gov_ok_approvals_resolve = state
         .metrics
         .governance_success_v1_approvals_resolve
+        .load(Ordering::Relaxed);
+    let gov_ok_quarantines = state
+        .metrics
+        .governance_success_v1_quarantines
+        .load(Ordering::Relaxed);
+    let gov_ok_quarantines_hold_id = state
+        .metrics
+        .governance_success_v1_quarantines_hold_id
+        .load(Ordering::Relaxed);
+    let gov_ok_quarantines_resolve = state
+        .metrics
+        .governance_success_v1_quarantines_resolve
         .load(Ordering::Relaxed);
     let gov_ok_policy_bundles_create = state
         .metrics
@@ -811,6 +839,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          # HELP ferrumgate_approval_timeouts_total Number of pending approvals automatically expired due to timeout\n\
          # TYPE ferrumgate_approval_timeouts_total counter\n\
          ferrumgate_approval_timeouts_total {}\n\
+         # HELP ferrumgate_quarantine_timeouts_total Number of pending quarantine holds automatically expired due to timeout\n\
+         # TYPE ferrumgate_quarantine_timeouts_total counter\n\
+         ferrumgate_quarantine_timeouts_total {}\n\
          # HELP ferrumgate_governance_errors_total Governance errors by route and method\n\
          # TYPE ferrumgate_governance_errors_total counter\n\
          ferrumgate_governance_errors_total{{route=\"/v1/intents/compile\",method=\"POST\"}} {}\n\
@@ -830,6 +861,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          ferrumgate_governance_errors_total{{route=\"/v1/approvals\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}/resolve\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/quarantines\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/quarantines/{{hold_id}}\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/quarantines/{{hold_id}}/resolve\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"GET\"}} {}\n\
@@ -874,6 +908,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          ferrumgate_governance_success_total{{route=\"/v1/approvals\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}/resolve\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/quarantines\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/quarantines/{{hold_id}}\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/quarantines/{{hold_id}}/resolve\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"GET\"}} {}\n\
@@ -911,6 +948,7 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         lifecycle_outbox_operator_review,
         metrics_count,
         approval_timeouts_total,
+        quarantine_timeouts_total,
         gov_err_intents_compile,
         gov_err_intents_list,
         gov_err_proposals_evaluate,
@@ -928,6 +966,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_err_approvals,
         gov_err_approvals_approval_id,
         gov_err_approvals_resolve,
+        gov_err_quarantines,
+        gov_err_quarantines_hold_id,
+        gov_err_quarantines_resolve,
         gov_err_policy_bundles_create,
         gov_err_policy_bundles_list,
         gov_err_policy_bundles_get,
@@ -970,6 +1011,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_ok_approvals,
         gov_ok_approvals_approval_id,
         gov_ok_approvals_resolve,
+        gov_ok_quarantines,
+        gov_ok_quarantines_hold_id,
+        gov_ok_quarantines_resolve,
         gov_ok_policy_bundles_create,
         gov_ok_policy_bundles_list,
         gov_ok_policy_bundles_get,

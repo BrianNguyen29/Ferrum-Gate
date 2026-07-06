@@ -349,6 +349,56 @@ impl Client {
         Ok(resp.json().await?)
     }
 
+    pub async fn list_quarantines(
+        &self,
+        proposal_id: Option<&str>,
+    ) -> Result<Vec<ferrum_proto::QuarantineHold>> {
+        let mut url = format!("{}/v1/quarantines", self.base_url);
+        if let Some(proposal_id) = proposal_id {
+            url.push_str(&format!("?proposal_id={}", proposal_id));
+        }
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        let list: ferrum_proto::QuarantineListEnvelope = resp.json().await?;
+        Ok(list.items)
+    }
+
+    pub async fn get_quarantine(&self, hold_id: &str) -> Result<ferrum_proto::QuarantineHold> {
+        let url = format!("{}/v1/quarantines/{}", self.base_url, hold_id);
+        let resp = self.add_auth(self.http.get(&url)).send().await?;
+        resp.error_for_status_ref()?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn resolve_quarantine(
+        &self,
+        hold_id: &str,
+        actor: &ActorRef,
+        allow: bool,
+        reason: Option<&str>,
+    ) -> Result<ferrum_proto::QuarantineHold> {
+        let url = format!("{}/v1/quarantines/{}/resolve", self.base_url, hold_id);
+        let request = ferrum_proto::QuarantineResolveRequest {
+            actor: actor.clone(),
+            allow,
+            reason: reason.map(String::from),
+            mfa_factor: None,
+        };
+        let resp = self
+            .add_auth(self.http.post(&url).json(&request))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if body.is_empty() {
+                bail!("HTTP {}: (empty body)", status);
+            }
+            bail!("HTTP {}: {}", status, body);
+        }
+        Ok(resp.json().await?)
+    }
+
     pub async fn list_intents(
         &self,
         intent_id: Option<&str>,

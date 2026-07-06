@@ -1028,6 +1028,9 @@ mod tests {
         fn approvals(&self) -> Arc<dyn ferrum_store::repos::ApprovalRepo> {
             self.inner.approvals()
         }
+        fn quarantine_holds(&self) -> Arc<dyn ferrum_store::repos::QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
+        }
         fn provenance(&self) -> Arc<dyn ferrum_store::repos::ProvenanceRepo> {
             self.inner.provenance()
         }
