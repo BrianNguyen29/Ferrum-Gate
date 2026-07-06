@@ -25,7 +25,16 @@ The HTTP transport has incomplete SSE support, no session management, and no OAu
    - Rate limiting per HTTP connection
    - Audit logging for all HTTP requests
    - Penetration test against the HTTP surface
-4. **Documentation** marks HTTP as experimental and directs users to stdio for production use.
+4. **HTTP hardening (P1-2)** is implemented behind the `http` feature but does not promote HTTP to stable:
+   - Mandatory bearer auth by default with explicit `--allow-insecure-no-auth` opt-out
+   - Host validation (localhost/loopback defaults, configurable via `--allowed-host` / `FERRUM_MCP_ALLOWED_HOSTS`)
+   - Origin validation (reject any Origin by default, allowlist via `--allowed-origin` / `FERRUM_MCP_ALLOWED_ORIGINS`)
+   - Per-IP HTTP-layer token-bucket rate limiting (default 5 req/s, burst 20)
+   - Structured security logging via `tracing` (no gateway audit API integration)
+   - `Accept: text/event-stream` rejected with 406 (SSE not implemented)
+   - `MCP-Protocol-Version` header validated on `initialize` when present
+   - Non-loopback bind blocked unless `--allow-insecure-nonlocal-bind` is set
+5. **Documentation** marks HTTP as experimental and directs users to stdio for production use.
 
 ## Consequences
 

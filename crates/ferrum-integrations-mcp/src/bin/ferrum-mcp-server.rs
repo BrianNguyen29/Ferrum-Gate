@@ -37,9 +37,10 @@
 #[cfg(feature = "http")]
 use axum::{
     Router,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
+    extract::{ConnectInfo, Request, State},
+    http::{HeaderName, StatusCode, header},
+    middleware::{Next, from_fn_with_state},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use clap::{Parser, ValueEnum};
@@ -55,7 +56,7 @@ use ferrum_integrations_mcp::{
 use ferrum_integrations_mcp::{JsonRpcRequest, dispatch};
 use std::io::{self, BufRead, Write};
 #[cfg(feature = "http")]
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 #[cfg(feature = "http")]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +76,37 @@ struct Cli {
     /// Bind address for HTTP transport.
     #[arg(long, default_value = "127.0.0.1:3000")]
     bind: String,
+
+    /// Allow HTTP mode to start without a bearer token.
+    /// Insecure; local development only.
+    #[arg(long)]
+    allow_insecure_no_auth: bool,
+
+    /// Allow binding to a non-loopback address in HTTP mode.
+    /// Insecure; use a reverse proxy and do not expose to the internet.
+    #[arg(long)]
+    allow_insecure_nonlocal_bind: bool,
+
+    /// Allowed Origin header values. Comma-separated; also set via
+    /// FERRUM_MCP_ALLOWED_ORIGINS. Default empty: any Origin header is rejected.
+    #[arg(long, value_delimiter = ',')]
+    allowed_origin: Vec<String>,
+
+    /// Allowed Host header values. Comma-separated; also set via
+    /// FERRUM_MCP_ALLOWED_HOSTS. Defaults to localhost/127.0.0.1/::1 and the
+    /// loopback bind host if unset.
+    #[arg(long, value_delimiter = ',')]
+    allowed_host: Vec<String>,
+
+    /// Per-IP HTTP rate limit: sustained requests per second. Also set via
+    /// FERRUM_MCP_HTTP_RATE_PER_SEC (default 5).
+    #[arg(long)]
+    http_rate_per_sec: Option<f64>,
+
+    /// Per-IP HTTP rate limit: burst capacity. Also set via
+    /// FERRUM_MCP_HTTP_RATE_BURST (default 20).
+    #[arg(long)]
+    http_rate_burst: Option<u32>,
 }
 
 /// Transport mode selection.
@@ -222,6 +254,74 @@ fn run_stdio() {
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "http")]
+/// Supported MCP protocol version for HTTP `initialize` requests.
+const SUPPORTED_PROTOCOL_VERSION: &str = "2024-11-05";
+
+#[cfg(feature = "http")]
+const IP_RATE_LIMITER_CLEANUP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+#[cfg(feature = "http")]
+const IP_RATE_LIMITER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+#[cfg(feature = "http")]
+/// Per-IP in-memory token-bucket rate limiter for the HTTP layer.
+#[derive(Debug)]
+struct IpRateLimiter {
+    rate_per_sec: f64,
+    burst: u32,
+    state: std::sync::Mutex<std::collections::HashMap<IpAddr, IpLimitState>>,
+}
+
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct IpLimitState {
+    tokens: f64,
+    last_check: std::time::Instant,
+}
+
+#[cfg(feature = "http")]
+impl IpRateLimiter {
+    fn new(rate_per_sec: f64, burst: u32) -> Self {
+        Self {
+            rate_per_sec,
+            burst,
+            state: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn check(&self, ip: IpAddr) -> bool {
+        self.check_at(ip, std::time::Instant::now())
+    }
+
+    fn check_at(&self, ip: IpAddr, now: std::time::Instant) -> bool {
+        let mut map = self.state.lock().unwrap();
+        let entry = map.entry(ip).or_insert(IpLimitState {
+            tokens: self.burst as f64,
+            last_check: now,
+        });
+
+        let elapsed = now.duration_since(entry.last_check).as_secs_f64();
+        entry.tokens = (entry.tokens + elapsed * self.rate_per_sec).min(self.burst as f64);
+        entry.last_check = now;
+
+        if entry.tokens >= 1.0 {
+            entry.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove entries that have been idle longer than `max_idle`.
+    fn cleanup_idle(&self, max_idle: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut map = self.state.lock().unwrap();
+        let before = map.len();
+        map.retain(|_, state| now.duration_since(state.last_check) <= max_idle);
+        before - map.len()
+    }
+}
+
+#[cfg(feature = "http")]
 /// Shared application state for HTTP handlers.
 struct AppState {
     client: FerrumGatewayClient,
@@ -231,6 +331,123 @@ struct AppState {
     /// When Some, all POST /mcp requests must include a matching
     /// `Authorization: Bearer <token>` header.
     auth_token: Option<String>,
+    /// Allowed Origin header values. Empty means reject any Origin.
+    allowed_origins: Vec<String>,
+    /// Allowed Host header values.
+    allowed_hosts: Vec<String>,
+    /// Per-IP HTTP-layer rate limiter.
+    ip_rate_limiter: Arc<IpRateLimiter>,
+}
+
+#[cfg(feature = "http")]
+fn host_without_port(host: &str) -> &str {
+    if let Some(end) = host.rfind(']') {
+        // IPv6 literal including brackets.
+        &host[..=end]
+    } else if let Some(idx) = host.rfind(':') {
+        &host[..idx]
+    } else {
+        host
+    }
+}
+
+#[cfg(feature = "http")]
+fn is_host_allowed(host: &str, allowed: &[String]) -> bool {
+    let normalized = host_without_port(host).to_lowercase();
+    allowed.iter().any(|h| h.to_lowercase() == normalized)
+}
+
+#[cfg(feature = "http")]
+fn default_allowed_hosts() -> Vec<String> {
+    vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "[::1]".to_string(),
+    ]
+}
+
+#[cfg(feature = "http")]
+fn is_loopback_bind(bind: &str) -> bool {
+    bind.parse::<SocketAddr>()
+        .map(|a| a.ip().is_loopback())
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "http")]
+fn bind_host(bind: &str) -> Option<String> {
+    bind.parse::<SocketAddr>().map(|a| a.ip().to_string()).ok()
+}
+
+#[cfg(feature = "http")]
+/// HTTP-layer security middleware: rate limiting, Host/Origin validation,
+/// and `Accept: text/event-stream` rejection.
+async fn security_middleware(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let ip = addr.ip();
+
+    if !state.ip_rate_limiter.check(ip) {
+        tracing::warn!(
+            event_type = "rate_limited",
+            remote_ip = %ip,
+            path = %request.uri().path(),
+        );
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, "1")],
+            serde_json::json!({ "error": "rate limit exceeded" }).to_string(),
+        )
+            .into_response();
+    }
+
+    if let Some(host) = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+    {
+        if !is_host_allowed(host, &state.allowed_hosts) {
+            tracing::warn!(
+                event_type = "host_rejected",
+                remote_ip = %ip,
+                host = %host,
+            );
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    if let Some(origin) = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+    {
+        if state.allowed_origins.is_empty()
+            || !state
+                .allowed_origins
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(origin))
+        {
+            tracing::warn!(
+                event_type = "origin_rejected",
+                remote_ip = %ip,
+                origin = %origin,
+            );
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    if request
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|a| a.to_str().ok())
+        .is_some_and(|s| s.contains("text/event-stream"))
+    {
+        return StatusCode::NOT_ACCEPTABLE.into_response();
+    }
+
+    next.run(request).await
 }
 
 #[cfg(feature = "http")]
@@ -256,6 +473,14 @@ async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 }
 
 #[cfg(feature = "http")]
+/// Extract the JSON-RPC method from a request body without full dispatch.
+fn extract_method(body: &str) -> Option<String> {
+    serde_json::from_str::<JsonRpcRequest>(body)
+        .ok()
+        .map(|r| r.method)
+}
+
+#[cfg(feature = "http")]
 /// `POST /mcp` — accept a single JSON-RPC message and return synchronous `application/json`.
 /// Requires a valid bearer token when `auth_token` is configured; fails closed otherwise.
 async fn mcp_post_handler(
@@ -269,10 +494,31 @@ async fn mcp_post_handler(
             Some(header) if header.starts_with("Bearer ") => {
                 let provided = &header[7..];
                 if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+                    tracing::warn!(event_type = "bearer_rejected", reason = "mismatch");
                     return Err(StatusCode::UNAUTHORIZED);
                 }
             }
-            _ => return Err(StatusCode::UNAUTHORIZED),
+            _ => {
+                tracing::warn!(
+                    event_type = "bearer_rejected",
+                    reason = "missing_or_malformed"
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+    }
+
+    let protocol_header = HeaderName::from_static("mcp-protocol-version");
+    if extract_method(&body).as_deref() == Some("initialize") {
+        if let Some(version) = headers.get(&protocol_header).and_then(|v| v.to_str().ok()) {
+            if version != SUPPORTED_PROTOCOL_VERSION {
+                tracing::warn!(
+                    event_type = "protocol_version_rejected",
+                    version = %version,
+                    expected = %SUPPORTED_PROTOCOL_VERSION,
+                );
+                return Err(StatusCode::BAD_REQUEST);
+            }
         }
     }
 
@@ -305,8 +551,76 @@ async fn mcp_get_handler() -> impl IntoResponse {
 }
 
 #[cfg(feature = "http")]
+/// Validate HTTP startup configuration and return the effective auth token.
+fn validate_http_config(
+    bind: &str,
+    auth_token: Option<String>,
+    cli: &Cli,
+) -> Result<(SocketAddr, Option<String>), String> {
+    let addr: SocketAddr = bind
+        .parse()
+        .map_err(|e| format!("Invalid bind address '{}': {}", bind, e))?;
+
+    if auth_token.is_none() && !cli.allow_insecure_no_auth {
+        return Err(
+            "HTTP transport requires a bearer token. Set FERRUM_MCP_HTTP_BEARER_TOKEN or FERRUM_GATEWAY_BEARER_TOKEN, or pass --allow-insecure-no-auth for local development only."
+                .to_string(),
+        );
+    }
+
+    if cli.allow_insecure_no_auth {
+        tracing::warn!(
+            event_type = "insecure_flag",
+            flag = "allow_insecure_no_auth",
+            "HTTP transport is running without mandatory bearer auth"
+        );
+    }
+
+    if !addr.ip().is_loopback() && !cli.allow_insecure_nonlocal_bind {
+        return Err(format!(
+            "Non-loopback bind address '{}' is not allowed. Bind to a loopback address or pass --allow-insecure-nonlocal-bind.",
+            bind
+        ));
+    }
+
+    if cli.allow_insecure_nonlocal_bind {
+        tracing::warn!(
+            event_type = "insecure_flag",
+            flag = "allow_insecure_nonlocal_bind",
+            "HTTP transport is bound to a non-loopback address"
+        );
+    }
+
+    Ok((addr, auth_token))
+}
+
+#[cfg(feature = "http")]
+fn env_split(name: &str) -> Option<Vec<String>> {
+    std::env::var(name)
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+}
+
+#[cfg(feature = "http")]
+fn env_or<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+{
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+#[cfg(feature = "http")]
 /// Run the HTTP transport server.
-async fn run_http(bind: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_http(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let client = match FerrumGatewayClient::from_env() {
         Ok(c) => c,
         Err(e) => {
@@ -323,30 +637,104 @@ async fn run_http(bind: &str) -> Result<(), Box<dyn std::error::Error>> {
     let rate_limiter = RateLimiter::default_mcp();
 
     // Experimental HTTP transport: read bearer token from env.
-    // Fails closed if the env var is not set.
     let auth_token = std::env::var("FERRUM_MCP_HTTP_BEARER_TOKEN")
         .ok()
         .or_else(|| std::env::var("FERRUM_GATEWAY_BEARER_TOKEN").ok());
+
+    let (addr, auth_token) = validate_http_config(&cli.bind, auth_token, cli)?;
+
+    let allowed_hosts = if cli.allowed_host.is_empty() {
+        let mut hosts = env_split("FERRUM_MCP_ALLOWED_HOSTS").unwrap_or_else(default_allowed_hosts);
+        if let Some(bind_host) = bind_host(&cli.bind) {
+            if is_loopback_bind(&cli.bind) && !hosts.contains(&bind_host) {
+                hosts.push(bind_host);
+            }
+        }
+        hosts
+    } else {
+        cli.allowed_host.clone()
+    };
+
+    let allowed_origins = if cli.allowed_origin.is_empty() {
+        env_split("FERRUM_MCP_ALLOWED_ORIGINS").unwrap_or_default()
+    } else {
+        cli.allowed_origin.clone()
+    };
+
+    let http_rate_per_sec = cli
+        .http_rate_per_sec
+        .unwrap_or_else(|| env_or("FERRUM_MCP_HTTP_RATE_PER_SEC", 5.0));
+    let http_rate_burst = cli
+        .http_rate_burst
+        .unwrap_or_else(|| env_or("FERRUM_MCP_HTTP_RATE_BURST", 20));
 
     let state = Arc::new(AppState {
         client,
         actor,
         rate_limiter,
         auth_token,
+        allowed_origins,
+        allowed_hosts,
+        ip_rate_limiter: Arc::new(IpRateLimiter::new(http_rate_per_sec, http_rate_burst)),
     });
+
+    let cleanup_limiter = Arc::clone(&state.ip_rate_limiter);
 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+        .layer(from_fn_with_state(Arc::clone(&state), security_middleware))
         .with_state(state);
 
-    let addr: SocketAddr = bind.parse()?;
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let cleanup_shutdown = Arc::clone(&shutdown);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(IP_RATE_LIMITER_CLEANUP_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let removed = cleanup_limiter.cleanup_idle(IP_RATE_LIMITER_IDLE_TIMEOUT);
+                    tracing::debug!(event_type = "ip_rate_limiter_cleanup", removed);
+                }
+                _ = cleanup_shutdown.notified() => break,
+            }
+        }
+    });
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("Ferrum MCP HTTP server listening on http://{}", addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(Arc::clone(&shutdown)))
+    .await?;
     Ok(())
+}
+
+#[cfg(feature = "http")]
+async fn shutdown_signal(shutdown: Arc<tokio::sync::Notify>) {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        sigterm.recv().await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    shutdown.notify_waiters();
 }
 
 /// Main entry point for the MCP server binary.
@@ -354,6 +742,11 @@ async fn run_http(bind: &str) -> Result<(), Box<dyn std::error::Error>> {
 async fn main() {
     // Set up signal handlers
     setup_signal_handlers();
+
+    // Initialize tracing once for the HTTP transport; ignore if a subscriber
+    // is already present.
+    #[cfg(feature = "http")]
+    let _ = tracing_subscriber::fmt::try_init();
 
     let cli = Cli::parse();
 
@@ -365,7 +758,7 @@ async fn main() {
         Transport::Http => {
             #[cfg(feature = "http")]
             {
-                if let Err(e) = run_http(&cli.bind).await {
+                if let Err(e) = run_http(&cli).await {
                     eprintln!("HTTP server error: {}", e);
                     std::process::exit(1);
                 }
@@ -522,7 +915,11 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[cfg(feature = "http")]
-    fn test_app() -> Router {
+    fn test_app(
+        auth_token: Option<String>,
+        allowed_origins: Vec<String>,
+        allowed_hosts: Vec<String>,
+    ) -> Router {
         // Create the blocking client on a dedicated thread to avoid
         // "cannot create a runtime in an async context" panic.
         let client =
@@ -535,7 +932,10 @@ mod tests {
             client,
             actor,
             rate_limiter,
-            auth_token: Some("test-mcp-token".to_string()),
+            auth_token,
+            allowed_origins,
+            allowed_hosts,
+            ip_rate_limiter: Arc::new(IpRateLimiter::new(5.0, 20)),
         });
         // Leak a clone so the Arc refcount never reaches zero inside async tests,
         // preventing `reqwest::blocking::Client` from being dropped in an async
@@ -546,7 +946,24 @@ mod tests {
             .route("/health", get(health_handler))
             .route("/ready", get(ready_handler))
             .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), security_middleware))
             .with_state(state)
+    }
+
+    #[cfg(feature = "http")]
+    fn default_test_app() -> Router {
+        test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            default_allowed_hosts(),
+        )
+    }
+
+    #[cfg(feature = "http")]
+    fn local_connect_info<B>(mut request: axum::http::Request<B>) -> axum::http::Request<B> {
+        let addr = SocketAddr::new(IpAddr::from([127, 0, 0, 1]), 0);
+        request.extensions_mut().insert(ConnectInfo(addr));
+        request
     }
 
     #[cfg(feature = "http")]
@@ -556,14 +973,14 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .uri("/health")
                     .body(Body::empty())
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -580,14 +997,14 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .uri("/ready")
                     .body(Body::empty())
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -606,10 +1023,10 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
@@ -617,7 +1034,7 @@ mod tests {
                     .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -636,10 +1053,10 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":42}"#;
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
@@ -647,7 +1064,7 @@ mod tests {
                     .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -666,10 +1083,10 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = "not valid json";
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
@@ -677,7 +1094,7 @@ mod tests {
                     .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -695,15 +1112,15 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("GET")
                     .uri("/mcp")
                     .body(Body::empty())
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -724,10 +1141,10 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
@@ -735,7 +1152,7 @@ mod tests {
                     .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -754,10 +1171,10 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
@@ -765,7 +1182,7 @@ mod tests {
                     .header("Authorization", "Bearer test-mcp-token")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -813,17 +1230,17 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
@@ -836,10 +1253,10 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
-        let app = test_app();
+        let app = default_test_app();
         let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
         let response = app
-            .oneshot(
+            .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/mcp")
@@ -847,10 +1264,380 @@ mod tests {
                     .header("Authorization", "Bearer wrong-token")
                     .body(Body::from(body_json))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // -------------------------------------------------------------------------
+    // HTTP startup validation tests
+    // -------------------------------------------------------------------------
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_validate_http_config_requires_auth_token() {
+        let cli = Cli::parse_from([
+            "ferrum-mcp-server",
+            "--transport",
+            "http",
+            "--bind",
+            "127.0.0.1:3000",
+        ]);
+        let result = validate_http_config("127.0.0.1:3000", None, &cli);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("requires a bearer token"), "{}", msg);
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_validate_http_config_insecure_no_auth_opt_out() {
+        let cli = Cli::parse_from([
+            "ferrum-mcp-server",
+            "--transport",
+            "http",
+            "--bind",
+            "127.0.0.1:3000",
+            "--allow-insecure-no-auth",
+        ]);
+        let result = validate_http_config("127.0.0.1:3000", None, &cli);
+        assert!(result.is_ok());
+        assert!(result.unwrap().1.is_none());
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_validate_http_config_rejects_non_loopback_bind() {
+        let cli = Cli::parse_from([
+            "ferrum-mcp-server",
+            "--transport",
+            "http",
+            "--bind",
+            "0.0.0.0:8080",
+        ]);
+        let result = validate_http_config("0.0.0.0:8080", Some("token".to_string()), &cli);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("Non-loopback bind address"), "{}", msg);
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_validate_http_config_non_loopback_opt_out() {
+        let cli = Cli::parse_from([
+            "ferrum-mcp-server",
+            "--transport",
+            "http",
+            "--bind",
+            "0.0.0.0:8080",
+            "--allow-insecure-nonlocal-bind",
+        ]);
+        let result = validate_http_config("0.0.0.0:8080", Some("token".to_string()), &cli);
+        assert!(result.is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // Host / Origin / Accept / rate-limit hardening tests
+    // -------------------------------------------------------------------------
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_rejects_disallowed_host() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            vec!["allowed.example.com".to_string()],
+        );
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .header("Host", "localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_allows_configured_host() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            vec!["allowed.example.com".to_string()],
+        );
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .header("Host", "allowed.example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_rejects_origin_by_default() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = default_test_app();
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .header("Origin", "http://example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_allows_configured_origin() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec!["http://example.com".to_string()],
+            default_allowed_hosts(),
+        );
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Origin", "http://example.com")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["result"], serde_json::json!({"success": true}));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_rejects_accept_event_stream() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = default_test_app();
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Accept", "text/event-stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_rate_limit_returns_429_with_retry_after() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let client =
+            std::thread::spawn(|| FerrumGatewayClient::new(&ClientConfig::default()).unwrap())
+                .join()
+                .unwrap();
+        let actor = ActorIdentity::resolve(None);
+        let rate_limiter = RateLimiter::default_mcp();
+        let state = Arc::new(AppState {
+            client,
+            actor,
+            rate_limiter,
+            auth_token: Some("test-mcp-token".to_string()),
+            allowed_origins: vec![],
+            allowed_hosts: default_allowed_hosts(),
+            ip_rate_limiter: Arc::new(IpRateLimiter::new(5.0, 1)),
+        });
+        let _leaked = Box::leak(Box::new(Arc::clone(&state)));
+        let app = Router::new()
+            .route("/health", get(health_handler))
+            .route("/ready", get(ready_handler))
+            .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), security_middleware))
+            .with_state(state);
+
+        // First request is allowed.
+        let response = app
+            .clone()
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Second request exceeds burst of 1.
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_initialize_rejects_mismatched_protocol_version() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = default_test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("MCP-Protocol-Version", "2099-01-01")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_initialize_allows_supported_protocol_version() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let app = default_test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("MCP-Protocol-Version", SUPPORTED_PROTOCOL_VERSION)
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["result"]["protocol_version"], "2024-11-05");
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_ip_rate_limiter_cleanup_idle_removes_stale_entries() {
+        use std::net::IpAddr;
+        use std::time::{Duration, Instant};
+
+        let limiter = IpRateLimiter::new(5.0, 20);
+        let now = Instant::now();
+        let recent = IpAddr::from([127, 0, 0, 1]);
+        let stale = IpAddr::from([127, 0, 0, 2]);
+
+        assert!(limiter.check_at(recent, now));
+        assert!(limiter.check_at(stale, now - Duration::from_secs(400)));
+        assert_eq!(limiter.state.lock().unwrap().len(), 2);
+
+        let removed = limiter.cleanup_idle(Duration::from_secs(300));
+        assert_eq!(removed, 1);
+        assert_eq!(limiter.state.lock().unwrap().len(), 1);
+        assert!(limiter.state.lock().unwrap().contains_key(&recent));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_serve_wires_connect_info() {
+        let app = default_test_app();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server_handle = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("http://{}/health", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let _ = shutdown_tx.send(());
+        server_handle.await.unwrap();
     }
 }

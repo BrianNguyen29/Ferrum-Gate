@@ -198,15 +198,16 @@ This guide operates at **B2: Agent/MCP Client → FerrumGate MCP Server** per [`
 
 | # | Check |
 |---|-------|
-| 1 | Bind `ferrum-mcp-server` to `127.0.0.1` (or a tailnet/local interface). |
-| 2 | Require `Authorization` header on every request; tunnel is not auth. |
+| 1 | Bind `ferrum-mcp-server` to `127.0.0.1` (or a tailnet/local interface). Use `--allow-insecure-nonlocal-bind` only when a strict reverse proxy/firewall is in place. |
+| 2 | Require `Authorization` header on every request; tunnel is not auth. Use `--allow-insecure-no-auth` only for local development. |
 | 3 | Do not log `Authorization` or `Mcp-Session-Id` headers. |
 | 4 | Terminate TLS at the tunnel edge or reverse proxy. |
 | 5 | Do not expose an unauthenticated MCP endpoint to the public internet. |
 | 6 | Use scoped tokens with minimal necessary scopes. |
 | 7 | Rotate tokens periodically and record rotation in the audit log. |
 | 8 | Validate JSON-RPC request structure at the gateway layer before execution. |
-| 9 | Keep `ferrum-mcp-server` and `ferrumd` on the same host or trusted network; B3 is same-process/internal bridge today. |
+| 9 | Configure Host and Origin allowlists explicitly when the reverse proxy forwards non-loopback hosts or cross-origin traffic. |
+| 10 | Keep `ferrum-mcp-server` and `ferrumd` on the same host or trusted network; B3 is same-process/internal bridge today. |
 
 See [`docs/security/secure-mcp-tunnel-review.md`](../security/secure-mcp-tunnel-review.md) for the full security review checklist.
 
@@ -221,9 +222,9 @@ The following are explicitly **not** covered by this guide:
 | SSE streaming (`GET /mcp`) | Returns 405 today; full SSE/multiplexing not provided |
 | Session management / `Mcp-Session-Id` | No session store |
 | Resumability with event ID tracking | No replay buffer |
-| `MCP-Protocol-Version` header enforcement | Not enforced in skeleton |
+| `MCP-Protocol-Version` header enforcement | Enforced on `initialize` when present; must match `2024-11-05` |
 | DELETE `/mcp` session termination | No session concept yet |
-| OAuth / auth middleware specifically for MCP HTTP transport | Gateway bearer/scoped token auth is used instead |
+| OAuth / auth middleware specifically for MCP HTTP transport | Not implemented; Bearer header validation is used instead |
 | mTLS service-to-service | Transport hardening; tunnel integration covers baseline |
 
 ---
@@ -235,7 +236,7 @@ The following are explicitly **not** covered by this guide:
 | Certified compatible with any external MCP client | **NO** |
 | SSE / session / resumability support | **Not provided** |
 | OAuth / mTLS for MCP transport | **Not provided** |
-| `MCP-Protocol-Version` header enforcement | **Not provided** |
+| `MCP-Protocol-Version` header enforcement | Enforced on `initialize` when present |
 
 ---
 
