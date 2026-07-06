@@ -188,7 +188,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 - **Agent identity (Ed25519):** Cryptographic identity ensures that requests originate from a registered, non-revoked agent with explicitly allowed scopes. See [`docs/security/agent-identity-ed25519.md`](./agent-identity-ed25519.md).
 
 **Gaps / Limitations:**
-- **TOTP second-factor confirmation is implemented** for approval resolve when `approval_mfa_required` is enabled; WebAuthn, backup codes, and automated lockout are deferred. See [`docs/security/threat-model-stride.md`](./threat-model-stride.md) B8 and ADR 008.
+- **TOTP second-factor confirmation is implemented** for approval resolve when `approval_mfa_required` is enabled; per-factor lockout is implemented. WebAuthn, backup codes remain deferred. See [`docs/security/threat-model-stride.md`](./threat-model-stride.md) B8 and ADR 008.
 - **No behavioral anomaly detection:** FerrumGate does not learn or detect unusual agency patterns (e.g., an agent suddenly requesting many R3 actions outside its historical baseline). See ADR 010 for a proposed profiling layer.
 - **No automated escalation:** If an agent exceeds a rate or risk threshold, there is no automated lockdown or revocation trigger.
 - Approval resolve is synchronous; there is no timeout-based auto-deny for stale approvals. See ADR 008 for a proposed timeout design.

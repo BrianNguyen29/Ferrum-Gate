@@ -546,6 +546,25 @@ pub trait MfaCredentialRepo: Send + Sync {
         counter: u64,
     ) -> Result<bool>;
 
+    /// Record a failed verification attempt and optionally lock the factor.
+    ///
+    /// Increments `failed_attempts`, sets `last_failed_at` to now.
+    /// If the new `failed_attempts` reaches `max_attempts`, sets `locked_until`
+    /// to `now + duration_secs` and increments `lockout_count`.
+    /// Returns `true` if the factor was locked by this call.
+    async fn record_failed_attempt(
+        &self,
+        mfa_factor_id: ferrum_proto::MfaFactorId,
+        max_attempts: u32,
+        lockout_duration_secs: u64,
+    ) -> Result<bool>;
+
+    /// Reset lockout state after a successful verification.
+    ///
+    /// Sets `failed_attempts = 0`, `locked_until = NULL`, `last_failed_at = NULL`.
+    /// Preserves `lockout_count`.
+    async fn reset_lockout(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
+
     /// Revoke a credential by setting `revoked_at`.
     async fn revoke(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
 }

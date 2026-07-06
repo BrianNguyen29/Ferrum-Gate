@@ -86,7 +86,7 @@ These require broader design decisions, additional evidence, or an ADR before th
 - **Multi-tenancy** — Only if the project pivots to a SaaS offering; requires a dedicated ADR and security review.
 - **Admin audit actor identity** — Authenticated actor identity in admin audit endpoints. Cross-cutting auth context; requires ADR and separate PR.
 - **TOTP disable/rotate and break-glass** — Disable or rotate current TOTP factor and break-glass semantics. ✅ Implemented in PR #212.
-- **Per-factor/per-agent lockout** — Failed-attempt lockout per factor or per agent. Requires schema, config, and API changes; separate PR.
+- **Per-factor lockout** — Fixed-threshold failed-attempt lockout per factor. Schema, config, and API changes implemented in PR #213. Per-agent lockout remains deferred.
 - **Stress coverage / server.rs refactor** — Broad stress scenario coverage and `server.rs`/`execution.rs` refactors. Separate quality/refactor PR.
 
 ## Not implemented / out of scope

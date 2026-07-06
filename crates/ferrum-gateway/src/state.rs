@@ -414,6 +414,12 @@ pub struct ServerConfig {
     /// TOTP issuer name displayed in authenticator apps.
     /// Default: "FerrumGate".
     pub mfa_totp_issuer: String,
+    /// Maximum consecutive failed MFA attempts before locking a factor.
+    /// Default: 5.
+    pub mfa_lockout_max_attempts: u32,
+    /// Duration in seconds to lock a factor after exceeding max attempts.
+    /// Default: 900 (15 minutes).
+    pub mfa_lockout_duration_secs: u64,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -471,6 +477,8 @@ impl std::fmt::Debug for ServerConfig {
             &self.mfa_secret_key.as_ref().map(|_| "<redacted>"),
         );
         d.field("mfa_totp_issuer", &self.mfa_totp_issuer);
+        d.field("mfa_lockout_max_attempts", &self.mfa_lockout_max_attempts);
+        d.field("mfa_lockout_duration_secs", &self.mfa_lockout_duration_secs);
         d.finish()
     }
 }
@@ -509,6 +517,8 @@ impl Default for ServerConfig {
             approval_mfa_required: false,
             mfa_secret_key: None,
             mfa_totp_issuer: "FerrumGate".to_string(),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
         }
     }
 }
@@ -678,6 +688,16 @@ impl ServerConfig {
             if hex::decode(key).is_err() {
                 return Err("mfa_secret_key contains invalid hex characters".to_string());
             }
+        }
+
+        if self.mfa_lockout_max_attempts < 1 {
+            return Err("mfa_lockout_max_attempts must be at least 1".to_string());
+        }
+        if !(1..=86400).contains(&self.mfa_lockout_duration_secs) {
+            return Err(format!(
+                "mfa_lockout_duration_secs must be between 1 and 86400, got {}",
+                self.mfa_lockout_duration_secs
+            ));
         }
 
         Ok(())

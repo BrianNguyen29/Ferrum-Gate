@@ -99,6 +99,17 @@ ferrumctl admin audit list --limit 20
 - Metric emitted: `ferrumgate_audit_fail_closed_rejections_total`.
 - Not compliance-grade forensic audit on its own (see ADR 007 and ADR 009).
 
+## MFA lockout
+
+When `approval_mfa_required = true` (or any MFA verification flow), repeated failed verification attempts against an active factor trigger a per-factor lockout:
+
+- **Threshold**: `mfa_lockout_max_attempts` (default `5`, minimum `1`).
+- **Duration**: `mfa_lockout_duration_secs` (default `900` seconds, max `86400`).
+- **Post-expiry one-strike re-lock**: After a lockout expires, the factor retains its failed-attempt counter. A single subsequent failure immediately re-locks the factor for the full duration, and the lockout count increments.
+- **Break-glass bypass**: An operator with the `admin:mfa:breakglass` scope can bypass the active lockout by providing a non-empty `reason` in the request body (e.g., disable or rotate without re-verification). The bypass is audited.
+
+Lockout state is stored in the database (`failed_attempts`, `locked_until`, `last_failed_at`, `lockout_count`) and reset on successful verification.
+
 ## Secret handling
 
 - Token material is **hashed** in the store; plaintext is never persisted.

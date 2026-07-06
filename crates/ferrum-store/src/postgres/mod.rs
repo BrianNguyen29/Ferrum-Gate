@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 13);
     }
 
     #[test]
@@ -785,14 +785,14 @@ mod tests {
 
         let repo = store.mfa_credentials();
         let r1 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-list-by-agent",
             ferrum_proto::MfaFactorType::Totp,
             "s1",
             "n1",
             "k1",
         );
         let r2 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-list-by-agent",
             ferrum_proto::MfaFactorType::Totp,
             "s2",
             "n2",
@@ -801,7 +801,7 @@ mod tests {
         repo.insert(&r1).await.unwrap();
         repo.insert(&r2).await.unwrap();
 
-        let list = repo.list_by_agent("agent-1").await.unwrap();
+        let list = repo.list_by_agent("agent-list-by-agent").await.unwrap();
         assert_eq!(list.len(), 2);
     }
 
@@ -909,14 +909,14 @@ mod tests {
         store.apply_embedded_migrations().await.unwrap();
 
         let record1 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-activate-revokes",
             ferrum_proto::MfaFactorType::Totp,
             "s1",
             "n1",
             "k1",
         );
         let record2 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-activate-revokes",
             ferrum_proto::MfaFactorType::Totp,
             "s2",
             "n2",
@@ -942,7 +942,141 @@ mod tests {
         assert!(revoked1.revoked_at.is_some());
 
         // Only one active factor per agent
-        let active = repo.get_active_for_agent("agent-1").await.unwrap().unwrap();
+        let active = repo
+            .get_active_for_agent("agent-activate-revokes")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(active.mfa_factor_id, record2.mfa_factor_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_record_failed_attempt_and_lockout() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        for _ in 0..4 {
+            let locked = repo
+                .record_failed_attempt(record.mfa_factor_id, 5, 900)
+                .await
+                .unwrap();
+            assert!(!locked);
+        }
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 4);
+        assert!(r.locked_until.is_none());
+
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 5, 900)
+            .await
+            .unwrap();
+        assert!(locked);
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 5);
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.lockout_count, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_lockout_then_expired() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Lock with 1 second duration
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+
+        // Wait for lock to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        let now = chrono::Utc::now();
+        // locked_until should be in the past
+        assert!(r.locked_until.map(|lu| lu <= now).unwrap_or(true));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_lockout_recovery_one_strike_relock() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Lock with 1 second duration
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.failed_attempts, 1);
+
+        // Wait for lock to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // After expiry, a single failed attempt re-locks immediately because
+        // failed_attempts is still 1 (equal to max_attempts). This is the
+        // post-expiry one-strike re-lock behavior.
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+        assert!(
+            locked,
+            "expected immediate re-lock after expiry with one strike"
+        );
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+        assert!(r.locked_until.unwrap() > chrono::Utc::now());
+        assert_eq!(r.lockout_count, 2);
     }
 }

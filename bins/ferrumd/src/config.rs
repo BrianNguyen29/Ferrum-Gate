@@ -115,6 +115,14 @@ pub struct Args {
     /// TOTP issuer name displayed in authenticator apps (default: "FerrumGate").
     #[arg(long)]
     mfa_totp_issuer: Option<String>,
+
+    /// Maximum consecutive failed MFA attempts before locking a factor (default: 5).
+    #[arg(long)]
+    mfa_lockout_max_attempts: Option<u32>,
+
+    /// Duration in seconds to lock a factor after exceeding max attempts (default: 900).
+    #[arg(long)]
+    mfa_lockout_duration_secs: Option<u64>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -225,6 +233,10 @@ struct ServerSection {
     mfa_secret_key: Option<String>,
     #[serde(default = "default_mfa_totp_issuer")]
     mfa_totp_issuer: String,
+    #[serde(default = "default_mfa_lockout_max_attempts")]
+    mfa_lockout_max_attempts: u32,
+    #[serde(default = "default_mfa_lockout_duration_secs")]
+    mfa_lockout_duration_secs: u64,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
@@ -265,6 +277,14 @@ fn default_s3_region() -> String {
 
 fn default_mfa_totp_issuer() -> String {
     "FerrumGate".to_string()
+}
+
+fn default_mfa_lockout_max_attempts() -> u32 {
+    5
+}
+
+fn default_mfa_lockout_duration_secs() -> u64 {
+    900
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -531,6 +551,18 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.mfa_totp_issuer.clone()))
         .unwrap_or_else(default_mfa_totp_issuer);
 
+    let mfa_lockout_max_attempts = args
+        .mfa_lockout_max_attempts
+        .or(get_env("FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS")?)
+        .or_else(|| server.as_ref().map(|s| s.mfa_lockout_max_attempts))
+        .unwrap_or_else(default_mfa_lockout_max_attempts);
+
+    let mfa_lockout_duration_secs = args
+        .mfa_lockout_duration_secs
+        .or(get_env("FERRUMD_MFA_LOCKOUT_DURATION_SECS")?)
+        .or_else(|| server.as_ref().map(|s| s.mfa_lockout_duration_secs))
+        .unwrap_or_else(default_mfa_lockout_duration_secs);
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -781,6 +813,8 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         approval_mfa_required,
         mfa_secret_key,
         mfa_totp_issuer,
+        mfa_lockout_max_attempts,
+        mfa_lockout_duration_secs,
     };
 
     // Validate configuration

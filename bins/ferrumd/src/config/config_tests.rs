@@ -45,6 +45,8 @@ fn clear_test_env() {
         "FERRUMD_APPROVAL_MFA_REQUIRED",
         "FERRUMD_MFA_SECRET_KEY",
         "FERRUMD_MFA_TOTP_ISSUER",
+        "FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS",
+        "FERRUMD_MFA_LOCKOUT_DURATION_SECS",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -112,6 +114,8 @@ sqlite_db_roots = ["/from/file/databases"]
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -192,6 +196,8 @@ allow_insecure_nonlocal_bind = false
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -241,6 +247,8 @@ auth_mode = "bearer"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -289,6 +297,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -343,6 +353,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -397,6 +409,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -445,6 +459,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -492,6 +508,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -542,6 +560,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -592,6 +612,8 @@ rate_limit_burst = 100
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -642,6 +664,8 @@ rate_limit_burst = 100
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -697,6 +721,8 @@ rate_limit_burst = 100
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -747,6 +773,8 @@ rate_limit_per_second = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -798,6 +826,8 @@ rate_limit_burst = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -849,6 +879,8 @@ rate_limit_burst = 20000
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -899,6 +931,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -946,6 +980,8 @@ log_format = "json"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -993,6 +1029,8 @@ log_format = "text"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1044,6 +1082,8 @@ log_format = "text"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1092,6 +1132,8 @@ log_format = "invalid"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1139,6 +1181,8 @@ log_format = "compact"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1188,6 +1232,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1236,6 +1282,8 @@ write_queue_threshold = 500
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1284,6 +1332,8 @@ write_queue_threshold = 500
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1336,6 +1386,8 @@ write_queue_threshold = 500
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1384,6 +1436,8 @@ write_queue_threshold = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1435,6 +1489,8 @@ write_queue_threshold = 10001
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1487,6 +1543,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1538,6 +1596,8 @@ pg_acquire_timeout_secs = 10
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1595,6 +1655,8 @@ pg_acquire_timeout_secs = 10
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1648,6 +1710,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1696,6 +1760,8 @@ pg_max_connections = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1747,6 +1813,8 @@ pg_acquire_timeout_secs = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1797,6 +1865,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1846,6 +1916,8 @@ pg_idle_in_transaction_timeout_ms = 7000
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1900,6 +1972,8 @@ pg_idle_in_transaction_timeout_ms = 7000
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1952,6 +2026,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2001,6 +2077,8 @@ pg_idle_in_transaction_timeout_ms = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2064,6 +2142,8 @@ fg-operators = "operator"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2162,6 +2242,8 @@ fg-admins = "admin"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2239,6 +2321,8 @@ audiences = ["ferrumgate-test"]
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let err = resolve_config(&args).expect_err("expected config error");
@@ -2297,6 +2381,8 @@ fg-admins = "admin"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let err = resolve_config(&args).expect_err("expected config error");
@@ -2357,6 +2443,8 @@ fg-admins = "admin"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2425,6 +2513,8 @@ fg-admins = "admin"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2475,6 +2565,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2530,6 +2622,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2578,6 +2672,8 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2629,6 +2725,8 @@ lifecycle_reconciliation_batch_limit = 200
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2680,6 +2778,8 @@ lifecycle_reconciliation_interval_secs = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -2732,6 +2832,8 @@ lifecycle_reconciliation_batch_limit = 0
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -2782,6 +2884,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2834,6 +2938,8 @@ approval_mfa_required = false
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2878,6 +2984,8 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         approval_mfa_required: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2928,6 +3036,8 @@ lifecycle_reconciliation_enabled = false
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2979,6 +3089,8 @@ audit_fail_closed = false
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3026,6 +3138,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3082,6 +3196,8 @@ auth_mode = "disabled"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3142,6 +3258,8 @@ auth_mode = "disabled"
             "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
         ),
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3194,6 +3312,8 @@ mfa_totp_issuer = "FileIssuer"
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3246,6 +3366,8 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3260,5 +3382,156 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
     );
 
     let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_zero_mfa_lockout_max_attempts() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+mfa_lockout_max_attempts = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("mfa_lockout_max_attempts must be at least 1")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_mfa_lockout_duration_secs_too_large() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+mfa_lockout_duration_secs = 90000
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("mfa_lockout_duration_secs must be between 1 and 86400")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_mfa_lockout_from_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe { std::env::set_var("FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS", "3") };
+    unsafe { std::env::set_var("FERRUMD_MFA_LOCKOUT_DURATION_SECS", "300") };
+
+    let args = Args {
+        config: None,
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.mfa_lockout_max_attempts, 3);
+    assert_eq!(config.mfa_lockout_duration_secs, 300);
+
     clear_test_env();
 }
