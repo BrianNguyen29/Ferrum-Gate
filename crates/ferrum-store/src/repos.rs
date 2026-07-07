@@ -138,12 +138,25 @@ pub trait ExecutionRepo: Send + Sync {
     async fn get(&self, execution_id: ExecutionId) -> Result<Option<ExecutionRecord>>;
     async fn update(&self, execution: &ExecutionRecord) -> Result<()>;
     async fn update_state(&self, execution_id: ExecutionId, state: ExecutionState) -> Result<()>;
+    /// Atomically transition `execution_id` to `new_state` iff its current state
+    /// is in `expected_states`. When `new_state` is terminal, also set
+    /// `finished_at` to the current time in both the column and `raw_json`.
+    /// Returns true if the row was updated.
     async fn compare_and_set_state(
         &self,
         execution_id: ExecutionId,
         expected_states: &[ExecutionState],
         new_state: ExecutionState,
     ) -> Result<bool>;
+    /// List in-flight executions in `states` whose `started_at` is before
+    /// `stale_before` and whose `finished_at` is NULL, ordered by `started_at`
+    /// ASC and limited to `limit`.
+    async fn list_stale_in_flight(
+        &self,
+        stale_before: Timestamp,
+        states: &[ExecutionState],
+        limit: u32,
+    ) -> Result<Vec<ExecutionRecord>>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>>;
     async fn list_by_capability(&self, capability_id: CapabilityId)
     -> Result<Vec<ExecutionRecord>>;

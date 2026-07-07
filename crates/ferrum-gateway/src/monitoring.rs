@@ -294,6 +294,18 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .quarantine_timeouts_total
         .load(Ordering::Relaxed);
+    let ha_reconciler_canceled_total = state
+        .metrics
+        .ha_reconciler_canceled_total
+        .load(Ordering::Relaxed);
+    let ha_reconciler_failed_total = state
+        .metrics
+        .ha_reconciler_failed_total
+        .load(Ordering::Relaxed);
+    let ha_reconciler_errors_total = state
+        .metrics
+        .ha_reconciler_errors_total
+        .load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
@@ -1040,6 +1052,26 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_ok_mfa_list,
         gov_ok_mfa_get,
     );
+
+    // Append HA reconciler counters
+    body.push_str("# HELP ferrumgate_ha_reconciler_canceled_total Number of stale pre-side-effect executions transitioned to Canceled by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_canceled_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_ha_reconciler_canceled_total {}\n",
+        ha_reconciler_canceled_total
+    ));
+    body.push_str("# HELP ferrumgate_ha_reconciler_failed_total Number of stale post-side-effect executions transitioned to Failed by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_failed_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_ha_reconciler_failed_total {}\n",
+        ha_reconciler_failed_total
+    ));
+    body.push_str("# HELP ferrumgate_ha_reconciler_errors_total Number of errors encountered by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_errors_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_ha_reconciler_errors_total {}\n",
+        ha_reconciler_errors_total
+    ));
 
     // Append histogram output to body
     body.push_str("# HELP ferrumgate_request_duration_seconds HTTP request latency histogram by route, method, and status\n");

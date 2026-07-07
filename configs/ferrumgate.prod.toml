@@ -51,6 +51,12 @@ pg_acquire_timeout_secs = 5
 # approval_timeout_seconds = 3600
 # approval_reconciliation_interval_secs = 300
 
+# HA reconciler for stale in-flight executions (opt-in; default false)
+# ha_reconciler_enabled = false
+# ha_reconciler_interval_secs = 60
+# ha_reconciler_stale_threshold_secs = 1800
+# ha_reconciler_batch_size = 100
+
 # Nonce cache backend: "auto" (default), "memory", or "postgres".
 # Auto selects Postgres when store_dsn is PostgreSQL, otherwise memory.
 # Use "postgres" for shared replay protection across multiple gateway processes.

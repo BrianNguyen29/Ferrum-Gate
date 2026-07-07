@@ -45,6 +45,10 @@ fn clear_test_env() {
         "FERRUMD_APPROVAL_TIMEOUT_ENABLED",
         "FERRUMD_APPROVAL_TIMEOUT_SECONDS",
         "FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS",
+        "FERRUMD_HA_RECONCILER_ENABLED",
+        "FERRUMD_HA_RECONCILER_INTERVAL_SECS",
+        "FERRUMD_HA_RECONCILER_STALE_THRESHOLD_SECS",
+        "FERRUMD_HA_RECONCILER_BATCH_SIZE",
         "FERRUMD_AUDIT_FAIL_CLOSED",
         "FERRUMD_APPROVAL_MFA_REQUIRED",
         "FERRUMD_PDP_MODE",
@@ -4724,4 +4728,195 @@ fn test_resolve_config_rejects_invalid_nonce_cache_backend() {
         error.to_string().contains("invalid nonce cache backend"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_defaults_disabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 60);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 1800);
+    assert_eq!(config.ha_reconciler_batch_size, 100);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = true
+ha_reconciler_interval_secs = 120
+ha_reconciler_stale_threshold_secs = 600
+ha_reconciler_batch_size = 50
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 120);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 600);
+    assert_eq!(config.ha_reconciler_batch_size, 50);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = false
+ha_reconciler_interval_secs = 120
+ha_reconciler_stale_threshold_secs = 600
+ha_reconciler_batch_size = 50
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HA_RECONCILER_ENABLED", "true");
+        std::env::set_var("FERRUMD_HA_RECONCILER_INTERVAL_SECS", "300");
+        std::env::set_var("FERRUMD_HA_RECONCILER_STALE_THRESHOLD_SECS", "900");
+        std::env::set_var("FERRUMD_HA_RECONCILER_BATCH_SIZE", "200");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 300);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 900);
+    assert_eq!(config.ha_reconciler_batch_size, 200);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_cli_overrides_all() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = false
+ha_reconciler_interval_secs = 120
+ha_reconciler_stale_threshold_secs = 600
+ha_reconciler_batch_size = 50
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HA_RECONCILER_ENABLED", "false");
+        std::env::set_var("FERRUMD_HA_RECONCILER_INTERVAL_SECS", "300");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ha_reconciler_enabled: true,
+        ha_reconciler_interval_secs: Some(10),
+        ha_reconciler_stale_threshold_secs: Some(120),
+        ha_reconciler_batch_size: Some(10),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 10);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 120);
+    assert_eq!(config.ha_reconciler_batch_size, 10);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_validation_when_enabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = true
+ha_reconciler_interval_secs = 3
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("ha_reconciler_interval_secs must be between 5 and 3600"),
+        "unexpected error: {error}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_invalid_values_ignored_when_disabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = false
+ha_reconciler_interval_secs = 3
+ha_reconciler_stale_threshold_secs = 30
+ha_reconciler_batch_size = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.ha_reconciler_enabled);
+
+    let _ = fs::remove_file(path);
 }

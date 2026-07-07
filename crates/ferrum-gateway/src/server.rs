@@ -229,6 +229,10 @@ pub(crate) struct Metrics {
     pub(crate) approval_timeouts_total: AtomicU64,
     // Quarantine hold timeout counter
     pub(crate) quarantine_timeouts_total: AtomicU64,
+    // HA reconciler counters
+    pub(crate) ha_reconciler_canceled_total: AtomicU64,
+    pub(crate) ha_reconciler_failed_total: AtomicU64,
+    pub(crate) ha_reconciler_errors_total: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -353,6 +357,9 @@ impl Metrics {
             audit_fail_closed_rejections: AtomicU64::new(0),
             approval_timeouts_total: AtomicU64::new(0),
             quarantine_timeouts_total: AtomicU64::new(0),
+            ha_reconciler_canceled_total: AtomicU64::new(0),
+            ha_reconciler_failed_total: AtomicU64::new(0),
+            ha_reconciler_errors_total: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -1158,6 +1165,19 @@ pub async fn run_http_server(
         None
     };
 
+    let ha_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    let ha_reconciler_handle = if config.ha_reconciler_enabled {
+        // Startup scan: recover any stale in-flight executions from before the
+        // crash before the gateway begins accepting traffic.
+        crate::ha_reconciler::run_ha_reconciler_pass(&state).await;
+        Some(tokio::spawn(crate::ha_reconciler::ha_reconciler(
+            Arc::clone(&state),
+            Arc::clone(&ha_reconciler_shutdown),
+        )))
+    } else {
+        None
+    };
+
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
 
@@ -1219,6 +1239,11 @@ pub async fn run_http_server(
 
     quarantine_reconciler_shutdown.notify_waiters();
     if let Some(handle) = quarantine_reconciler_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    ha_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = ha_reconciler_handle {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
     }
 

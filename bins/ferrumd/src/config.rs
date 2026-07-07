@@ -131,6 +131,27 @@ pub struct Args {
     #[arg(long)]
     quarantine_reconciliation_interval_secs: Option<u64>,
 
+    /// Enable periodic background HA reconciler for stale in-flight executions
+    /// (default: false).
+    #[arg(long)]
+    ha_reconciler_enabled: bool,
+
+    /// Interval in seconds between HA reconciler runs
+    /// (default: 60, min: 5, max: 3600).
+    #[arg(long)]
+    ha_reconciler_interval_secs: Option<u64>,
+
+    /// Staleness threshold in seconds before an in-flight execution is
+    /// reconciled by the HA reconciler
+    /// (default: 1800, min: 60, max: 86400).
+    #[arg(long)]
+    ha_reconciler_stale_threshold_secs: Option<u64>,
+
+    /// Maximum number of stale executions to reconcile per HA reconciler pass
+    /// (default: 100, min: 1, max: 10000).
+    #[arg(long)]
+    ha_reconciler_batch_size: Option<u32>,
+
     /// When true, audit append failures block the action and return 503 (default: false).
     #[arg(long)]
     audit_fail_closed: bool,
@@ -283,6 +304,14 @@ struct ServerSection {
     quarantine_timeout_seconds: Option<u64>,
     #[serde(default)]
     quarantine_reconciliation_interval_secs: Option<u64>,
+    #[serde(default)]
+    ha_reconciler_enabled: Option<bool>,
+    #[serde(default)]
+    ha_reconciler_interval_secs: Option<u64>,
+    #[serde(default)]
+    ha_reconciler_stale_threshold_secs: Option<u64>,
+    #[serde(default)]
+    ha_reconciler_batch_size: Option<u32>,
     #[serde(default)]
     audit_fail_closed: Option<bool>,
     #[serde(default)]
@@ -653,6 +682,36 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(300);
 
+    let ha_reconciler_enabled = if args.ha_reconciler_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_HA_RECONCILER_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.ha_reconciler_enabled))
+            .unwrap_or(false)
+    };
+
+    let ha_reconciler_interval_secs = args
+        .ha_reconciler_interval_secs
+        .or(get_env("FERRUMD_HA_RECONCILER_INTERVAL_SECS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.ha_reconciler_interval_secs))
+        .unwrap_or(60);
+
+    let ha_reconciler_stale_threshold_secs = args
+        .ha_reconciler_stale_threshold_secs
+        .or(get_env("FERRUMD_HA_RECONCILER_STALE_THRESHOLD_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.ha_reconciler_stale_threshold_secs)
+        })
+        .unwrap_or(1800);
+
+    let ha_reconciler_batch_size = args
+        .ha_reconciler_batch_size
+        .or(get_env("FERRUMD_HA_RECONCILER_BATCH_SIZE")?)
+        .or_else(|| server.as_ref().and_then(|s| s.ha_reconciler_batch_size))
+        .unwrap_or(100);
+
     let audit_fail_closed = if args.audit_fail_closed {
         true
     } else {
@@ -973,6 +1032,10 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         quarantine_timeout_enabled,
         quarantine_timeout_seconds,
         quarantine_reconciliation_interval_secs,
+        ha_reconciler_enabled,
+        ha_reconciler_interval_secs,
+        ha_reconciler_stale_threshold_secs,
+        ha_reconciler_batch_size,
         audit_fail_closed,
         approval_mfa_required,
         mfa_secret_key,

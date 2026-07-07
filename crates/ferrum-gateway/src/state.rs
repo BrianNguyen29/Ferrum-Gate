@@ -474,6 +474,19 @@ pub struct ServerConfig {
     /// Interval between periodic quarantine hold timeout reconciliation runs in seconds.
     /// Default: 300. Valid range: 5..=86400.
     pub quarantine_reconciliation_interval_secs: u64,
+    /// Enable periodic background HA reconciler for stale in-flight executions.
+    /// Default: false.
+    pub ha_reconciler_enabled: bool,
+    /// Interval between periodic HA reconciler runs in seconds.
+    /// Default: 60. Valid range: 5..=3600.
+    pub ha_reconciler_interval_secs: u64,
+    /// Staleness threshold in seconds. An execution is considered stale when
+    /// `started_at` is older than `now - threshold`.
+    /// Default: 1800. Valid range: 60..=86400.
+    pub ha_reconciler_stale_threshold_secs: u64,
+    /// Maximum number of stale executions to reconcile per pass.
+    /// Default: 100. Valid range: 1..=10000.
+    pub ha_reconciler_batch_size: u32,
     /// Maximum number of outbox records to reconcile per periodic batch.
     /// Default: 1000.
     pub lifecycle_reconciliation_batch_limit: u32,
@@ -568,6 +581,16 @@ impl std::fmt::Debug for ServerConfig {
             "quarantine_reconciliation_interval_secs",
             &self.quarantine_reconciliation_interval_secs,
         );
+        d.field("ha_reconciler_enabled", &self.ha_reconciler_enabled);
+        d.field(
+            "ha_reconciler_interval_secs",
+            &self.ha_reconciler_interval_secs,
+        );
+        d.field(
+            "ha_reconciler_stale_threshold_secs",
+            &self.ha_reconciler_stale_threshold_secs,
+        );
+        d.field("ha_reconciler_batch_size", &self.ha_reconciler_batch_size);
         d.field("pdp_mode", &self.pdp_mode);
         d.field("audit_fail_closed", &self.audit_fail_closed);
         d.field("approval_mfa_required", &self.approval_mfa_required);
@@ -622,6 +645,10 @@ impl Default for ServerConfig {
             quarantine_timeout_enabled: false,
             quarantine_timeout_seconds: 86400,
             quarantine_reconciliation_interval_secs: 300,
+            ha_reconciler_enabled: false,
+            ha_reconciler_interval_secs: 60,
+            ha_reconciler_stale_threshold_secs: 1800,
+            ha_reconciler_batch_size: 100,
             audit_fail_closed: false,
             approval_mfa_required: false,
             mfa_secret_key: None,
@@ -838,6 +865,28 @@ impl ServerConfig {
                 "quarantine_timeout_enabled is false in a production-like configuration; \
                  stale pending quarantine holds will not be expired automatically"
             );
+        }
+
+        // Validate HA reconciler settings only when enabled.
+        if self.ha_reconciler_enabled {
+            if !(5..=3_600).contains(&self.ha_reconciler_interval_secs) {
+                return Err(format!(
+                    "ha_reconciler_interval_secs must be between 5 and 3600, got {}",
+                    self.ha_reconciler_interval_secs
+                ));
+            }
+            if !(60..=86_400).contains(&self.ha_reconciler_stale_threshold_secs) {
+                return Err(format!(
+                    "ha_reconciler_stale_threshold_secs must be between 60 and 86400, got {}",
+                    self.ha_reconciler_stale_threshold_secs
+                ));
+            }
+            if !(1..=10_000).contains(&self.ha_reconciler_batch_size) {
+                return Err(format!(
+                    "ha_reconciler_batch_size must be between 1 and 10000, got {}",
+                    self.ha_reconciler_batch_size
+                ));
+            }
         }
 
         // Validate mfa_secret_key format if present: must be exactly 64 hex chars (32 bytes).

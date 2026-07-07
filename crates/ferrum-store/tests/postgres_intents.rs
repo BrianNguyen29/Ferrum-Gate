@@ -24,6 +24,7 @@ use ferrum_store::{
     LifecycleOutboxRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
     postgres::PostgresStore,
 };
+use sqlx::{Connection, Row};
 use std::sync::Arc;
 
 const TEST_DSN: &str =
@@ -82,17 +83,44 @@ fn make_test_intent(intent_id: IntentId, status: IntentStatus) -> IntentEnvelope
     }
 }
 
+/// Cross-process advisory lock key used to serialize Postgres live tests across
+/// separate cargo processes/binaries that share the same test database.
+const PG_TEST_ADVISORY_LOCK_KEY: i64 = 0x4665_7272_756d_4761; // "FerrumGa" in ASCII
+
 /// Attempt to connect to the local Postgres and bootstrap the schema.
 /// Returns `None` if the database is unreachable so tests can skip.
-/// Tests are serialized via a global lock to avoid concurrent table drops.
+/// Tests are serialized via a process-local mutex and a Postgres advisory lock
+/// to avoid concurrent table drops across separate cargo test processes.
 /// The returned guard must be held for the entire test body.
-async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)> {
+async fn setup() -> Option<(
+    PostgresStore,
+    (
+        tokio::sync::MutexGuard<'static, ()>,
+        sqlx::postgres::PgConnection,
+    ),
+)> {
     let guard = pg_lock().lock().await;
 
     let store = match PostgresStore::connect(TEST_DSN).await {
         Ok(s) => s,
         Err(_) => return None,
     };
+
+    // Hold a dedicated connection with an advisory lock for the entire test.
+    // This prevents two separate cargo test processes from dropping and
+    // recreating the shared tables while one another's tests are running.
+    let mut lock_conn = match sqlx::postgres::PgConnection::connect(TEST_DSN).await {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    if let Err(e) = sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(PG_TEST_ADVISORY_LOCK_KEY)
+        .execute(&mut lock_conn)
+        .await
+    {
+        eprintln!("advisory lock acquisition failed: {}", e);
+        return None;
+    }
 
     // Clean slate for each test
     let _ = sqlx::query("DROP TABLE IF EXISTS executions CASCADE")
@@ -137,7 +165,7 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
         return None;
     }
 
-    Some((store, guard))
+    Some((store, (guard, lock_conn)))
 }
 
 #[tokio::test]
@@ -588,6 +616,26 @@ async fn postgres_execution_insert_and_get_roundtrip() {
     assert_eq!(fetched.execution_id, exec_id);
     assert_eq!(fetched.intent_id, intent_id);
     assert_eq!(fetched.capability_id, cap_id);
+
+    // Verify TEXT started_at is stored as an RFC3339 string in both column and raw_json.
+    let row = sqlx::query("SELECT started_at, raw_json FROM executions WHERE execution_id = $1")
+        .bind(exec_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    let started_at_col: String = row.try_get("started_at").unwrap();
+    assert!(
+        started_at_col.ends_with('Z'),
+        "started_at TEXT column must store RFC3339: got {}",
+        started_at_col
+    );
+    let raw_json: serde_json::Value =
+        serde_json::from_str(row.try_get::<String, _>("raw_json").unwrap().as_str()).unwrap();
+    assert_eq!(
+        raw_json["started_at"].as_str(),
+        Some(started_at_col.as_str()),
+        "raw_json started_at must match column value"
+    );
 }
 
 #[tokio::test]
@@ -817,6 +865,202 @@ async fn postgres_execution_list_by_capability() {
     let for_cap2 = repo.list_by_capability(cap2).await.unwrap();
     assert_eq!(for_cap2.len(), 1);
     assert_eq!(for_cap2[0].execution_id, e3);
+}
+
+#[tokio::test]
+async fn postgres_execution_list_stale_in_flight_filters_and_orders() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.executions();
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let stale_before = ts_offset(-300);
+
+    let mut oldest = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Running,
+    );
+    oldest.started_at = ts_offset(-1200);
+    repo.insert(&oldest).await.unwrap();
+
+    let mut newer = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Proposed,
+    );
+    newer.started_at = ts_offset(-600);
+    repo.insert(&newer).await.unwrap();
+
+    let mut fresh = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Proposed,
+    );
+    fresh.started_at = ts_offset(-60);
+    repo.insert(&fresh).await.unwrap();
+
+    let mut terminal = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Committed,
+    );
+    terminal.started_at = ts_offset(-1800);
+    terminal.finished_at = Some(ts_offset(0));
+    repo.insert(&terminal).await.unwrap();
+
+    let states = &[
+        ExecutionState::Proposed,
+        ExecutionState::Running,
+        ExecutionState::AwaitingApproval,
+    ];
+    let stale = repo
+        .list_stale_in_flight(stale_before, states, 100)
+        .await
+        .unwrap();
+
+    assert_eq!(stale.len(), 2);
+    assert_eq!(stale[0].execution_id, oldest.execution_id);
+    assert_eq!(stale[1].execution_id, newer.execution_id);
+
+    let limited = repo
+        .list_stale_in_flight(stale_before, states, 1)
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].execution_id, oldest.execution_id);
+}
+
+#[tokio::test]
+async fn postgres_execution_compare_and_set_terminal_state_sets_finished_at() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.executions();
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let exec_id = ExecutionId::new();
+    let exec = make_test_execution(
+        exec_id,
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Proposed,
+    );
+    repo.insert(&exec).await.unwrap();
+
+    let first = repo
+        .compare_and_set_state(
+            exec_id,
+            &[ExecutionState::Proposed],
+            ExecutionState::Canceled,
+        )
+        .await
+        .unwrap();
+    assert!(first);
+
+    let second = repo
+        .compare_and_set_state(
+            exec_id,
+            &[ExecutionState::Proposed],
+            ExecutionState::Canceled,
+        )
+        .await
+        .unwrap();
+    assert!(!second);
+
+    let fetched = repo.get(exec_id).await.unwrap().unwrap();
+    assert_eq!(fetched.state, ExecutionState::Canceled);
+    assert!(
+        fetched.finished_at.is_some(),
+        "terminal CAS must set finished_at"
+    );
+
+    let row = sqlx::query("SELECT finished_at, raw_json FROM executions WHERE execution_id = $1")
+        .bind(exec_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    let finished_at_col: Option<String> = row.try_get("finished_at").unwrap();
+    assert!(finished_at_col.is_some());
+    let finished_at_str = finished_at_col.unwrap();
+    assert!(
+        finished_at_str.ends_with('Z'),
+        "finished_at TEXT column must store RFC3339: got {}",
+        finished_at_str
+    );
+    let raw_json: serde_json::Value =
+        serde_json::from_str(row.try_get::<String, _>("raw_json").unwrap().as_str()).unwrap();
+    assert_eq!(
+        raw_json["finished_at"].as_str(),
+        Some(finished_at_str.as_str()),
+        "raw_json finished_at must match column value"
+    );
 }
 
 fn make_test_capability(
@@ -1437,6 +1681,137 @@ async fn postgres_lifecycle_concurrent_claims_are_disjoint_and_fenced() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+async fn postgres_lifecycle_authorization_stores_rfc3339_and_is_stale_visible() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let execution_id = ExecutionId::new();
+    let started_at = ts_offset(-600);
+    let execution = ExecutionRecord {
+        execution_id,
+        proposal_id,
+        intent_id,
+        capability_id,
+        rollback_contract_id: None,
+        decision: Decision::Allow,
+        state: ExecutionState::Prepared,
+        started_at,
+        finished_at: None,
+        result_digest: None,
+        metadata: JsonMap::new(),
+    };
+
+    let outbox = LifecycleOutboxRecord::pending(
+        execution_id,
+        None,
+        None,
+        ExecutionState::Prepared,
+        None,
+        None,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        format!("authorize:{}", execution_id),
+    );
+
+    let repo = store.lifecycle_outbox();
+    let authorized = repo
+        .record_authorization(
+            &make_test_capability(
+                capability_id,
+                intent_id,
+                proposal_id,
+                CapabilityStatus::Active,
+            ),
+            &execution,
+            &outbox,
+        )
+        .await
+        .unwrap();
+    assert!(
+        authorized,
+        "record_authorization should mark capability used"
+    );
+
+    // Verify TEXT started_at stores RFC3339 and raw_json matches.
+    let row = sqlx::query("SELECT started_at, raw_json FROM executions WHERE execution_id = $1")
+        .bind(execution_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    let started_at_col: String = row.try_get("started_at").unwrap();
+    assert!(
+        started_at_col.ends_with('Z'),
+        "started_at TEXT column must store RFC3339: got {}",
+        started_at_col
+    );
+    let raw_json: serde_json::Value =
+        serde_json::from_str(row.try_get::<String, _>("raw_json").unwrap().as_str()).unwrap();
+    assert_eq!(
+        raw_json["started_at"].as_str(),
+        Some(started_at_col.as_str()),
+        "raw_json started_at must match column value"
+    );
+
+    // Capability JSON mutation path must have updated status to Used.
+    let used_cap = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should exist");
+    assert!(
+        matches!(used_cap.status, CapabilityStatus::Used),
+        "capability status should be Used after authorization"
+    );
+
+    // HA stale selection must see the authorized execution when stale_before is after started_at.
+    let stale_before = ts_offset(-300);
+    let states = &[
+        ExecutionState::Proposed,
+        ExecutionState::Authorized,
+        ExecutionState::Prepared,
+        ExecutionState::AwaitingApproval,
+        ExecutionState::Running,
+        ExecutionState::AwaitingVerification,
+    ];
+    let stale = store
+        .executions()
+        .list_stale_in_flight(stale_before, states, 100)
+        .await
+        .unwrap();
+    assert_eq!(stale.len(), 1, "expected one stale in-flight execution");
+    assert_eq!(stale[0].execution_id, execution_id);
 }
 
 #[tokio::test]

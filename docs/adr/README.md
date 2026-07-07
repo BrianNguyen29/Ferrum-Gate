@@ -20,6 +20,7 @@ This directory records significant architecture decisions made in the FerrumGate
 | [013](013-mfa-breakglass.md) | MFA Disable/Rotate Break-Glass | Accepted |
 | [014](014-quarantine-holds.md) | Quarantine Holds for Policy-Flagged Proposals | Accepted |
 | [015](015-shared-nonce-cache.md) | Shared Nonce Cache for Agent Auth Replay Protection | Accepted |
+| [016](016-ha-reconciler.md) | HA Reconciler for Stale In-Flight Executions | Accepted |
 
 ## Format
 

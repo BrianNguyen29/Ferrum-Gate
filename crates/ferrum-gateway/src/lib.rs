@@ -7,6 +7,7 @@ mod auth_actor;
 mod bridge;
 mod capabilities;
 mod execution;
+mod ha_reconciler;
 mod intents;
 mod lineage;
 mod macros;
