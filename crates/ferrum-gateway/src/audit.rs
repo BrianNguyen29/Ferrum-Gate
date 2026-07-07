@@ -1092,6 +1092,13 @@ impl AuditLogRepo for FailingAuditLogRepo {
     ) -> ferrum_store::Result<(Vec<AuditLogEntry>, Option<String>)> {
         Ok((Vec::new(), None))
     }
+    async fn list_since_id(
+        &self,
+        _after_id: i64,
+        _limit: u32,
+    ) -> ferrum_store::Result<(Vec<AuditLogEntry>, Option<String>)> {
+        Ok((Vec::new(), None))
+    }
     async fn verify_chain(&self) -> ferrum_store::Result<()> {
         Ok(())
     }

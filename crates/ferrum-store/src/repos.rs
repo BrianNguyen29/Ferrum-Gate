@@ -395,6 +395,17 @@ pub trait AuditLogRepo: Send + Sync {
         until: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
 
+    /// List audit log entries with id greater than `after_id` in ascending order.
+    ///
+    /// This is a bounded chronological scan used by the WORM sink worker. Returns
+    /// at most `limit` entries and an optional next cursor equal to the last
+    /// returned entry id when more entries are available.
+    async fn list_since_id(
+        &self,
+        after_id: i64,
+        limit: u32,
+    ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
+
     /// Verify the audit log hash chain integrity.
     ///
     /// Reads all entries ordered by id ASC and validates that each entry's

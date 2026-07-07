@@ -64,6 +64,19 @@ fn clear_test_env() {
         "FERRUMD_BEHAVIORAL_ANOMALY_WARNING_THRESHOLD",
         "FERRUMD_BEHAVIORAL_ANOMALY_CRITICAL_THRESHOLD",
         "FERRUMD_BEHAVIORAL_ANOMALY_MAX_ACTORS",
+        "FERRUMD_AUDIT_WORM_SINK_ENABLED",
+        "FERRUMD_AUDIT_WORM_SINK_BUCKET",
+        "FERRUMD_AUDIT_WORM_SINK_PREFIX",
+        "FERRUMD_AUDIT_WORM_SINK_OBJECT_LOCK_MODE",
+        "FERRUMD_AUDIT_WORM_SINK_RETENTION_DAYS",
+        "FERRUMD_AUDIT_WORM_SINK_LEGAL_HOLD",
+        "FERRUMD_AUDIT_WORM_SINK_EXPORT_INTERVAL_SECS",
+        "FERRUMD_AUDIT_WORM_SINK_BATCH_LIMIT",
+        "FERRUMD_AUDIT_WORM_SINK_LIVE",
+        "FERRUMD_AUDIT_WORM_SINK_ENDPOINT_URL",
+        "FERRUMD_AUDIT_WORM_SINK_REGION",
+        "FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID",
+        "FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -5019,6 +5032,211 @@ behavioral_anomaly_critical_threshold = 5
         ),
         "unexpected error: {}",
         err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_rejects_worm_enabled_without_bucket() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        err.to_string()
+            .contains("audit_worm_sink_enabled is true but audit_worm_sink_bucket is not set"),
+        "unexpected error: {}",
+        err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_worm_sink_accepts_file_config() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "my-worm-bucket"
+prefix = "audit"
+object_lock_mode = "compliance"
+retention_days = 7
+export_interval_secs = 60
+batch_limit = 1000
+live = false
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.audit_worm_sink_enabled);
+    let cfg = config.worm_sink_config.as_ref().unwrap();
+    assert_eq!(cfg.bucket, "my-worm-bucket");
+    assert_eq!(cfg.prefix, "audit");
+    assert_eq!(
+        cfg.object_lock_mode,
+        ferrum_adapter_s3::ObjectLockMode::Compliance
+    );
+    assert_eq!(cfg.retention_days, 7);
+    assert_eq!(cfg.export_interval_secs, 60);
+    assert_eq!(cfg.batch_limit, 1000);
+    assert!(!cfg.live);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_worm_sink_rejects_invalid_object_lock_mode() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "my-worm-bucket"
+object_lock_mode = "invalid-mode"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        err.to_string()
+            .contains("invalid audit_worm_sink object_lock_mode"),
+        "unexpected error: {}",
+        err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_worm_sink_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_BUCKET", "env-bucket");
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_PREFIX", "env-prefix");
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_OBJECT_LOCK_MODE", "compliance");
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_RETENTION_DAYS", "14");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "file-bucket"
+prefix = "file-prefix"
+object_lock_mode = "governance"
+retention_days = 7
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let cfg = config.worm_sink_config.as_ref().unwrap();
+    assert_eq!(cfg.bucket, "env-bucket");
+    assert_eq!(cfg.prefix, "env-prefix");
+    assert_eq!(
+        cfg.object_lock_mode,
+        ferrum_adapter_s3::ObjectLockMode::Compliance
+    );
+    assert_eq!(cfg.retention_days, 14);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_server_config_debug_redacts_worm_credentials() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "my-worm-bucket"
+access_key_id = "AKIAEXAMPLE"
+secret_access_key = "w0rmdb33f/s3cr3t"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let debug = format!("{:?}", config);
+    assert!(
+        debug.contains("my-worm-bucket"),
+        "debug output should contain non-sensitive bucket name"
+    );
+    assert!(
+        !debug.contains("AKIAEXAMPLE"),
+        "debug output must not contain WORM access key ID"
+    );
+    assert!(
+        !debug.contains("w0rmdb33f/s3cr3t"),
+        "debug output must not contain WORM secret access key"
+    );
+    assert!(
+        debug.contains("<redacted>"),
+        "debug output should show redaction placeholder"
     );
 
     let _ = fs::remove_file(path);

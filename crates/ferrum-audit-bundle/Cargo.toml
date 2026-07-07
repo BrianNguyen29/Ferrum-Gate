@@ -1,0 +1,20 @@
+[package]
+name = "ferrum-audit-bundle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+chrono = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+
+ferrum-proto = { path = "../ferrum-proto" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

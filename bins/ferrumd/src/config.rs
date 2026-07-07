@@ -208,6 +208,58 @@ pub struct Args {
     /// Maximum number of principals tracked in memory by the behavioral profiler (default: 1000).
     #[arg(long)]
     behavioral_anomaly_max_actors: Option<usize>,
+
+    /// Enable the WORM-compatible audit bundle sink (default: false).
+    #[arg(long)]
+    audit_worm_sink_enabled: bool,
+
+    /// WORM sink target bucket.
+    #[arg(long)]
+    audit_worm_sink_bucket: Option<String>,
+
+    /// WORM sink key prefix (default: "audit-worm").
+    #[arg(long)]
+    audit_worm_sink_prefix: Option<String>,
+
+    /// WORM sink Object Lock mode: "governance" or "compliance" (default: "governance").
+    #[arg(long)]
+    audit_worm_sink_object_lock_mode: Option<String>,
+
+    /// WORM sink retention period in days (default: 30).
+    #[arg(long)]
+    audit_worm_sink_retention_days: Option<u32>,
+
+    /// Apply a legal hold to WORM sink objects (default: false).
+    #[arg(long)]
+    audit_worm_sink_legal_hold: bool,
+
+    /// Interval between WORM sink export attempts in seconds (default: 300, min: 60).
+    #[arg(long)]
+    audit_worm_sink_export_interval_secs: Option<u64>,
+
+    /// Maximum audit entries per WORM sink bundle (default: 1000, range: 1..=100000).
+    #[arg(long)]
+    audit_worm_sink_batch_limit: Option<u32>,
+
+    /// Enable live S3 SDK calls for the WORM sink (default: false).
+    #[arg(long)]
+    audit_worm_sink_live: bool,
+
+    /// Optional custom S3 endpoint for the WORM sink (e.g., http://localhost:9000).
+    #[arg(long)]
+    audit_worm_sink_endpoint_url: Option<String>,
+
+    /// AWS region for the WORM sink (default: "us-east-1").
+    #[arg(long)]
+    audit_worm_sink_region: Option<String>,
+
+    /// Optional static access key ID for the WORM sink.
+    #[arg(long)]
+    audit_worm_sink_access_key_id: Option<String>,
+
+    /// Optional static secret access key for the WORM sink.
+    #[arg(long)]
+    audit_worm_sink_secret_access_key: Option<String>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -363,6 +415,69 @@ struct ServerSection {
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
+    #[cfg(feature = "worm-sink")]
+    #[serde(default)]
+    audit_worm_sink_enabled: Option<bool>,
+    #[cfg(feature = "worm-sink")]
+    #[serde(default)]
+    audit_worm_sink: Option<WormSinkSection>,
+}
+
+#[cfg(feature = "worm-sink")]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct WormSinkSection {
+    #[serde(default)]
+    #[allow(dead_code)]
+    enabled: bool,
+    #[serde(default)]
+    bucket: Option<String>,
+    #[serde(default = "default_worm_sink_prefix")]
+    prefix: String,
+    #[serde(default = "default_worm_sink_object_lock_mode")]
+    object_lock_mode: String,
+    #[serde(default = "default_worm_sink_retention_days")]
+    retention_days: u32,
+    #[serde(default)]
+    legal_hold: bool,
+    #[serde(default = "default_worm_sink_export_interval_secs")]
+    export_interval_secs: u64,
+    #[serde(default = "default_worm_sink_batch_limit")]
+    batch_limit: u32,
+    #[serde(default)]
+    live: bool,
+    #[serde(default)]
+    endpoint_url: Option<String>,
+    #[serde(default = "default_s3_region")]
+    region: String,
+    #[serde(default)]
+    access_key_id: Option<String>,
+    #[serde(default)]
+    secret_access_key: Option<String>,
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_prefix() -> String {
+    "audit-worm".to_string()
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_object_lock_mode() -> String {
+    "governance".to_string()
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_retention_days() -> u32 {
+    30
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_export_interval_secs() -> u64 {
+    300
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_batch_limit() -> u32 {
+    1000
 }
 
 #[cfg(feature = "s3")]
@@ -393,7 +508,7 @@ fn default_s3_require_versioning() -> bool {
     true
 }
 
-#[cfg(feature = "s3")]
+#[cfg(any(feature = "s3", feature = "worm-sink"))]
 fn default_s3_region() -> String {
     "us-east-1".to_string()
 }
@@ -854,6 +969,117 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(1000);
 
+    #[cfg(feature = "worm-sink")]
+    let (audit_worm_sink_enabled, worm_sink_config) = {
+        let enabled = if args.audit_worm_sink_enabled {
+            true
+        } else {
+            get_env::<bool>("FERRUMD_AUDIT_WORM_SINK_ENABLED")?
+                .or_else(|| server.as_ref().and_then(|s| s.audit_worm_sink_enabled))
+                .unwrap_or(false)
+        };
+
+        let file_worm = server.as_ref().and_then(|s| s.audit_worm_sink.as_ref());
+        let bucket = args
+            .audit_worm_sink_bucket
+            .clone()
+            .or(get_env("FERRUMD_AUDIT_WORM_SINK_BUCKET")?)
+            .or_else(|| file_worm.and_then(|w| w.bucket.clone()));
+
+        if enabled && bucket.is_none() {
+            return Err(anyhow::anyhow!(
+                "audit_worm_sink_enabled is true but audit_worm_sink_bucket is not set"
+            ));
+        }
+
+        let file_worm = server.as_ref().and_then(|s| s.audit_worm_sink.as_ref());
+
+        let env_prefix = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_PREFIX")?;
+        let env_object_lock_mode = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_OBJECT_LOCK_MODE")?;
+        let raw_object_lock_mode = args
+            .audit_worm_sink_object_lock_mode
+            .clone()
+            .or(env_object_lock_mode)
+            .or_else(|| file_worm.map(|w| w.object_lock_mode.clone()))
+            .unwrap_or_else(default_worm_sink_object_lock_mode);
+        let parsed_object_lock_mode = raw_object_lock_mode
+            .parse::<ferrum_adapter_s3::ObjectLockMode>()
+            .map_err(|e| anyhow::anyhow!("invalid audit_worm_sink object_lock_mode: {e}"))?;
+        let env_retention_days = get_env::<u32>("FERRUMD_AUDIT_WORM_SINK_RETENTION_DAYS")?;
+        let env_legal_hold = get_env::<bool>("FERRUMD_AUDIT_WORM_SINK_LEGAL_HOLD")?;
+        let env_export_interval_secs =
+            get_env::<u64>("FERRUMD_AUDIT_WORM_SINK_EXPORT_INTERVAL_SECS")?;
+        let env_batch_limit = get_env::<u32>("FERRUMD_AUDIT_WORM_SINK_BATCH_LIMIT")?;
+        let env_live = get_env::<bool>("FERRUMD_AUDIT_WORM_SINK_LIVE")?;
+        let env_endpoint_url = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_ENDPOINT_URL")?;
+        let env_region = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_REGION")?;
+        let env_access_key_id = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID")?;
+        let env_secret_access_key = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY")?;
+
+        let cfg = bucket.map(|bucket| ferrum_gateway::WormSinkConfig {
+            bucket,
+            prefix: args
+                .audit_worm_sink_prefix
+                .clone()
+                .or(env_prefix)
+                .or_else(|| file_worm.map(|w| w.prefix.clone()))
+                .unwrap_or_else(default_worm_sink_prefix),
+            object_lock_mode: parsed_object_lock_mode,
+            retention_days: args
+                .audit_worm_sink_retention_days
+                .or(env_retention_days)
+                .or_else(|| file_worm.map(|w| w.retention_days))
+                .unwrap_or_else(default_worm_sink_retention_days),
+            legal_hold: if args.audit_worm_sink_legal_hold {
+                true
+            } else {
+                env_legal_hold
+                    .or_else(|| file_worm.map(|w| w.legal_hold))
+                    .unwrap_or(false)
+            },
+            export_interval_secs: args
+                .audit_worm_sink_export_interval_secs
+                .or(env_export_interval_secs)
+                .or_else(|| file_worm.map(|w| w.export_interval_secs))
+                .unwrap_or_else(default_worm_sink_export_interval_secs),
+            batch_limit: args
+                .audit_worm_sink_batch_limit
+                .or(env_batch_limit)
+                .or_else(|| file_worm.map(|w| w.batch_limit))
+                .unwrap_or_else(default_worm_sink_batch_limit),
+            live: if args.audit_worm_sink_live {
+                true
+            } else {
+                env_live
+                    .or_else(|| file_worm.map(|w| w.live))
+                    .unwrap_or(false)
+            },
+            endpoint_url: args
+                .audit_worm_sink_endpoint_url
+                .clone()
+                .or(env_endpoint_url)
+                .or_else(|| file_worm.and_then(|w| w.endpoint_url.clone())),
+            region: args
+                .audit_worm_sink_region
+                .clone()
+                .or(env_region)
+                .or_else(|| file_worm.map(|w| w.region.clone()))
+                .unwrap_or_else(default_s3_region),
+            access_key_id: args
+                .audit_worm_sink_access_key_id
+                .clone()
+                .or(env_access_key_id)
+                .or_else(|| file_worm.and_then(|w| w.access_key_id.clone())),
+            secret_access_key: args
+                .audit_worm_sink_secret_access_key
+                .clone()
+                .or(env_secret_access_key)
+                .or_else(|| file_worm.and_then(|w| w.secret_access_key.clone())),
+        });
+
+        (enabled, cfg)
+    };
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -1096,6 +1322,10 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         sqlite_db_roots,
         #[cfg(feature = "s3")]
         s3_config,
+        #[cfg(feature = "worm-sink")]
+        audit_worm_sink_enabled,
+        #[cfg(feature = "worm-sink")]
+        worm_sink_config,
         oidc_config,
         agent_clock_skew_secs: 30,
         nonce_cache_backend: nonce_cache_backend_parsed,

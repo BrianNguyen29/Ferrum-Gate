@@ -30,10 +30,17 @@
       - `GET /v1/admin/audit/checkpoints/{window_start}/verify` — verify stored checkpoint: recompute Merkle root, recompute payload hash, verify Ed25519 signature.
       - `GET /v1/admin/audit/checkpoints` — list checkpoints with cursor-based pagination.
     - CLI commands: `ferrumctl admin audit checkpoint-sign`, `checkpoint-verify`, `checkpoint-list`.
+  - Optional WORM-compatible S3 Object Lock sink (requires `worm-sink` feature):
+    - Background worker scans the audit log and uploads portable bundles to an S3 Object Lock bucket.
+    - Bundles are emitted in bounded batches; each batch's manifest records the
+      `previous_boundary_hash` of the prior batch's last entry so windowed bundles
+      can be verified independently while retaining chain continuity checks.
+    - Configurable Object Lock mode (`governance` or `compliance`), retention period, and optional legal hold.
+    - Failures are logged and counted as metrics; they do not block the request path.
+    - The adapter does not create buckets or manage Object Lock/IAM/KMS; operators must provision the bucket.
 
 - Not yet implemented:
   - External anchoring (e.g., blockchain, timestamp authority).
-  - WORM sink integration.
   - ~~Local DB direct-verify mode in CLI~~ (Done via `verify --bundle`).
 
 ## Canonical Serialization
@@ -80,7 +87,7 @@ Existing audit log rows created before this feature have `content_hash = NULL` a
 
 ## Threats NOT Addressed
 
-- **Privileged attacker with full DB access**: can truncate the table, rebuild hashes, and produce a valid-looking chain. Mitigation requires external anchoring or WORM storage (not yet implemented).
+- **Privileged attacker with full DB access**: can truncate the table, rebuild hashes, and produce a valid-looking chain. Mitigation requires external anchoring or a WORM-compatible sink; the S3 Object Lock WORM sink is implemented behind the `worm-sink` feature gate and disabled by default.
 - **Clock manipulation**: `created_at` is part of the canonical hash; changing the timestamp changes the hash, which is detectable.
 - **Collision resistance**: SHA-256 is used; no custom collision resistance claim beyond the hash function itself.
 
@@ -108,6 +115,9 @@ Fetches the full audit log from the server as NDJSON, writes `audit.jsonl` and `
 - First and last entry `content_hash`.
 - Merkle root of the hashed entry chain.
 - Total entry count.
+- Optional `previous_boundary_hash` for windowed batches: the hash of the last
+  entry of the previous bundle, allowing each windowed bundle to be verified
+  independently while preserving chain continuity checks.
 
 ### Bundle Verify
 
@@ -182,8 +192,9 @@ Calls `GET /v1/admin/audit/checkpoints` and lists signed checkpoints with cursor
 1. ~~Merkle root per time window (e.g., hourly) for batch verification.~~ (Done)
 2. ~~Signed checkpoint with Ed25519 signature over Merkle root.~~ (Done)
 3. ~~`ferrumctl audit export` producing a portable verification bundle.~~ (Done)
-4. Optional external anchoring to a transparency log or blockchain.
-5. ~~Local direct-verify mode for operators with file-system access to the SQLite database.~~ (Done via `verify --bundle`).
+4. ~~Optional WORM-compatible S3 Object Lock sink.~~ (Done, feature-gated as `worm-sink`.)
+5. Optional external anchoring to a transparency log or blockchain (operator-owned).
+6. ~~Local direct-verify mode for operators with file-system access to the SQLite database.~~ (Done via `verify --bundle`).
 
 ## Notes
 

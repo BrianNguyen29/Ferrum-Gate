@@ -228,6 +228,10 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_mfa_get: AtomicU64,
     // Audit fail-closed rejection counter
     pub(crate) audit_fail_closed_rejections: AtomicU64,
+    // WORM sink counters
+    pub(crate) audit_worm_sink_exports_total: AtomicU64,
+    pub(crate) audit_worm_sink_failures_total: AtomicU64,
+    pub(crate) audit_worm_sink_last_success_timestamp_seconds: AtomicU64,
     // Approval timeout counter
     pub(crate) approval_timeouts_total: AtomicU64,
     // Quarantine hold timeout counter
@@ -361,6 +365,9 @@ impl Metrics {
             governance_success_v1_mfa_list: AtomicU64::new(0),
             governance_success_v1_mfa_get: AtomicU64::new(0),
             audit_fail_closed_rejections: AtomicU64::new(0),
+            audit_worm_sink_exports_total: AtomicU64::new(0),
+            audit_worm_sink_failures_total: AtomicU64::new(0),
+            audit_worm_sink_last_success_timestamp_seconds: AtomicU64::new(0),
             approval_timeouts_total: AtomicU64::new(0),
             quarantine_timeouts_total: AtomicU64::new(0),
             ha_reconciler_canceled_total: AtomicU64::new(0),
@@ -1199,6 +1206,45 @@ pub async fn run_http_server(
         None
     };
 
+    #[cfg(feature = "worm-sink")]
+    let worm_sink_shutdown = Arc::new(tokio::sync::Notify::new());
+    #[cfg(feature = "worm-sink")]
+    let worm_sink_handle = if config.audit_worm_sink_enabled {
+        if let Some(ref worm_cfg) = config.worm_sink_config {
+            let uploader = Arc::new(ferrum_adapter_s3::WormUploader::new(
+                worm_cfg.to_upload_config(),
+            )) as Arc<dyn crate::worm_sink::WormUploader>;
+            match uploader.validate_bucket().await {
+                Ok(()) => {
+                    tracing::info!(
+                        bucket = %worm_cfg.bucket,
+                        prefix = %worm_cfg.prefix,
+                        "WORM sink worker starting"
+                    );
+                    Some(tokio::spawn(crate::worm_sink::worm_sink_worker(
+                        Arc::clone(&state),
+                        Arc::clone(&worm_sink_shutdown),
+                        worm_cfg.clone(),
+                        uploader,
+                    )))
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "WORM sink bucket validation failed for bucket '{}': {}",
+                        worm_cfg.bucket,
+                        e
+                    ));
+                }
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "audit_worm_sink_enabled is true but worm_sink_config is missing"
+            ));
+        }
+    } else {
+        None
+    };
+
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
 
@@ -1266,6 +1312,14 @@ pub async fn run_http_server(
     ha_reconciler_shutdown.notify_waiters();
     if let Some(handle) = ha_reconciler_handle {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    #[cfg(feature = "worm-sink")]
+    {
+        worm_sink_shutdown.notify_waiters();
+        if let Some(handle) = worm_sink_handle {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        }
     }
 
     Ok(())

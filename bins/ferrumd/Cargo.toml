@@ -11,6 +11,8 @@ default = []
 postgres = ["ferrum-store/postgres", "ferrum-gateway/postgres"]
 # S3 adapter support — feature-gated to reduce default dependency footprint
 s3 = ["ferrum-gateway/s3", "ferrum-adapter-s3/s3-client"]
+# WORM-compatible audit bundle sink (implies S3 adapter support).
+worm-sink = ["s3", "ferrum-gateway/worm-sink", "ferrum-adapter-s3/worm-sink"]
 
 [dependencies]
 anyhow.workspace = true

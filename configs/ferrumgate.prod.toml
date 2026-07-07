@@ -74,6 +74,27 @@ pg_acquire_timeout_secs = 5
 # mfa_lockout_duration_secs = 900
 # Lockout settings above apply to both per-factor and per-agent MFA lockout.
 
+# ── WORM-Compatible Audit Bundle Sink (optional) ──
+# Requires ferrumd to be built with --features worm-sink (implies s3).
+# Disabled by default. The operator must provision the bucket and enable
+# S3 Object Lock; the adapter does not create buckets or manage IAM.
+#
+# audit_worm_sink_enabled = false
+# [server.audit_worm_sink]
+# bucket = "my-ferrumgate-audit-bucket"
+# prefix = "audit-worm"
+# object_lock_mode = "governance"
+# retention_days = 30
+# legal_hold = false
+# export_interval_secs = 300
+# batch_limit = 1000
+# live = false
+# endpoint_url = "http://localhost:9000"
+# region = "us-east-1"
+# # Credentials should be provided via environment variables:
+# # FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID
+# # FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY
+
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".
 # Static keys take precedence over fetched JWKS keys.

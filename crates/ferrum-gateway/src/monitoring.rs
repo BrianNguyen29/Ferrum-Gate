@@ -314,6 +314,22 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .behavioral_anomaly_critical_total
         .load(Ordering::Relaxed);
+    let audit_fail_closed_rejections = state
+        .metrics
+        .audit_fail_closed_rejections
+        .load(Ordering::Relaxed);
+    let audit_worm_sink_exports_total = state
+        .metrics
+        .audit_worm_sink_exports_total
+        .load(Ordering::Relaxed);
+    let audit_worm_sink_failures_total = state
+        .metrics
+        .audit_worm_sink_failures_total
+        .load(Ordering::Relaxed);
+    let audit_worm_sink_last_success_timestamp_seconds = state
+        .metrics
+        .audit_worm_sink_last_success_timestamp_seconds
+        .load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
@@ -1091,6 +1107,34 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     body.push_str(&format!(
         "ferrumgate_behavioral_anomaly_detected_total{{severity=\"critical\"}} {}\n",
         behavioral_anomaly_critical_total
+    ));
+
+    // Append audit fail-closed rejection counter
+    body.push_str("# HELP ferrumgate_audit_fail_closed_rejections_total Number of requests rejected because audit append failed in fail-closed mode\n");
+    body.push_str("# TYPE ferrumgate_audit_fail_closed_rejections_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_fail_closed_rejections_total {}\n",
+        audit_fail_closed_rejections
+    ));
+
+    // Append WORM sink counters
+    body.push_str("# HELP ferrumgate_audit_worm_sink_exports_total Number of audit bundles successfully exported to the WORM sink\n");
+    body.push_str("# TYPE ferrumgate_audit_worm_sink_exports_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_worm_sink_exports_total {}\n",
+        audit_worm_sink_exports_total
+    ));
+    body.push_str("# HELP ferrumgate_audit_worm_sink_failures_total Number of failed WORM sink export attempts\n");
+    body.push_str("# TYPE ferrumgate_audit_worm_sink_failures_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_worm_sink_failures_total {}\n",
+        audit_worm_sink_failures_total
+    ));
+    body.push_str("# HELP ferrumgate_audit_worm_sink_last_success_timestamp_seconds Unix timestamp of the last successful WORM sink export\n");
+    body.push_str("# TYPE ferrumgate_audit_worm_sink_last_success_timestamp_seconds gauge\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_worm_sink_last_success_timestamp_seconds {}\n",
+        audit_worm_sink_last_success_timestamp_seconds
     ));
 
     // Append histogram output to body

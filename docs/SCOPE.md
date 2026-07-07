@@ -35,7 +35,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
 | MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; per-factor lockout implemented; WebAuthn/backup codes deferred |
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
-| WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
+| WORM audit sink | Implemented (feature-gated) | S3 Object Lock WORM-compatible sink behind the `worm-sink` feature; disabled by default; operator provisions bucket and Object Lock configuration |
 | Behavioral anomaly detection | Implemented (Phase 1 V1) | In-memory advisory high-risk/R3 burst detection; opt-in, no ML/external service |
 | Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
 | GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |

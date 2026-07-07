@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 /// `crate::server`.
 pub(crate) use crate::server::AppState;
 
+#[cfg(feature = "worm-sink")]
+pub use crate::worm_sink::WormSinkConfig;
+
 #[derive(Clone)]
 pub struct GatewayRuntime {
     pub pdp: Arc<dyn PdpEngine>,
@@ -493,6 +496,13 @@ pub struct ServerConfig {
     /// When true, audit append failures block the action and return 503.
     /// Default: false (best-effort).
     pub audit_fail_closed: bool,
+    /// When true, the WORM-compatible audit bundle sink is enabled.
+    /// Default: false.
+    #[cfg(feature = "worm-sink")]
+    pub audit_worm_sink_enabled: bool,
+    /// WORM sink configuration. Required when `audit_worm_sink_enabled` is true.
+    #[cfg(feature = "worm-sink")]
+    pub worm_sink_config: Option<WormSinkConfig>,
     /// When true, approval resolve requires a second factor (MFA).
     /// Default: false. No concrete verifier is wired yet; enabling this
     /// returns 403/mfa_required until client factor transport is implemented.
@@ -608,6 +618,10 @@ impl std::fmt::Debug for ServerConfig {
         d.field("ha_reconciler_batch_size", &self.ha_reconciler_batch_size);
         d.field("pdp_mode", &self.pdp_mode);
         d.field("audit_fail_closed", &self.audit_fail_closed);
+        #[cfg(feature = "worm-sink")]
+        d.field("audit_worm_sink_enabled", &self.audit_worm_sink_enabled);
+        #[cfg(feature = "worm-sink")]
+        d.field("worm_sink_config", &self.worm_sink_config);
         d.field("approval_mfa_required", &self.approval_mfa_required);
         d.field(
             "mfa_secret_key",
@@ -685,6 +699,10 @@ impl Default for ServerConfig {
             ha_reconciler_stale_threshold_secs: 1800,
             ha_reconciler_batch_size: 100,
             audit_fail_closed: false,
+            #[cfg(feature = "worm-sink")]
+            audit_worm_sink_enabled: false,
+            #[cfg(feature = "worm-sink")]
+            worm_sink_config: None,
             approval_mfa_required: false,
             mfa_secret_key: None,
             mfa_totp_issuer: "FerrumGate".to_string(),
@@ -807,6 +825,23 @@ impl ServerConfig {
                 "audit_fail_closed is false in a production-like configuration; \
                  audit append failures will not block actions"
             );
+        }
+
+        #[cfg(feature = "worm-sink")]
+        {
+            if self.audit_worm_sink_enabled {
+                let cfg = self
+                    .worm_sink_config
+                    .as_ref()
+                    .ok_or("audit_worm_sink_enabled is true but worm_sink_config is missing")?;
+                cfg.validate()
+                    .map_err(|e| format!("audit_worm_sink configuration invalid: {e}"))?;
+                if !cfg.live {
+                    tracing::warn!(
+                        "audit_worm_sink is enabled but live=false; the sink will not make live S3 calls"
+                    );
+                }
+            }
         }
 
         // Validate store DSN is SQLite (PostgreSQL and MySQL not implemented)

@@ -24,6 +24,9 @@ mod response;
 mod server;
 mod state;
 
+#[cfg(feature = "worm-sink")]
+mod worm_sink;
+
 pub(crate) use auth_actor::AuthActor;
 pub use capabilities::StoreCapabilityService;
 pub use mfa::*;

@@ -91,3 +91,44 @@ pg_acquire_timeout_secs = 5
 # kid = "key1"
 # type = "hmac"
 # secret = "base64encodedsecret=="
+
+# ── WORM-Compatible Audit Bundle Sink (optional) ──
+# Requires ferrumd to be built with --features worm-sink (implies s3).
+# Disabled by default. The operator must provision the bucket and enable
+# S3 Object Lock; the adapter does not create buckets or manage IAM.
+#
+# audit_worm_sink_enabled = false
+# [server.audit_worm_sink]
+# bucket = "my-dev-ferrumgate-audit-bucket"
+# prefix = "audit-worm"
+# object_lock_mode = "governance"
+# retention_days = 7
+# legal_hold = false
+# export_interval_secs = 300
+# batch_limit = 1000
+# live = false
+# endpoint_url = "http://localhost:9000"
+# region = "us-east-1"
+# # Credentials should be provided via environment variables:
+# # FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID
+# # FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY
+
+# ── WORM-Compatible Audit Bundle Sink (optional) ──
+# Requires ferrumd to be built with --features worm-sink (implies s3).
+# Disabled by default. The operator must provision the bucket and enable
+# S3 Object Lock; the adapter does not create buckets or manage IAM.
+#
+# audit_worm_sink_enabled = false
+# audit_worm_sink_bucket = "my-dev-ferrumgate-audit-bucket"
+# audit_worm_sink_prefix = "audit-worm"
+# audit_worm_sink_object_lock_mode = "governance"
+# audit_worm_sink_retention_days = 7
+# audit_worm_sink_legal_hold = false
+# audit_worm_sink_export_interval_secs = 300
+# audit_worm_sink_batch_limit = 1000
+# audit_worm_sink_live = false
+# audit_worm_sink_endpoint_url = "http://localhost:9000"
+# audit_worm_sink_region = "us-east-1"
+# # Credentials should be provided via environment variables:
+# # FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID
+# # FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY
