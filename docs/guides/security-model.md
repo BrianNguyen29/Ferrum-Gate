@@ -79,6 +79,7 @@
 | `policy_bundle_rollback` | `POST /v1/policy-bundles/{id}/rollback` |
 | `approval_resolve` | `POST /v1/approvals/{id}/resolve` |
 | `execution_cancel` | `POST /v1/executions/{id}/cancel` |
+| `behavioral_anomaly` | `POST /v1/proposals/{proposal_id}/evaluate` (advisory, when enabled) |
 
 ### How to query
 
@@ -128,6 +129,30 @@ Lockout state is stored in the database. Per-factor state lives in `mfa_credenti
 (`failed_attempts`, `locked_until`, `last_failed_at`, `lockout_count`). Per-agent
 state lives in `mfa_agent_lockouts` with the same columns. Successful verification
 resets both counters while preserving the lifetime `lockout_count`.
+
+## Behavioral anomaly detection
+
+When `behavioral_anomaly_enabled = true`, the gateway tracks each principal's
+high-risk (`High`/`Critical`) and R3 proposal rate in a bounded in-memory rolling
+window. If the count within the window reaches the configured warning or critical
+threshold, the gateway emits:
+
+- An audit log entry with `action = behavioral_anomaly` and sanitized metadata
+  (severity, window count, window seconds, threshold). No actor IDs or raw
+  arguments are included.
+- A Prometheus counter `ferrumgate_behavioral_anomaly_detected_total{severity}`.
+- Sanitized `behavioral_anomaly` metadata in the `PolicyEvaluated` provenance event.
+
+This is **advisory only**: it does not change the policy decision, auto-block,
+escalate to approval, or write to the lifecycle outbox.
+
+Configuration (all `[server]`):
+
+- `behavioral_anomaly_enabled` — default `false`.
+- `behavioral_anomaly_window_secs` — default `60`, range `1..=3600`.
+- `behavioral_anomaly_warning_threshold` — default `5`.
+- `behavioral_anomaly_critical_threshold` — default `10`, must be `>= warning_threshold`.
+- `behavioral_anomaly_max_actors` — default `1000`, bounds memory.
 
 ## Secret handling
 
@@ -192,7 +217,7 @@ Tenant
 - Evaluate mTLS for service-to-service auth.
 - Evaluate audit fail-closed mode (ADR 007).
 - Evaluate R3 approval timeout auto-deny (ADR 008 Phase 2).
-- Evaluate behavioral anomaly detection (ADR 010).
+- Evaluate behavioral anomaly detection (ADR 010); enable `behavioral_anomaly_enabled` after tuning thresholds.
 
 ## Related docs
 

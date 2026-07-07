@@ -12,6 +12,10 @@ use ferrum_proto::{
 };
 use ferrum_store::StoreError;
 use ferrum_store::StoreFacade;
+
+#[cfg(test)]
+use ferrum_store::repos::AuditLogRepo;
+
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -990,113 +994,118 @@ pub(crate) async fn append_audit_checked(
     }
 }
 
+/// A test-only StoreFacade that wraps a real store but makes audit_log().append() fail.
+#[cfg(test)]
+pub(crate) struct FailingAuditStoreFacade {
+    inner: Arc<dyn StoreFacade>,
+}
+
+#[cfg(test)]
+impl FailingAuditStoreFacade {
+    pub(crate) fn new(inner: Arc<dyn StoreFacade>) -> Self {
+        Self { inner }
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl StoreFacade for FailingAuditStoreFacade {
+    fn capabilities(&self) -> Arc<dyn ferrum_store::repos::CapabilityRepo> {
+        self.inner.capabilities()
+    }
+    fn executions(&self) -> Arc<dyn ferrum_store::repos::ExecutionRepo> {
+        self.inner.executions()
+    }
+    fn rollback_contracts(&self) -> Arc<dyn ferrum_store::repos::RollbackRepo> {
+        self.inner.rollback_contracts()
+    }
+    fn lifecycle_outbox(&self) -> Arc<dyn ferrum_store::repos::LifecycleOutboxRepo> {
+        self.inner.lifecycle_outbox()
+    }
+    fn approvals(&self) -> Arc<dyn ferrum_store::repos::ApprovalRepo> {
+        self.inner.approvals()
+    }
+    fn quarantine_holds(&self) -> Arc<dyn ferrum_store::repos::QuarantineHoldRepo> {
+        self.inner.quarantine_holds()
+    }
+    fn provenance(&self) -> Arc<dyn ferrum_store::repos::ProvenanceRepo> {
+        self.inner.provenance()
+    }
+    fn ledger(&self) -> Arc<dyn ferrum_store::repos::LedgerRepo> {
+        self.inner.ledger()
+    }
+    fn intents(&self) -> Arc<dyn ferrum_store::repos::IntentRepo> {
+        self.inner.intents()
+    }
+    fn proposals(&self) -> Arc<dyn ferrum_store::repos::ProposalRepo> {
+        self.inner.proposals()
+    }
+    fn policy_bundles(&self) -> Arc<dyn ferrum_store::repos::PolicyBundleRepo> {
+        self.inner.policy_bundles()
+    }
+    fn tokens(&self) -> Arc<dyn ferrum_store::repos::TokenRepo> {
+        self.inner.tokens()
+    }
+    fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+        Arc::new(FailingAuditLogRepo)
+    }
+    fn audit_merkle_roots(&self) -> Arc<dyn ferrum_store::repos::AuditMerkleRootRepo> {
+        self.inner.audit_merkle_roots()
+    }
+    fn audit_checkpoints(&self) -> Arc<dyn ferrum_store::repos::AuditCheckpointRepo> {
+        self.inner.audit_checkpoints()
+    }
+    fn agents(&self) -> Arc<dyn ferrum_store::repos::AgentRepo> {
+        self.inner.agents()
+    }
+    fn mfa_credentials(&self) -> Arc<dyn ferrum_store::repos::MfaCredentialRepo> {
+        self.inner.mfa_credentials()
+    }
+    fn write_queue_depth(&self) -> usize {
+        self.inner.write_queue_depth()
+    }
+    async fn health_check(&self) -> ferrum_store::Result<()> {
+        self.inner.health_check().await
+    }
+}
+
+#[cfg(test)]
+struct FailingAuditLogRepo;
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl AuditLogRepo for FailingAuditLogRepo {
+    async fn append(&self, _entry: &AuditLogEntry) -> ferrum_store::Result<()> {
+        Err(StoreError::Other(
+            "audit append failure for testing".to_string(),
+        ))
+    }
+    async fn list(
+        &self,
+        _action: Option<AuditAction>,
+        _resource_type: Option<AuditResourceType>,
+        _resource_id: Option<&str>,
+        _cursor: Option<&str>,
+        _limit: u32,
+        _since: Option<chrono::DateTime<chrono::Utc>>,
+        _until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> ferrum_store::Result<(Vec<AuditLogEntry>, Option<String>)> {
+        Ok((Vec::new(), None))
+    }
+    async fn verify_chain(&self) -> ferrum_store::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::monitoring::GovernanceRoute;
     use crate::state::{AppState, GatewayRuntime, ServerConfig};
-    use ferrum_proto::{AuditAction, AuditLogEntry, AuditResourceType};
-    use ferrum_store::{SqliteStore, StoreError, StoreFacade, repos::AuditLogRepo};
+    use ferrum_proto::{AuditAction, AuditResourceType};
+    use ferrum_store::{SqliteStore, StoreFacade};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
-
-    /// A test-only StoreFacade that wraps a real store but makes audit_log().append() fail.
-    struct FailingAuditStoreFacade {
-        inner: Arc<dyn StoreFacade>,
-    }
-
-    impl FailingAuditStoreFacade {
-        fn new(inner: Arc<dyn StoreFacade>) -> Self {
-            Self { inner }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl StoreFacade for FailingAuditStoreFacade {
-        fn capabilities(&self) -> Arc<dyn ferrum_store::repos::CapabilityRepo> {
-            self.inner.capabilities()
-        }
-        fn executions(&self) -> Arc<dyn ferrum_store::repos::ExecutionRepo> {
-            self.inner.executions()
-        }
-        fn rollback_contracts(&self) -> Arc<dyn ferrum_store::repos::RollbackRepo> {
-            self.inner.rollback_contracts()
-        }
-        fn lifecycle_outbox(&self) -> Arc<dyn ferrum_store::repos::LifecycleOutboxRepo> {
-            self.inner.lifecycle_outbox()
-        }
-        fn approvals(&self) -> Arc<dyn ferrum_store::repos::ApprovalRepo> {
-            self.inner.approvals()
-        }
-        fn quarantine_holds(&self) -> Arc<dyn ferrum_store::repos::QuarantineHoldRepo> {
-            self.inner.quarantine_holds()
-        }
-        fn provenance(&self) -> Arc<dyn ferrum_store::repos::ProvenanceRepo> {
-            self.inner.provenance()
-        }
-        fn ledger(&self) -> Arc<dyn ferrum_store::repos::LedgerRepo> {
-            self.inner.ledger()
-        }
-        fn intents(&self) -> Arc<dyn ferrum_store::repos::IntentRepo> {
-            self.inner.intents()
-        }
-        fn proposals(&self) -> Arc<dyn ferrum_store::repos::ProposalRepo> {
-            self.inner.proposals()
-        }
-        fn policy_bundles(&self) -> Arc<dyn ferrum_store::repos::PolicyBundleRepo> {
-            self.inner.policy_bundles()
-        }
-        fn tokens(&self) -> Arc<dyn ferrum_store::repos::TokenRepo> {
-            self.inner.tokens()
-        }
-        fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
-            Arc::new(FailingAuditLogRepo)
-        }
-        fn audit_merkle_roots(&self) -> Arc<dyn ferrum_store::repos::AuditMerkleRootRepo> {
-            self.inner.audit_merkle_roots()
-        }
-        fn audit_checkpoints(&self) -> Arc<dyn ferrum_store::repos::AuditCheckpointRepo> {
-            self.inner.audit_checkpoints()
-        }
-        fn agents(&self) -> Arc<dyn ferrum_store::repos::AgentRepo> {
-            self.inner.agents()
-        }
-        fn mfa_credentials(&self) -> Arc<dyn ferrum_store::repos::MfaCredentialRepo> {
-            self.inner.mfa_credentials()
-        }
-        fn write_queue_depth(&self) -> usize {
-            self.inner.write_queue_depth()
-        }
-        async fn health_check(&self) -> ferrum_store::Result<()> {
-            self.inner.health_check().await
-        }
-    }
-
-    struct FailingAuditLogRepo;
-
-    #[async_trait::async_trait]
-    impl AuditLogRepo for FailingAuditLogRepo {
-        async fn append(&self, _entry: &AuditLogEntry) -> ferrum_store::Result<()> {
-            Err(StoreError::Other(
-                "audit append failure for testing".to_string(),
-            ))
-        }
-        async fn list(
-            &self,
-            _action: Option<AuditAction>,
-            _resource_type: Option<AuditResourceType>,
-            _resource_id: Option<&str>,
-            _cursor: Option<&str>,
-            _limit: u32,
-            _since: Option<chrono::DateTime<chrono::Utc>>,
-            _until: Option<chrono::DateTime<chrono::Utc>>,
-        ) -> ferrum_store::Result<(Vec<AuditLogEntry>, Option<String>)> {
-            Ok((Vec::new(), None))
-        }
-        async fn verify_chain(&self) -> ferrum_store::Result<()> {
-            Ok(())
-        }
-    }
 
     async fn test_runtime() -> GatewayRuntime {
         use ferrum_cap::InMemoryCapabilityService;

@@ -188,6 +188,26 @@ pub struct Args {
     /// Maximum entries for the in-memory nonce cache (default: 10000).
     #[arg(long)]
     nonce_cache_max_entries: Option<usize>,
+
+    /// Enable behavioral anomaly detection (Phase 1 V1, default: false).
+    #[arg(long)]
+    behavioral_anomaly_enabled: bool,
+
+    /// Rolling window in seconds for behavioral anomaly detection (default: 60).
+    #[arg(long)]
+    behavioral_anomaly_window_secs: Option<u64>,
+
+    /// High-risk/R3 proposals in the window that trigger a warning (default: 5).
+    #[arg(long)]
+    behavioral_anomaly_warning_threshold: Option<u32>,
+
+    /// High-risk/R3 proposals in the window that trigger a critical finding (default: 10).
+    #[arg(long)]
+    behavioral_anomaly_critical_threshold: Option<u32>,
+
+    /// Maximum number of principals tracked in memory by the behavioral profiler (default: 1000).
+    #[arg(long)]
+    behavioral_anomaly_max_actors: Option<usize>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -330,6 +350,16 @@ struct ServerSection {
     nonce_cache_ttl_secs: Option<u64>,
     #[serde(default)]
     nonce_cache_max_entries: Option<usize>,
+    #[serde(default)]
+    behavioral_anomaly_enabled: Option<bool>,
+    #[serde(default)]
+    behavioral_anomaly_window_secs: Option<u64>,
+    #[serde(default)]
+    behavioral_anomaly_warning_threshold: Option<u32>,
+    #[serde(default)]
+    behavioral_anomaly_critical_threshold: Option<u32>,
+    #[serde(default)]
+    behavioral_anomaly_max_actors: Option<usize>,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
@@ -776,6 +806,54 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_max_entries))
         .unwrap_or_else(default_nonce_cache_max_entries);
 
+    let behavioral_anomaly_enabled = if args.behavioral_anomaly_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_BEHAVIORAL_ANOMALY_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.behavioral_anomaly_enabled))
+            .unwrap_or(false)
+    };
+
+    let behavioral_anomaly_window_secs = args
+        .behavioral_anomaly_window_secs
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_WINDOW_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_window_secs)
+        })
+        .unwrap_or(60);
+
+    let behavioral_anomaly_warning_threshold = args
+        .behavioral_anomaly_warning_threshold
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_WARNING_THRESHOLD")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_warning_threshold)
+        })
+        .unwrap_or(5);
+
+    let behavioral_anomaly_critical_threshold = args
+        .behavioral_anomaly_critical_threshold
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_CRITICAL_THRESHOLD")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_critical_threshold)
+        })
+        .unwrap_or(10);
+
+    let behavioral_anomaly_max_actors = args
+        .behavioral_anomaly_max_actors
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_MAX_ACTORS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_max_actors)
+        })
+        .unwrap_or(1000);
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -1042,6 +1120,11 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         mfa_totp_issuer,
         mfa_lockout_max_attempts,
         mfa_lockout_duration_secs,
+        behavioral_anomaly_enabled,
+        behavioral_anomaly_window_secs,
+        behavioral_anomaly_warning_threshold,
+        behavioral_anomaly_critical_threshold,
+        behavioral_anomaly_max_actors,
     };
 
     // Validate configuration

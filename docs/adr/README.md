@@ -14,7 +14,7 @@ This directory records significant architecture decisions made in the FerrumGate
 | [007](007-audit-fail-closed.md) | Audit Fail-Closed Mode | Accepted |
 | [008](008-r3-approval-timeout-mfa.md) | R3 Approval Timeout and Second Factor | Proposed (split into separate PRs: approval timeout; MFA TOTP) |
 | [009](009-worm-export-audit-bundle.md) | WORM Export and Portable Audit Bundle | Proposed (audit verification UX deferred to separate PR; WORM sink backlog) |
-| [010](010-behavioral-anomaly-detection.md) | Behavioral Anomaly Detection | Proposed |
+| [010](010-behavioral-anomaly-detection.md) | Behavioral Anomaly Detection | Accepted (Phase 1 V1 implemented) |
 | [011](011-performance-regression-gate.md) | Performance Regression Gate | Accepted (advisory / non-blocking in regular CI) |
 | [012](012-policy-bundle-rule-semantics.md) | PolicyBundle PDP Rule Semantics | Proposed |
 | [013](013-mfa-breakglass.md) | MFA Disable/Rotate Break-Glass | Accepted |

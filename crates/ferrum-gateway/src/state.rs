@@ -510,6 +510,21 @@ pub struct ServerConfig {
     /// Duration in seconds to lock a factor after exceeding max attempts.
     /// Default: 900 (15 minutes).
     pub mfa_lockout_duration_secs: u64,
+    /// Enable behavioral anomaly detection (Phase 1 V1).
+    /// Default: false.
+    pub behavioral_anomaly_enabled: bool,
+    /// Rolling window in seconds for behavioral anomaly detection.
+    /// Default: 60. Valid range: 1..=3600.
+    pub behavioral_anomaly_window_secs: u64,
+    /// Inclusive number of high-risk/R3 proposals in the window that triggers a warning.
+    /// Default: 5. Valid range: 1..=1_000_000.
+    pub behavioral_anomaly_warning_threshold: u32,
+    /// Inclusive number of high-risk/R3 proposals in the window that triggers a critical finding.
+    /// Must be greater than or equal to warning_threshold. Default: 10. Valid range: 1..=1_000_000.
+    pub behavioral_anomaly_critical_threshold: u32,
+    /// Maximum number of distinct principals tracked in memory by the behavioral profiler.
+    /// Default: 1000. Valid range: 1..=100_000.
+    pub behavioral_anomaly_max_actors: usize,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -601,6 +616,26 @@ impl std::fmt::Debug for ServerConfig {
         d.field("mfa_totp_issuer", &self.mfa_totp_issuer);
         d.field("mfa_lockout_max_attempts", &self.mfa_lockout_max_attempts);
         d.field("mfa_lockout_duration_secs", &self.mfa_lockout_duration_secs);
+        d.field(
+            "behavioral_anomaly_enabled",
+            &self.behavioral_anomaly_enabled,
+        );
+        d.field(
+            "behavioral_anomaly_window_secs",
+            &self.behavioral_anomaly_window_secs,
+        );
+        d.field(
+            "behavioral_anomaly_warning_threshold",
+            &self.behavioral_anomaly_warning_threshold,
+        );
+        d.field(
+            "behavioral_anomaly_critical_threshold",
+            &self.behavioral_anomaly_critical_threshold,
+        );
+        d.field(
+            "behavioral_anomaly_max_actors",
+            &self.behavioral_anomaly_max_actors,
+        );
         d.finish()
     }
 }
@@ -655,6 +690,11 @@ impl Default for ServerConfig {
             mfa_totp_issuer: "FerrumGate".to_string(),
             mfa_lockout_max_attempts: 5,
             mfa_lockout_duration_secs: 900,
+            behavioral_anomaly_enabled: false,
+            behavioral_anomaly_window_secs: 60,
+            behavioral_anomaly_warning_threshold: 5,
+            behavioral_anomaly_critical_threshold: 10,
+            behavioral_anomaly_max_actors: 1000,
         }
     }
 }
@@ -910,6 +950,36 @@ impl ServerConfig {
                 "mfa_lockout_duration_secs must be between 1 and 86400, got {}",
                 self.mfa_lockout_duration_secs
             ));
+        }
+
+        // Validate behavioral anomaly detection settings.
+        if self.behavioral_anomaly_enabled {
+            if !(1..=3600).contains(&self.behavioral_anomaly_window_secs) {
+                return Err(format!(
+                    "behavioral_anomaly_window_secs must be between 1 and 3600, got {}",
+                    self.behavioral_anomaly_window_secs
+                ));
+            }
+            if self.behavioral_anomaly_warning_threshold == 0 {
+                return Err("behavioral_anomaly_warning_threshold must be at least 1".to_string());
+            }
+            if self.behavioral_anomaly_critical_threshold == 0 {
+                return Err("behavioral_anomaly_critical_threshold must be at least 1".to_string());
+            }
+            if self.behavioral_anomaly_critical_threshold
+                < self.behavioral_anomaly_warning_threshold
+            {
+                return Err(
+                    "behavioral_anomaly_critical_threshold must be >= behavioral_anomaly_warning_threshold"
+                        .to_string(),
+                );
+            }
+            if !(1..=100_000).contains(&self.behavioral_anomaly_max_actors) {
+                return Err(format!(
+                    "behavioral_anomaly_max_actors must be between 1 and 100000, got {}",
+                    self.behavioral_anomaly_max_actors
+                ));
+            }
         }
 
         Ok(())

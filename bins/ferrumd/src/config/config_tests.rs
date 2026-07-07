@@ -59,6 +59,11 @@ fn clear_test_env() {
         "FERRUMD_NONCE_CACHE_BACKEND",
         "FERRUMD_NONCE_CACHE_TTL_SECS",
         "FERRUMD_NONCE_CACHE_MAX_ENTRIES",
+        "FERRUMD_BEHAVIORAL_ANOMALY_ENABLED",
+        "FERRUMD_BEHAVIORAL_ANOMALY_WINDOW_SECS",
+        "FERRUMD_BEHAVIORAL_ANOMALY_WARNING_THRESHOLD",
+        "FERRUMD_BEHAVIORAL_ANOMALY_CRITICAL_THRESHOLD",
+        "FERRUMD_BEHAVIORAL_ANOMALY_MAX_ACTORS",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -4919,4 +4924,103 @@ ha_reconciler_batch_size = 0
     assert!(!config.ha_reconciler_enabled);
 
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_behavioral_anomaly_defaults_disabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.behavioral_anomaly_enabled);
+    assert_eq!(config.behavioral_anomaly_window_secs, 60);
+    assert_eq!(config.behavioral_anomaly_warning_threshold, 5);
+    assert_eq!(config.behavioral_anomaly_critical_threshold, 10);
+    assert_eq!(config.behavioral_anomaly_max_actors, 1000);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_behavioral_anomaly_env_over_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+behavioral_anomaly_enabled = true
+behavioral_anomaly_window_secs = 120
+behavioral_anomaly_warning_threshold = 3
+behavioral_anomaly_critical_threshold = 7
+behavioral_anomaly_max_actors = 500
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_BEHAVIORAL_ANOMALY_ENABLED", "false");
+        std::env::set_var("FERRUMD_BEHAVIORAL_ANOMALY_WINDOW_SECS", "30");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.behavioral_anomaly_enabled);
+    assert_eq!(config.behavioral_anomaly_window_secs, 30);
+    assert_eq!(config.behavioral_anomaly_warning_threshold, 3);
+    assert_eq!(config.behavioral_anomaly_critical_threshold, 7);
+    assert_eq!(config.behavioral_anomaly_max_actors, 500);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_behavioral_anomaly_validation_rejects_invalid_thresholds() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+behavioral_anomaly_enabled = true
+behavioral_anomaly_warning_threshold = 10
+behavioral_anomaly_critical_threshold = 5
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).expect_err("expected config validation error");
+    assert!(
+        err.to_string().contains(
+            "behavioral_anomaly_critical_threshold must be >= behavioral_anomaly_warning_threshold"
+        ),
+        "unexpected error: {}",
+        err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
 }

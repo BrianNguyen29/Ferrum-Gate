@@ -37,6 +37,7 @@ use tower_governor::{
 use tower_http::trace::TraceLayer;
 
 use crate::AuthActor;
+use crate::behavioral::{BehavioralSeverity, build_profiler};
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
 
 /// Rate-limiting key that buckets authenticated requests by a principal
@@ -100,6 +101,7 @@ pub(crate) struct AppState {
     pub(crate) runtime: GatewayRuntime,
     pub(crate) server_config: ServerConfig,
     pub(crate) metrics: Arc<Metrics>,
+    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
     pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
     /// Nonce cache for Agent auth replay protection.
     nonce_cache: Arc<dyn ferrum_store::NonceCache>,
@@ -113,6 +115,7 @@ impl AppState {
             runtime,
             server_config: server_config.clone(),
             metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
             jwks_cache: None,
             nonce_cache: Arc::new(InMemoryNonceCache::new(
                 server_config.nonce_cache_max_entries,
@@ -233,6 +236,9 @@ pub(crate) struct Metrics {
     pub(crate) ha_reconciler_canceled_total: AtomicU64,
     pub(crate) ha_reconciler_failed_total: AtomicU64,
     pub(crate) ha_reconciler_errors_total: AtomicU64,
+    // Behavioral anomaly advisory counters
+    pub(crate) behavioral_anomaly_warnings_total: AtomicU64,
+    pub(crate) behavioral_anomaly_critical_total: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -360,6 +366,8 @@ impl Metrics {
             ha_reconciler_canceled_total: AtomicU64::new(0),
             ha_reconciler_failed_total: AtomicU64::new(0),
             ha_reconciler_errors_total: AtomicU64::new(0),
+            behavioral_anomaly_warnings_total: AtomicU64::new(0),
+            behavioral_anomaly_critical_total: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -670,6 +678,18 @@ impl Metrics {
     pub(crate) fn record_governance_error<T>(&self, route: GovernanceRoute, err: T) -> T {
         self.increment_governance_error(route);
         err
+    }
+
+    /// Increments the behavioral anomaly advisory counter for the given severity.
+    pub(crate) fn record_behavioral_anomaly(&self, severity: BehavioralSeverity) {
+        match severity {
+            BehavioralSeverity::Warning => self
+                .behavioral_anomaly_warnings_total
+                .fetch_add(1, Ordering::Relaxed),
+            BehavioralSeverity::Critical => self
+                .behavioral_anomaly_critical_total
+                .fetch_add(1, Ordering::Relaxed),
+        };
     }
 
     /// Records a latency sample in the appropriate histogram based on route and status.
@@ -1141,6 +1161,7 @@ pub async fn run_http_server(
         runtime,
         server_config: config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&config),
         jwks_cache,
         nonce_cache,
     });
@@ -1263,6 +1284,7 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&server_config),
         jwks_cache: None,
         nonce_cache: Arc::new(InMemoryNonceCache::new(
             server_config.nonce_cache_max_entries,
@@ -1284,6 +1306,7 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&server_config),
         jwks_cache,
         nonce_cache: Arc::new(InMemoryNonceCache::new(
             server_config.nonce_cache_max_entries,
@@ -1339,6 +1362,7 @@ pub fn build_router_with_governor(
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&server_config),
         jwks_cache: None,
         nonce_cache: Arc::new(InMemoryNonceCache::new(
             server_config.nonce_cache_max_entries,
@@ -8264,6 +8288,7 @@ rules:
             runtime,
             server_config: server_config.clone(),
             metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
             jwks_cache: Some(cache),
             nonce_cache: Arc::new(InMemoryNonceCache::new(
                 server_config.nonce_cache_max_entries,

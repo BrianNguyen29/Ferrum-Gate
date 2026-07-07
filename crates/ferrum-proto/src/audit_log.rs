@@ -44,6 +44,8 @@ pub enum AuditAction {
     MfaVerify,
     MfaDisable,
     MfaRotate,
+    /// Behavioral anomaly detection advisory event (Phase 1).
+    BehavioralAnomaly,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -68,6 +70,7 @@ impl std::fmt::Display for AuditAction {
             AuditAction::MfaVerify => "mfa_verify",
             AuditAction::MfaDisable => "mfa_disable",
             AuditAction::MfaRotate => "mfa_rotate",
+            AuditAction::BehavioralAnomaly => "behavioral_anomaly",
         };
         write!(f, "{}", s)
     }
@@ -97,6 +100,7 @@ impl std::str::FromStr for AuditAction {
             "mfa_verify" => Ok(AuditAction::MfaVerify),
             "mfa_disable" => Ok(AuditAction::MfaDisable),
             "mfa_rotate" => Ok(AuditAction::MfaRotate),
+            "behavioral_anomaly" => Ok(AuditAction::BehavioralAnomaly),
             _ => Err(format!("invalid audit action: {}", s)),
         }
     }
@@ -114,6 +118,8 @@ pub enum AuditResourceType {
     Agent,
     LifecycleOutbox,
     MfaCredential,
+    /// Action proposal being evaluated.
+    Proposal,
 }
 
 impl std::fmt::Display for AuditResourceType {
@@ -128,6 +134,7 @@ impl std::fmt::Display for AuditResourceType {
             AuditResourceType::Agent => "agent",
             AuditResourceType::LifecycleOutbox => "lifecycle_outbox",
             AuditResourceType::MfaCredential => "mfa_credential",
+            AuditResourceType::Proposal => "proposal",
         };
         write!(f, "{}", s)
     }
@@ -147,6 +154,7 @@ impl std::str::FromStr for AuditResourceType {
             "agent" => Ok(AuditResourceType::Agent),
             "lifecycle_outbox" => Ok(AuditResourceType::LifecycleOutbox),
             "mfa_credential" => Ok(AuditResourceType::MfaCredential),
+            "proposal" => Ok(AuditResourceType::Proposal),
             _ => Err(format!("invalid audit resource type: {}", s)),
         }
     }
@@ -325,4 +333,29 @@ pub fn canonical_checkpoint_hash(
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
     hasher.finalize().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn behavioral_anomaly_action_round_trip() {
+        let a = AuditAction::BehavioralAnomaly;
+        assert_eq!(a.to_string(), "behavioral_anomaly");
+        assert_eq!(
+            "behavioral_anomaly".parse::<AuditAction>().unwrap(),
+            AuditAction::BehavioralAnomaly
+        );
+    }
+
+    #[test]
+    fn proposal_resource_type_round_trip() {
+        let r = AuditResourceType::Proposal;
+        assert_eq!(r.to_string(), "proposal");
+        assert_eq!(
+            "proposal".parse::<AuditResourceType>().unwrap(),
+            AuditResourceType::Proposal
+        );
+    }
 }

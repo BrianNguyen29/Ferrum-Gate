@@ -35,7 +35,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 | **LLM03** | Supply Chain | Low (gateway only) | Partial | `cargo-deny`/`cargo-audit`; dependency scanning; no adapter binary signing yet | No LLM model provenance validation; no adapter attestation |
 | **LLM04** | Data and Model Poisoning | Low | Partial | Policy bundles restrict tool/action scope; tamper-evident audit log detects config changes | No training-data or model-weight validation |
 | **LLM05** | Improper Output Handling | Medium | Partial | Execution lifecycle (prepare → execute → verify); rollback classification; compensation flow | No LLM-generated code safety analysis; adapter-side integrity not enforced |
-| **LLM06** | Excessive Agency | **High** | Substantial | Policy-evaluated capability minting; approval gating; scoped, time-bounded (≤300s), single-use capabilities; deny-by-default; minimum lineage chain | Single-factor approval; no behavioral anomaly detection on agency patterns |
+| **LLM06** | Excessive Agency | **High** | Substantial | Policy-evaluated capability minting; approval gating; scoped, time-bounded (≤300s), single-use capabilities; deny-by-default; minimum lineage chain; behavioral anomaly detection (Phase 1 V1) for high-risk/R3 bursts | Phase 1 V1 is advisory-only and in-memory; operator tuning required |
 | **LLM07** | System Prompt Leakage | Very Low | None | Not applicable to gateway scope | No visibility into LLM client prompt storage |
 | **LLM08** | Vector and Embedding Weaknesses | Very Low | None | Not applicable to gateway scope | No RAG pipeline in FerrumGate |
 | **LLM09** | Misinformation | Low | Partial | Policy simulation/dry-run before execution; approval gating for R3 | No fact-checking or hallucination detection |
@@ -60,7 +60,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 **Gaps / Limitations:**
 - FerrumGate has **no natural-language prompt parsing or sanitization**. It cannot detect prompt injection at the LLM input layer.
 - Policy rules are written by operators; they may not cover novel prompt-injection payloads.
-- There is **no automated anomaly detection** on proposal patterns that could indicate prompt manipulation (see ADR 010 for a proposed behavioral anomaly detection layer).
+- Phase 1 V1 behavioral anomaly detection covers high-risk/R3 proposal bursts, not prompt-layer content.
 
 **Evidence / References:**
 - [`docs/api/policy-simulation.md`](../api/policy-simulation.md) — dry-run policy evaluation
@@ -189,7 +189,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 
 **Gaps / Limitations:**
 - **TOTP second-factor confirmation is implemented** for approval resolve when `approval_mfa_required` is enabled; per-factor and per-agent lockout are implemented. WebAuthn, backup codes remain deferred. See [`docs/security/threat-model-stride.md`](./threat-model-stride.md) B8 and ADR 008 / ADR 017.
-- **No behavioral anomaly detection:** FerrumGate does not learn or detect unusual agency patterns (e.g., an agent suddenly requesting many R3 actions outside its historical baseline). See ADR 010 for a proposed profiling layer.
+- **Behavioral anomaly detection (Phase 1 V1):** FerrumGate can optionally track per-principal high-risk and R3 proposal rates in a bounded in-memory window and emit audit/metrics advisories. See ADR 010. It does not auto-block and is not a replacement for policy evaluation.
 - **No automated escalation:** If an agent exceeds a rate or risk threshold, there is no automated lockdown or revocation trigger.
 - Approval resolve is synchronous; there is no timeout-based auto-deny for stale approvals. See ADR 008 for a proposed timeout design.
 
@@ -327,7 +327,7 @@ This document is **not** a compliance certification or SOC2 mapping.
 This document must be updated when:
 
 1. The **dedicated OWASP Agentic AI Top 10 is published** — remap all categories.
-2. FerrumGate implements a **new control** that changes coverage for any category (e.g., behavioral anomaly detection, prompt sanitization).
+2.  FerrumGate implements a **new control** that changes coverage for any category (e.g., behavioral anomaly detection V1 changes residual risk from "High" to "Medium/Substantial" if tuned).
 3. A **new gap is identified** through threat modeling, incident review, or external audit.
 4. Any **cross-referenced document** is materially updated.
 

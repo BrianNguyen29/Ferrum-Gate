@@ -15,8 +15,9 @@ use axum::{
 };
 use chrono::Utc;
 use ferrum_proto::{
-    ActorRef, ActorType, Decision, EvaluateProposalResponse, EventId, HashChainRef, IntentEnvelope,
-    ObjectRef, ObjectType, ProvenanceEvent, TrustContextSummary,
+    ActorRef, ActorType, AuditAction, AuditResourceType, Decision, EvaluateProposalResponse,
+    EventId, HashChainRef, IntentEnvelope, ObjectRef, ObjectType, ProvenanceEvent,
+    TrustContextSummary,
 };
 use std::sync::Arc;
 
@@ -142,11 +143,44 @@ pub(crate) async fn evaluate_proposal(
         );
     }
 
+    // Advisory behavioral anomaly detection after persistence, before provenance.
+    // The profiler uses the principal from the intent; it never records raw
+    // arguments or copies actor identifiers into the response.
+    let anomaly = state.profiler.inspect_proposal(
+        &intent.principal_id.to_string(),
+        proposal.estimated_risk.clone(),
+        proposal.requested_rollback_class.clone(),
+    );
+
     // Emit PolicyEvaluated provenance event after evaluation succeeds.
     let decision_str = format!("{:?}", out.decision);
     let mut policy_metadata = ferrum_proto::JsonMap::new();
     policy_metadata.insert("decision".to_string(), serde_json::json!(decision_str));
     policy_metadata.insert("reason".to_string(), serde_json::json!("policy_evaluation"));
+    if let Some(ref finding) = anomaly {
+        state.metrics.record_behavioral_anomaly(finding.severity);
+        let anomaly_meta = serde_json::json!({
+            "severity": format!("{:?}", finding.severity).to_lowercase(),
+            "window_count": finding.window_count,
+            "window_secs": finding.window_secs,
+            "threshold": finding.threshold,
+        });
+        policy_metadata.insert("behavioral_anomaly".to_string(), anomaly_meta.clone());
+        if let Err(problem) = crate::audit::append_audit_checked(
+            &state,
+            "ferrum-gateway",
+            AuditAction::BehavioralAnomaly,
+            AuditResourceType::Proposal,
+            &proposal.proposal_id.to_string(),
+            "advisory",
+            Some(anomaly_meta),
+            Some(GovernanceRoute::ProposalsEvaluate),
+        )
+        .await
+        {
+            return governance_err!(state, GovernanceRoute::ProposalsEvaluate, problem);
+        }
+    }
     let policy_event = ProvenanceEvent {
         event_id: EventId::new(),
         kind: ferrum_proto::ProvenanceEventKind::PolicyEvaluated,
@@ -285,12 +319,13 @@ mod tests {
     use super::*;
     use crate::state::{GatewayRuntime, ServerConfig};
     use ferrum_proto::{
-        ActionProposal, ApprovalMode, IntentStatus, JsonMap, Matcher, PolicyBundle, PolicyRule,
-        PrincipalId, ProposalId, ResourceMode, ResourceSelector, RiskTier, RollbackClass,
-        TimeBudget, TrustContextSummary,
+        ActionProposal, ApprovalMode, AuditAction, AuditResourceType, Decision, IntentStatus,
+        JsonMap, Matcher, PolicyBundle, PolicyRule, PrincipalId, ProposalId, ResourceMode,
+        ResourceSelector, RiskTier, RollbackClass, TimeBudget, TrustContextSummary,
     };
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::{SqliteStore, StoreFacade};
+    use std::sync::atomic::Ordering;
 
     async fn test_runtime() -> GatewayRuntime {
         let pdp = Arc::new(ferrum_pdp::StaticPdpEngine);
@@ -599,5 +634,187 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_behavioral_anomaly_audit_fail_closed_blocks_request() {
+        let runtime = test_runtime().await;
+        let failing_store = Arc::new(crate::audit::FailingAuditStoreFacade::new(
+            runtime.store.clone(),
+        )) as Arc<dyn StoreFacade>;
+        let mut runtime = runtime;
+        runtime.store = failing_store;
+
+        let mut proposal = make_proposal("git.commit", RollbackClass::R0NativeReversible);
+        proposal.estimated_risk = RiskTier::High;
+
+        let intent = make_intent_with_scope(proposal.intent_id);
+        runtime.store.intents().insert(&intent).await.unwrap();
+
+        let config = ServerConfig {
+            pdp_mode: PdpMode::Bundles,
+            behavioral_anomaly_enabled: true,
+            behavioral_anomaly_window_secs: 60,
+            behavioral_anomaly_warning_threshold: 2,
+            behavioral_anomaly_critical_threshold: 3,
+            behavioral_anomaly_max_actors: 10,
+            audit_fail_closed: true,
+            ..ServerConfig::default()
+        };
+        let state = AppState::test_new(runtime, config);
+
+        // First high-risk proposal is below the warning threshold; no anomaly audit.
+        let result = evaluate_proposal(
+            State(Arc::clone(&state)),
+            Path(proposal.proposal_id.to_string()),
+            Json(proposal.clone()),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "first proposal should succeed: {:?}",
+            result
+        );
+
+        // Second high-risk proposal triggers an anomaly. With a failing audit
+        // store and audit_fail_closed=true, the request must be rejected.
+        let mut proposal2 = make_proposal("git.commit", RollbackClass::R0NativeReversible);
+        proposal2.estimated_risk = RiskTier::High;
+        proposal2.intent_id = intent.intent_id;
+        let result2 = evaluate_proposal(
+            State(Arc::clone(&state)),
+            Path(proposal2.proposal_id.to_string()),
+            Json(proposal2.clone()),
+        )
+        .await;
+        assert!(
+            result2.is_err(),
+            "expected fail-closed rejection when anomaly audit fails"
+        );
+        let problem = result2.unwrap_err();
+        assert_eq!(problem.1, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+
+        // Fail-closed metric should be incremented.
+        assert!(
+            state
+                .metrics
+                .audit_fail_closed_rejections
+                .load(Ordering::Relaxed)
+                > 0,
+            "expected audit_fail_closed_rejections metric to increment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_behavioral_anomaly_emits_audit_metadata_and_metrics() {
+        let runtime = test_runtime().await;
+
+        let mut proposal = make_proposal("git.commit", RollbackClass::R0NativeReversible);
+        proposal.estimated_risk = RiskTier::High;
+
+        let intent = make_intent_with_scope(proposal.intent_id);
+        runtime.store.intents().insert(&intent).await.unwrap();
+
+        let config = ServerConfig {
+            behavioral_anomaly_enabled: true,
+            behavioral_anomaly_window_secs: 60,
+            behavioral_anomaly_warning_threshold: 2,
+            behavioral_anomaly_critical_threshold: 3,
+            behavioral_anomaly_max_actors: 10,
+            ..ServerConfig::default()
+        };
+        let state = AppState::test_new(runtime, config);
+
+        // First high-risk proposal is below the warning threshold.
+        let result = evaluate_proposal(
+            State(Arc::clone(&state)),
+            Path(proposal.proposal_id.to_string()),
+            Json(proposal.clone()),
+        )
+        .await;
+        assert!(result.is_ok(), "evaluate_proposal failed: {:?}", result);
+        assert_eq!(result.unwrap().0.decision, Decision::Allow);
+
+        // Second high-risk proposal from the same principal triggers a warning.
+        let mut proposal2 = make_proposal("git.commit", RollbackClass::R0NativeReversible);
+        proposal2.estimated_risk = RiskTier::High;
+        proposal2.intent_id = intent.intent_id;
+        let result2 = evaluate_proposal(
+            State(Arc::clone(&state)),
+            Path(proposal2.proposal_id.to_string()),
+            Json(proposal2.clone()),
+        )
+        .await;
+        assert!(result2.is_ok(), "evaluate_proposal failed: {:?}", result2);
+        assert_eq!(result2.unwrap().0.decision, Decision::Allow);
+
+        // PolicyEvaluated provenance metadata contains sanitized anomaly info.
+        let events = state
+            .runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent.intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ferrum_proto::ProvenanceEventKind::PolicyEvaluated),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        let latest = events
+            .iter()
+            .max_by_key(|e| e.occurred_at)
+            .expect("at least one PolicyEvaluated event");
+        assert!(
+            latest.metadata.contains_key("behavioral_anomaly"),
+            "expected behavioral_anomaly metadata in PolicyEvaluated event"
+        );
+        let anomaly_meta = latest
+            .metadata
+            .get("behavioral_anomaly")
+            .expect("behavioral_anomaly metadata");
+        assert_eq!(anomaly_meta["severity"], "warning");
+        assert_eq!(anomaly_meta["window_count"], 2);
+        assert_eq!(anomaly_meta["threshold"], 2);
+
+        // Audit log entry was appended for the second proposal.
+        let (audit_entries, _) = state
+            .runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::BehavioralAnomaly),
+                Some(AuditResourceType::Proposal),
+                Some(&proposal2.proposal_id.to_string()),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].action, AuditAction::BehavioralAnomaly);
+        assert_eq!(audit_entries[0].result, "advisory");
+
+        // Metrics counter incremented with a bounded severity label.
+        assert_eq!(
+            state
+                .metrics
+                .behavioral_anomaly_warnings_total
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            state
+                .metrics
+                .behavioral_anomaly_critical_total
+                .load(Ordering::Relaxed),
+            0
+        );
     }
 }

@@ -36,7 +36,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; per-factor lockout implemented; WebAuthn/backup codes deferred |
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
 | WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
-| Behavioral anomaly detection | Not implemented | Backlog; see ADR 010 |
+| Behavioral anomaly detection | Implemented (Phase 1 V1) | In-memory advisory high-risk/R3 burst detection; opt-in, no ML/external service |
 | Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
 | GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |
 | HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |

@@ -4,6 +4,7 @@ mod admin;
 mod approval;
 mod audit;
 mod auth_actor;
+mod behavioral;
 mod bridge;
 mod capabilities;
 mod execution;

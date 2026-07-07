@@ -37,6 +37,7 @@ Feature-complete for standard use; local and CI-validated:
 - Schema-drift checker that refuses startup when the database schema version is newer than the binary-supported version
 - **MFA TOTP second factor** — TOTP verification for high-risk approval resolution; includes enrollment replay CAS, key parsing cleanup, admin route tests, store counter overflow guard, active lookup index migrations, and Postgres MFA repo tests
 - **PolicyBundle PDP engine (Phase 1)** — Policy decision point with bundle-scoped rule evaluation. Phase 1 implemented (`PolicyBundlePdpEngine`, static-default bundle, parity tests, `PdpMode` config). Quarantine disposition is now enforced via `QuarantineHold`; bundle identity propagation and obligations remain deferred
+- **Behavioral anomaly detection (Phase 1 V1)** — Opt-in in-memory advisory high-risk/R3 burst detection per principal. Emits audit, metrics, and `PolicyEvaluated` metadata without changing PDP decisions. See ADR 010.
 
 ## Beta
 
@@ -67,8 +68,6 @@ These require broader design decisions, additional evidence, or an ADR before th
 
 - **WORM export** — Write-once-read-many sink integration and portable `ferrumctl audit export` bundle for stronger tamper resistance. Depends on external anchoring design. See ADR 009.
   - Acceptance: `AuditSink` trait with `WormSink` behind feature gate; MinIO Object Lock integration test; background export with retry logic.
-- **Behavioral anomaly detection** — Lightweight statistical profiling of actor behavior to flag unusual agency patterns. See ADR 010.
-  - Acceptance: `BehavioralProfiler` trait with `ThresholdDetector`; anomaly events written to audit log; Prometheus metric `ferrumgate_behavioral_anomaly_detected_total`.
 - **Performance regression gate** — Automated CI gate that blocks changes regressing established baselines. See ADR 011.
   - Acceptance: `make perf-gate` runs short `ferrum-stress` scenarios and compares against baselines; advisory in CI until baselines are authoritative.
 - **MCP resumability** — Session resumability. Not implemented; no committed timeline.

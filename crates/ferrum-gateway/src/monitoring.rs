@@ -306,6 +306,14 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .ha_reconciler_errors_total
         .load(Ordering::Relaxed);
+    let behavioral_anomaly_warnings_total = state
+        .metrics
+        .behavioral_anomaly_warnings_total
+        .load(Ordering::Relaxed);
+    let behavioral_anomaly_critical_total = state
+        .metrics
+        .behavioral_anomaly_critical_total
+        .load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
@@ -1071,6 +1079,18 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     body.push_str(&format!(
         "ferrumgate_ha_reconciler_errors_total {}\n",
         ha_reconciler_errors_total
+    ));
+
+    // Append behavioral anomaly advisory counters
+    body.push_str("# HELP ferrumgate_behavioral_anomaly_detected_total Behavioral anomaly detections by severity\n");
+    body.push_str("# TYPE ferrumgate_behavioral_anomaly_detected_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_behavioral_anomaly_detected_total{{severity=\"warning\"}} {}\n",
+        behavioral_anomaly_warnings_total
+    ));
+    body.push_str(&format!(
+        "ferrumgate_behavioral_anomaly_detected_total{{severity=\"critical\"}} {}\n",
+        behavioral_anomaly_critical_total
     ));
 
     // Append histogram output to body
