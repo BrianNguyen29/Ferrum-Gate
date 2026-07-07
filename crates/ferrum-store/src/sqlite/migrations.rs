@@ -88,7 +88,12 @@ pub const INIT_MIGRATION: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/migrations/018_add_quarantine_holds.sql"
     )),
+    "\n",
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/019_add_mfa_agent_lockouts.sql"
+    )),
 );
 
 /// Current schema version for the SQLite embedded migration.
-pub const CURRENT_SCHEMA_VERSION: i64 = 18;
+pub const CURRENT_SCHEMA_VERSION: i64 = 19;

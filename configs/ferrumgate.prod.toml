@@ -72,6 +72,7 @@ pg_acquire_timeout_secs = 5
 # mfa_totp_issuer = "FerrumGate"
 # mfa_lockout_max_attempts = 5
 # mfa_lockout_duration_secs = 900
+# Lockout settings above apply to both per-factor and per-agent MFA lockout.
 
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".

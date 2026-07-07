@@ -4,9 +4,10 @@ use ferrum_proto::{
     AuditLogEntry, AuditMerkleRoot, AuditResourceType, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, JsonMap, LifecycleOutboxId, LifecycleOutboxRecord,
-    LifecycleOutboxStatus, MfaCredentialRecord, PolicyBundle, PolicyBundleVersion, ProposalId,
-    ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest, QuarantineHold, QuarantineHoldId,
-    RollbackContract, RollbackContractId, RollbackState, Timestamp,
+    LifecycleOutboxStatus, MfaAgentLockoutRecord, MfaCredentialRecord, PolicyBundle,
+    PolicyBundleVersion, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
+    QuarantineHold, QuarantineHoldId, RollbackContract, RollbackContractId, RollbackState,
+    Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -622,6 +623,31 @@ pub trait MfaCredentialRepo: Send + Sync {
 
     /// Revoke a credential by setting `revoked_at`.
     async fn revoke(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
+
+    /// Get the agent-scoped MFA lockout record, if any.
+    async fn get_agent_lockout(&self, agent_id: &str) -> Result<Option<MfaAgentLockoutRecord>>;
+
+    /// Record a failed verification attempt for the agent and lock the agent
+    /// if the threshold is crossed.
+    ///
+    /// If the existing lockout has expired, the failed-attempt counter is reset
+    /// before incrementing so that the agent is not re-locked unless the new
+    /// failure crosses the threshold again.
+    ///
+    /// Returns the updated lockout record.
+    async fn record_agent_failed_attempt(
+        &self,
+        agent_id: &str,
+        max_attempts: u32,
+        lockout_duration_secs: u64,
+    ) -> Result<MfaAgentLockoutRecord>;
+
+    /// Reset the agent's lockout state after a successful verification.
+    ///
+    /// Sets `failed_attempts = 0`, `locked_until = NULL`, `last_failed_at = NULL`.
+    /// Preserves `lockout_count`.
+    /// Returns `true` if a record existed and was updated.
+    async fn reset_agent_lockout(&self, agent_id: &str) -> Result<bool>;
 }
 
 /// Facade trait that bundles all repository accessors.

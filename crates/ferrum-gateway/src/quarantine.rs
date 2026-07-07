@@ -20,6 +20,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::macros::{governance_err, governance_ok};
+use crate::mfa::{TotpVerifyResult, check_agent_mfa_lockout, reset_mfa_lockout_after_success};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
 use crate::state::AppState;
@@ -167,6 +168,38 @@ pub(crate) async fn get_quarantine_hold(
     governance_ok!(state, GovernanceRoute::QuarantinesHoldId, Ok(Json(hold)))
 }
 
+fn mfa_locked_problem(retry_after_secs: u64) -> ApiProblem {
+    ApiProblem(
+        ApiError {
+            code: ApiErrorCode::MfaLocked,
+            message: "MFA is locked due to too many failed attempts".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
+        },
+        StatusCode::FORBIDDEN,
+    )
+}
+
+fn totp_verify_result_to_problem(result: TotpVerifyResult) -> ApiProblem {
+    match result {
+        TotpVerifyResult::Locked {
+            retry_after_seconds,
+        } => mfa_locked_problem(retry_after_seconds),
+        TotpVerifyResult::Invalid => ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::MfaInvalid,
+            "MFA verification code is invalid",
+        ),
+        TotpVerifyResult::Internal => {
+            ApiProblem::internal(anyhow::anyhow!("MFA verification failed"))
+        }
+        TotpVerifyResult::Success { .. } => {
+            unreachable!("totp_verify_result_to_problem should not be called with Success")
+        }
+    }
+}
+
 async fn verify_mfa_factor(
     state: &AppState,
     request: &QuarantineResolveRequest,
@@ -204,6 +237,29 @@ async fn verify_mfa_factor(
         }
     };
 
+    let code = match mfa_factor.code {
+        Some(ref c) => c,
+        None => {
+            return Err(ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::MfaInvalid,
+                "MFA verification code is missing",
+            ));
+        }
+    };
+
+    // Check agent-level lockout before fetching the factor.
+    match check_agent_mfa_lockout(
+        state.runtime.store.mfa_credentials(),
+        &request.actor.actor_id,
+    )
+    .await
+    {
+        Ok(Some(retry_after_secs)) => return Err(mfa_locked_problem(retry_after_secs)),
+        Ok(None) => {}
+        Err(e) => return Err(ApiProblem::internal(anyhow::Error::from(e))),
+    }
+
     let record = match state
         .runtime
         .store
@@ -240,95 +296,21 @@ async fn verify_mfa_factor(
         ));
     }
 
-    if let Some(locked_until) = record.locked_until {
-        let now = chrono::Utc::now();
-        if locked_until > now {
-            let retry_after_secs = (locked_until - now).num_seconds().max(0) as u64;
-            return Err(ApiProblem(
-                ApiError {
-                    code: ApiErrorCode::MfaLocked,
-                    message: "MFA factor is locked due to too many failed attempts".to_string(),
-                    correlation_id: uuid::Uuid::new_v4().to_string(),
-                    retriable: false,
-                    details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
-                },
-                StatusCode::FORBIDDEN,
-            ));
-        }
-    }
-
-    let secret = match crate::mfa::decrypt_secret(
+    let result = crate::mfa::verify_totp_with_lockout(
+        state.runtime.store.mfa_credentials(),
         &key_bytes,
-        &record.encrypted_secret,
-        &record.secret_nonce,
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(error = %e, "mfa decrypt_secret failed during quarantine resolve");
-            return Err(ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::MfaInvalid,
-                "failed to verify MFA factor",
-            ));
-        }
-    };
+        &record.agent_id,
+        &record,
+        code,
+        state.server_config.mfa_lockout_max_attempts,
+        state.server_config.mfa_lockout_duration_secs,
+    )
+    .await;
 
-    let code = match mfa_factor.code {
-        Some(ref c) => c,
-        None => {
-            return Err(ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::MfaInvalid,
-                "MFA verification code is missing",
-            ));
-        }
+    let matched_counter = match result {
+        TotpVerifyResult::Success { counter } => counter,
+        other => return Err(totp_verify_result_to_problem(other)),
     };
-
-    let now = chrono::Utc::now().timestamp() as u64;
-    let matched_counter = match crate::mfa::verify_totp_code_with_counter(&secret, code, now) {
-        Ok(c) => c,
-        Err(_) => {
-            let repo = state.runtime.store.mfa_credentials();
-            let locked = repo
-                .record_failed_attempt(
-                    mfa_factor.id,
-                    state.server_config.mfa_lockout_max_attempts,
-                    state.server_config.mfa_lockout_duration_secs,
-                )
-                .await;
-            if let Ok(true) = locked {
-                let retry_after_secs = state.server_config.mfa_lockout_duration_secs;
-                return Err(ApiProblem(
-                    ApiError {
-                        code: ApiErrorCode::MfaLocked,
-                        message: "MFA factor is locked due to too many failed attempts".to_string(),
-                        correlation_id: uuid::Uuid::new_v4().to_string(),
-                        retriable: false,
-                        details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
-                    },
-                    StatusCode::FORBIDDEN,
-                ));
-            }
-            if let Err(ref e) = locked {
-                tracing::warn!(error = %e, "record_failed_attempt failed during quarantine resolve");
-            }
-            return Err(ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::MfaInvalid,
-                "MFA verification code is invalid",
-            ));
-        }
-    };
-
-    if let Err(e) = state
-        .runtime
-        .store
-        .mfa_credentials()
-        .reset_lockout(mfa_factor.id)
-        .await
-    {
-        tracing::warn!(error = %e, "reset_lockout failed during quarantine resolve");
-    }
 
     match state
         .runtime
@@ -337,7 +319,19 @@ async fn verify_mfa_factor(
         .record_use(mfa_factor.id, matched_counter)
         .await
     {
-        Ok(true) => Ok(()),
+        Ok(true) => {
+            if let Err(e) = reset_mfa_lockout_after_success(
+                state.runtime.store.mfa_credentials(),
+                &record.agent_id,
+                record.mfa_factor_id,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "mfa lockout reset failed during quarantine resolve");
+                return Err(ApiProblem::internal(anyhow::Error::from(e)));
+            }
+            Ok(())
+        }
         Ok(false) => Err(ApiProblem::new(
             StatusCode::FORBIDDEN,
             ApiErrorCode::MfaInvalid,

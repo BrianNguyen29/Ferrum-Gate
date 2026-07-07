@@ -5304,6 +5304,508 @@ mod tests {
         assert!(err.message.contains("invalid"));
     }
 
+    #[tokio::test]
+    async fn test_agent_lockout_blocks_other_factor_for_same_agent() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 2,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+
+        // Active factor for the agent (used to consume failed attempts).
+        let active_secret = crate::mfa::generate_totp_secret();
+        let (active_enc, active_nonce) =
+            crate::mfa::encrypt_secret(&key_bytes, &active_secret).unwrap();
+        let active_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-agent",
+            ferrum_proto::MfaFactorType::Totp,
+            &active_enc,
+            &active_nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+        runtime
+            .store
+            .mfa_credentials()
+            .activate(active_record.mfa_factor_id)
+            .await
+            .unwrap();
+
+        // Pending factor for the same agent (target of the locked-out verify).
+        let pending_secret = crate::mfa::generate_totp_secret();
+        let (pending_enc, pending_nonce) =
+            crate::mfa::encrypt_secret(&key_bytes, &pending_secret).unwrap();
+        let pending_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-agent",
+            ferrum_proto::MfaFactorType::Totp,
+            &pending_enc,
+            &pending_nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&pending_record)
+            .await
+            .unwrap();
+
+        // Consume both allowed failed attempts on the active factor.
+        for _ in 0..2 {
+            let bad_request = ferrum_proto::MfaVerifyRequest {
+                code: "000000".to_string(),
+            };
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/admin/agents/test-agent/mfa/verify")
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(serde_json::to_string(&bad_request).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            // The active factor is pending, so the first verify will try to
+            // activate it with a bad code. The agent lockout still increments.
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+
+        // Agent is now locked. A correct code on the pending factor should still
+        // be rejected because the agent's challenge surface is locked.
+        let now = chrono::Utc::now().timestamp() as u64;
+        let valid_code = crate::mfa::generate_totp_code(&pending_secret, now);
+        let verify_request = ferrum_proto::MfaVerifyRequest { code: valid_code };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/test-agent/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaLocked);
+        assert!(
+            err.details
+                .get("retry_after_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_successful_mfa_resets_agent_lockout() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "test-agent",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&record)
+            .await
+            .unwrap();
+
+        // Seed a failed attempt so the agent has a lockout record.
+        runtime
+            .store
+            .mfa_credentials()
+            .record_agent_failed_attempt("test-agent", 5, 900)
+            .await
+            .unwrap();
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-agent")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 1);
+
+        // Successful verification should reset the agent lockout.
+        let now = chrono::Utc::now().timestamp() as u64;
+        let valid_code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_request = ferrum_proto::MfaVerifyRequest { code: valid_code };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/test-agent/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-agent")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 0);
+        assert!(lockout.locked_until.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_approval_resolve_invalid_totp_increments_agent_lockout() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let active_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+        runtime
+            .store
+            .mfa_credentials()
+            .activate(active_record.mfa_factor_id)
+            .await
+            .unwrap();
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test-intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "read".to_string(),
+                description: "read only analysis".to_string(),
+                effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+                required: true,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(1),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: now,
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        let approval = ferrum_proto::ApprovalRequest {
+            approval_id,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "requester".to_string(),
+                display_name: Some("Requester".to_string()),
+            },
+            reason: "test approval".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.approvals().insert(&approval).await.unwrap();
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some("000000".to_string()),
+            }),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-operator")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn test_quarantine_resolve_invalid_totp_increments_agent_lockout() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let active_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+        runtime
+            .store
+            .mfa_credentials()
+            .activate(active_record.mfa_factor_id)
+            .await
+            .unwrap();
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test-intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "read".to_string(),
+                description: "read only analysis".to_string(),
+                effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+                required: true,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(1),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: now,
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        let hold = ferrum_proto::QuarantineHold {
+            hold_id,
+            intent_id,
+            proposal_id,
+            reason: "test".to_string(),
+            matched_rule_ids: vec![],
+            policy_bundle_id: None,
+            state: ferrum_proto::QuarantineHoldState::Pending,
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            created_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+            resolution_reason: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&hold)
+            .await
+            .unwrap();
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some("000000".to_string()),
+            }),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-operator")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 1);
+    }
+
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and
     // provenance event emission require foreign key constraints (approval references intent/proposal).
     // These scenarios are covered by integration tests in integration_gateway_flow.rs

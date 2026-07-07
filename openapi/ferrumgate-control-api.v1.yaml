@@ -463,7 +463,11 @@ paths:
         When `approval_mfa_required` is enabled, the request must include a valid
         active `mfa_factor` with a correct `code` (e.g. TOTP code). Missing factor
         returns 403 with `MfaRequired`; invalid factor or code returns 403 with
-        `MfaInvalid`.
+        `MfaInvalid` and increments both the factor-level and the agent-level
+        failed-attempt counters. Repeated failures across any factor for the same
+        agent can lock the agent's MFA challenge surface, returning 403 with
+        `MfaLocked` and a `retry_after_seconds` detail. A successful verification
+        resets both the agent and factor lockout counters.
       operationId: resolveApproval
       parameters:
         - $ref: '#/components/parameters/ApprovalId'
@@ -565,7 +569,12 @@ paths:
         `expires_at` passes or when they exceed `quarantine_timeout_seconds`.
         When `approval_mfa_required` is enabled, the request must include a valid
         active `mfa_factor` with a correct `code`. Missing factor returns 403 with
-        `MfaRequired`; invalid factor or code returns 403 with `MfaInvalid`.
+        `MfaRequired`; invalid factor or code returns 403 with `MfaInvalid` and
+        increments both the factor-level and the agent-level failed-attempt
+        counters. Repeated failures across any factor for the same agent can lock
+        the agent's MFA challenge surface, returning 403 with `MfaLocked` and a
+        `retry_after_seconds` detail. A successful verification resets both the
+        agent and factor lockout counters.
       operationId: resolveQuarantineHold
       parameters:
         - $ref: '#/components/parameters/HoldId'
@@ -1262,6 +1271,12 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/verify:
     post:
       summary: Verify a pending MFA factor
+      description: |
+        Verifies a pending MFA factor for the agent. If the agent's MFA challenge
+        surface is locked due to repeated failed attempts on any factor, the
+        request returns 403 with `MfaLocked` and a `retry_after_seconds` detail
+        before the factor secret is verified. A successful verification resets
+        both the agent-level and factor-level lockout counters.
       operationId: verifyMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1290,6 +1305,15 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/disable:
     post:
       summary: Disable an active MFA factor
+      description: |
+        Disables the agent's active MFA factor. When an active factor exists and
+        a `code` is provided, the code is verified against the factor secret.
+        Agent-level and factor-level lockout checks apply before verification.
+        Repeated failures across any factor for the same agent can lock the
+        agent's MFA challenge surface, returning 403 with `MfaLocked`. A
+        successful verification resets both lockout counters. Alternatively,
+        a caller with the `admin:mfa:breakglass` scope may provide a non-empty
+        `reason` to bypass verification.
       operationId: disableMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1317,6 +1341,16 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/rotate:
     post:
       summary: Rotate an active MFA factor
+      description: |
+        Rotates the agent's active MFA factor by revoking it and creating a new
+        pending factor. When an active factor exists and a `code` is provided,
+        the code is verified against the current factor secret. Agent-level and
+        factor-level lockout checks apply before verification. Repeated failures
+        across any factor for the same agent can lock the agent's MFA challenge
+        surface, returning 403 with `MfaLocked`. A successful verification resets
+        both lockout counters. Alternatively, a caller with the
+        `admin:mfa:breakglass` scope may provide a non-empty `reason` to bypass
+        verification.
       operationId: rotateMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'

@@ -74,6 +74,7 @@ store_synchronous = "NORMAL"
 # mfa_totp_issuer = "FerrumGate NonProd"
 # mfa_lockout_max_attempts = 5
 # mfa_lockout_duration_secs = 900
+# Lockout settings above apply to both per-factor and per-agent MFA lockout.
 
 # Approval timeout reconciliation (opt-in; default false)
 # approval_timeout_enabled = false

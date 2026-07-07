@@ -14,15 +14,16 @@ use ferrum_proto::{
     ActionProposal, ActionType, ActorRef, ActorType, ApprovalId, ApprovalRequest, ApprovalState,
     CapabilityId, CapabilityLease, CapabilityStatus, Decision, EffectType, EventId, ExecutionId,
     ExecutionRecord, ExecutionState, HashChainRef, IntentEnvelope, IntentId, IntentStatus, JsonMap,
-    LifecycleOutboxRecord, LifecycleOutboxStatus, ObjectRef, ObjectType, OutcomeClause,
-    PolicyBundle, PolicyBundleId, PrincipalId, ProposalId, ProvenanceEdge, ProvenanceEdgeType,
-    ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest, RiskTier, RollbackClass,
-    RollbackContract, RollbackContractId, RollbackState, RollbackTarget, Timestamp,
+    LifecycleOutboxRecord, LifecycleOutboxStatus, MfaCredentialRecord, MfaFactorType, ObjectRef,
+    ObjectType, OutcomeClause, PolicyBundle, PolicyBundleId, PrincipalId, ProposalId,
+    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceQueryRequest, RiskTier, RollbackClass, RollbackContract, RollbackContractId,
+    RollbackState, RollbackTarget, Timestamp,
 };
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerEntry, LedgerRepo,
-    LifecycleOutboxRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
-    postgres::PostgresStore,
+    LifecycleOutboxRepo, MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo,
+    RollbackRepo, StoreFacade, postgres::PostgresStore,
 };
 use sqlx::{Connection, Row};
 use std::sync::Arc;
@@ -153,6 +154,12 @@ async fn setup() -> Option<(
     let _ = sqlx::query("DROP TABLE IF EXISTS policy_bundles CASCADE")
         .execute(store.pool())
         .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS mfa_agent_lockouts CASCADE")
+        .execute(store.pool())
+        .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS mfa_credentials CASCADE")
+        .execute(store.pool())
+        .await;
     let _ = sqlx::query("DROP TABLE IF EXISTS intents CASCADE")
         .execute(store.pool())
         .await;
@@ -166,6 +173,235 @@ async fn setup() -> Option<(
     }
 
     Some((store, (guard, lock_conn)))
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_threshold_and_reset() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    // No lockout record initially.
+    assert!(repo.get_agent_lockout("agent-1").await.unwrap().is_none());
+
+    // After 4 failed attempts, still not locked.
+    for _ in 0..4 {
+        let record = repo
+            .record_agent_failed_attempt("agent-1", 5, 900)
+            .await
+            .unwrap();
+        assert!(record.locked_until.is_none());
+    }
+
+    let r = repo.get_agent_lockout("agent-1").await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 4);
+    assert!(r.locked_until.is_none());
+    assert_eq!(r.lockout_count, 0);
+
+    // 5th attempt triggers lockout.
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 5, 900)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_some());
+    assert!(r.locked_until.unwrap() > chrono::Utc::now());
+    assert_eq!(r.failed_attempts, 5);
+    assert_eq!(r.lockout_count, 1);
+
+    // Reset clears the lockout.
+    assert!(repo.reset_agent_lockout("agent-1").await.unwrap());
+    let r = repo.get_agent_lockout("agent-1").await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 0);
+    assert!(r.locked_until.is_none());
+    assert!(r.last_failed_at.is_none());
+    assert_eq!(r.lockout_count, 1); // preserved
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_expired_retry_does_not_immediately_relock() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    for _ in 0..3 {
+        let r = repo
+            .record_agent_failed_attempt("agent-1", 3, 1)
+            .await
+            .unwrap();
+        assert!(r.locked_until.is_some() || r.failed_attempts < 3);
+    }
+    let r = repo.get_agent_lockout("agent-1").await.unwrap().unwrap();
+    assert!(r.locked_until.is_some());
+    assert_eq!(r.lockout_count, 1);
+    assert_eq!(r.failed_attempts, 3);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 3, 1)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_none(), "expired retry should not re-lock");
+    assert_eq!(r.failed_attempts, 1);
+    assert_eq!(r.lockout_count, 1);
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 3, 1)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_none());
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 3, 1)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_some());
+    assert_eq!(r.lockout_count, 2);
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_extends_while_locked() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 1, 600)
+        .await
+        .unwrap();
+    let first_locked_until = r.locked_until.unwrap();
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 1, 600)
+        .await
+        .unwrap();
+    let second_locked_until = r.locked_until.unwrap();
+    assert!(second_locked_until > first_locked_until);
+    assert_eq!(r.lockout_count, 1);
+}
+
+#[tokio::test]
+async fn postgres_mfa_factor_lockout_parity_with_agent_lockout() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    let record = MfaCredentialRecord::new(
+        "agent-1",
+        MfaFactorType::Totp,
+        "encrypted-secret-b64",
+        "nonce-b64",
+        "key-1",
+    );
+    repo.insert(&record).await.unwrap();
+
+    // After 4 failed attempts, still not locked.
+    for _ in 0..4 {
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 5, 900)
+            .await
+            .unwrap();
+        assert!(!locked);
+    }
+
+    let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 4);
+    assert!(r.locked_until.is_none());
+
+    // 5th attempt triggers lockout.
+    let locked = repo
+        .record_failed_attempt(record.mfa_factor_id, 5, 900)
+        .await
+        .unwrap();
+    assert!(locked);
+
+    let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 5);
+    assert!(r.locked_until.is_some());
+    assert_eq!(r.lockout_count, 1);
+
+    // Reset clears the lockout.
+    repo.reset_lockout(record.mfa_factor_id).await.unwrap();
+    let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 0);
+    assert!(r.locked_until.is_none());
+    assert!(r.last_failed_at.is_none());
+    assert_eq!(r.lockout_count, 1);
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_concurrent_first_attempts_count_correctly() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+    let agent_id = "concurrent-agent";
+    let max_attempts = 5;
+    let lockout_duration_secs = 900;
+
+    // Fire 10 concurrent first attempts for an agent with no existing lockout
+    // row. The retry-on-conflict path must ensure every attempt is counted.
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..10 {
+        let repo = repo.clone();
+        set.spawn(async move {
+            repo.record_agent_failed_attempt(agent_id, max_attempts, lockout_duration_secs)
+                .await
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(res) = set.join_next().await {
+        results.push(res);
+    }
+
+    let failures = results.iter().filter(|r| r.is_err()).count();
+    assert_eq!(
+        failures, 0,
+        "concurrent attempts should not fail: {:?}",
+        results
+    );
+
+    let record = repo
+        .get_agent_lockout(agent_id)
+        .await
+        .unwrap()
+        .expect("lockout record should exist after concurrent attempts");
+    assert_eq!(
+        record.failed_attempts, 10,
+        "all concurrent attempts must be counted"
+    );
+    assert!(record.locked_until.is_some(), "threshold should be crossed");
+    assert!(record.locked_until.unwrap() > chrono::Utc::now());
+    assert_eq!(record.lockout_count, 1);
 }
 
 #[tokio::test]
