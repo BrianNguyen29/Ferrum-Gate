@@ -12,6 +12,7 @@ mod ha_reconciler;
 mod intents;
 mod lineage;
 mod macros;
+mod metrics;
 mod mfa;
 mod monitoring;
 mod policy;

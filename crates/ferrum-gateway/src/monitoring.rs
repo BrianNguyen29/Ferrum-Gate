@@ -2,10 +2,11 @@
 //!
 //! The shallow `/v1/healthz` and `/v1/readyz` routes remain public when gateway auth
 //! is enabled; deep readiness and metrics are protected by the top-level auth
-//! middleware. This module owns the `Metrics` aggregate, the governance
-//! route catalog (`GovernanceRoute`), the per-endpoint latency routing (`PublicRoute`),
-//! and the Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`) used by both
-//! the handlers and `Metrics::record_latency`.
+//! middleware. This module owns the monitoring endpoint handlers and the
+//! Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`). The `Metrics`
+//! aggregate, governance route catalog (`GovernanceRoute`), and per-endpoint
+//! latency routing (`PublicRoute`) live in `crate::metrics` and are re-exported
+//! here for handler use.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -30,7 +31,7 @@ pub(crate) const HISTOGRAM_BOUNDARIES: &[f64] = &[
 ];
 const LIFECYCLE_OUTBOX_METRIC_LIMIT: u32 = 10_000;
 
-pub(crate) use crate::server::{GovernanceRoute, PublicRoute};
+pub(crate) use crate::metrics::{GovernanceRoute, PublicRoute};
 
 pub(crate) async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     let start = Instant::now();
