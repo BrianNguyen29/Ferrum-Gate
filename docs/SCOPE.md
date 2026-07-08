@@ -31,8 +31,8 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | MCP Streamable HTTP / SSE transport | Experimental | Session/replay skeleton implemented; not production-ready |
 | MCP resumability | In-memory skeleton | Replay buffer implemented; not restart-resumable |
 | Turnkey HA product | Not implemented | Operator must design HA topology |
-| Store-backed CapabilityService | Not implemented | Deferred to separate PR |
-| PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
+| Store-backed CapabilityService | Implemented | ferrumd uses StoreCapabilityService for production mint/get/revoke/use paths; in-memory remains for tests/dev. |
+| PolicyBundle PDP engine | Implemented (Phase 1 / Beta) | Static-default bundle parity implemented; QuarantineHold enforced; bundle identity propagation and obligations deferred. |
 | MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; per-factor lockout implemented; WebAuthn/backup codes deferred |
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
 | WORM audit sink | Implemented (feature-gated) | S3 Object Lock WORM-compatible sink behind the `worm-sink` feature; disabled by default; operator provisions bucket and Object Lock configuration |
@@ -40,13 +40,13 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
 | GCS adapter | Implemented (shape-only) | Feature-gated behind `gcs`; generation-based rollback modeled; live SDK path is a declared seam. See ADR-018. |
 | Azure Blob adapter | Not implemented | Deferred to a future slice after GCS semantics are stable |
-| HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
+| HA reconciler | Implemented (experimental / opt-in) | Stale in-flight execution reconciler; does not provide leader election or turnkey HA. |
 | HA leader election | Not implemented | Backlog; requires PostgreSQL HA design and distributed consensus |
 | Schema-drift checker | Implemented | Startup refuses databases with `_schema_version` newer than the binary-supported schema version |
 
 ## Honest assessment
 
-FerrumGate is not a turnkey HA product or a compliance-certified platform. It is a governance engine that operators integrate into their own infrastructure. All production readiness decisions—topology, TLS, secrets, backups, database HA, and acceptance testing—remain operator responsibilities.
+FerrumGate is not a turnkey HA product or a compliance-certified platform. It is a governance engine that operators integrate into their own infrastructure. All production readiness decisions—topology, TLS, secrets, backups, database HA, and acceptance testing—remain operator responsibilities. See the [subsystem readiness matrix in ROADMAP.md](./ROADMAP.md#subsystem-readiness-matrix) for per-area maturity levels and caveats.
 
 ## Related docs
 

@@ -4,54 +4,51 @@ Current direction and near-term priorities for FerrumGate.
 
 ---
 
-## Status overview
+## Maturity levels
 
-| Area | Direction | Status |
-|------|-----------|--------|
-| Core governance lifecycle | Stabilize intent → policy → capability → execution → verify → provenance | Stable |
-| SQLite performance | Write queue + PRAGMA tuning validated; operator tuning guide available | Stable |
-| PostgreSQL support | Runtime and CI live tests passing; HA topology remains operator-owned | Beta |
-| MCP stdio server | Default, stable; tools validated locally | Stable |
-| MCP HTTP/SSE transport | Streamable HTTP / SSE transport; P2-3a in-memory session/replay skeleton implemented | Experimental |
-| AWS S3 adapter | Live execution (put/delete/get/copy) with versioning-based rollback; MinIO-gated integration tests; gateway/MCP wired | Implemented (experimental) |
-| Google Cloud Storage adapter | Shape-only put/delete/get with generation-based rollback; live SDK path is a declared seam | Implemented (experimental) |
-| Azure Blob adapter | Deferred to a future slice after GCS semantics are stable | Not implemented |
-| Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
-| Multi-tenancy | Not on current roadmap | Not implemented |
-| Compliance certification | Out of scope for open-source project | Not implemented |
+FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is intentionally not achieved by any current subsystem**; it denotes managed, compliance-grade, turnkey production readiness that this open-source project does not claim.
 
-## Stable
+| Level | Label | Meaning |
+|-------|-------|---------|
+| P0 | Not implemented | Roadmap item, deferred, or out of scope. No usable code. |
+| P1 | Design / spike | Early design, ADR, or prototype. Not for use. |
+| P2 | Experimental | Skeleton or partial implementation; functional gaps; not for production. |
+| P3 | Beta | Feature-complete for standard use; CI-tested; may require operator tuning or have known caveats. |
+| P4 | Stable | Core use cases validated; suitable for local evaluation and controlled pilot work. |
+| P5 | Production-ready | Managed HA, compliance certification, and turnkey operation. **Not claimed.** |
 
-Core model implemented, CI-tested, and suitable for local evaluation and controlled pilot work:
+### Subsystem readiness matrix
 
-- Intent lifecycle, policy evaluation, capability minting, rollback prepare/verify/compensate
-- SQLite write queue, provenance chain
-- Bearer / scoped / OIDC / agent auth modes
-
-## Implemented
-
-Feature-complete for standard use; local and CI-validated:
-
-- Filesystem, HTTP, Git, SQLite, mail draft adapters
-- `ferrumctl` CLI; `ferrum-stress` smoke tests; `ferrum-tui` dashboard
-- Prometheus metrics; rate limiting; Helm chart
-- Store-backed `CapabilityService` for production capability mint/get/revoke/use paths, with in-memory service retained for tests/dev
-- Schema-drift checker that refuses startup when the database schema version is newer than the binary-supported version
-- **MFA TOTP second factor** — TOTP verification for high-risk approval resolution; includes enrollment replay CAS, key parsing cleanup, admin route tests, store counter overflow guard, active lookup index migrations, and Postgres MFA repo tests
-- **PolicyBundle PDP engine (Phase 1)** — Policy decision point with bundle-scoped rule evaluation. Phase 1 implemented (`PolicyBundlePdpEngine`, static-default bundle, parity tests, `PdpMode` config). Quarantine disposition is now enforced via `QuarantineHold`; bundle identity propagation and obligations remain deferred
-- **Behavioral anomaly detection (Phase 1 V1)** — Opt-in in-memory advisory high-risk/R3 burst detection per principal. Emits audit, metrics, and `PolicyEvaluated` metadata without changing PDP decisions. See ADR 010.
-
-## Beta
-
-Functional but may require operator tuning or have known caveats:
-
-- **PostgreSQL runtime** — local and CI live-tested. Production HA/multi-node topology is not managed by the repo.
-
-## Experimental
-
-Skeleton or partial implementation; not ready for production use:
-
-- **MCP Streamable HTTP / SSE transport.** P2-3a in-memory session/replay skeleton is implemented; sessions are auth-bound and replay is redelivery-only. Not restart-resumable and not production-ready.
+| Subsystem | Level | Status | Caveats / Notes |
+|-----------|-------|--------|-----------------|
+| Core governance lifecycle | P4 | Stable | Intent → policy → capability → execution → verify → provenance; CI-tested. |
+| SQLite store | P4 | Stable | Write queue + PRAGMA tuning; operator tuning guide available. |
+| PostgreSQL store | P3 | Beta | Local and CI live-tested; HA topology is operator-owned. |
+| Auth (bearer / scoped / OIDC / agent) | P4 | Stable | CI-tested across modes. |
+| MCP stdio server | P4 | Stable | Default; tools validated locally. |
+| MCP HTTP / SSE transport | P2 | Experimental | Streamable HTTP / SSE; in-memory session/replay skeleton; auth-bound; not restart-resumable. |
+| MCP resumability | P0 | Not implemented | Replay buffer exists; persistent resume checkpoint is not implemented. |
+| Filesystem adapter | P4 | Stable | Sandbox + snapshot rollback. |
+| Git adapter | P4 | Stable | Repository-root allowlist + rollback. |
+| HTTP adapter | P4 | Stable | rustls client, SSRF guard, bounded timeout, no redirects. |
+| SQLite adapter | P4 | Stable | File-backed mutation with database-root allowlist. |
+| Mail draft adapter | P4 | Stable | Drafts only; does not send email. |
+| S3 adapter | P2 | Experimental | Live put/delete/get/copy; versioning-based rollback; MinIO-gated integration tests. |
+| GCS adapter | P2 | Experimental | Shape-only put/delete/get; generation-based rollback modeled; live SDK path is a declared seam. |
+| Azure Blob adapter | P0 | Not implemented | Deferred until GCS semantics are stable. |
+| WORM sink | P2 | Experimental | `worm-sink` feature-gated; operator provisions bucket and Object Lock; not a compliance claim. |
+| Behavioral anomaly detection | P2 | Experimental | Phase 1 V1; in-memory advisory high-risk/R3 burst detection; opt-in; does not change PDP decisions. |
+| PolicyBundle PDP engine | P3 | Beta | Phase 1; `QuarantineHold` enforced; bundle identity propagation and obligations deferred. |
+| MFA TOTP | P4 | Stable | Enrollment/verification + per-factor lockout; WebAuthn and backup codes deferred. |
+| HA reconciler | P2 | Experimental | Opt-in; startup + periodic scan reconciles stale in-flight executions via CAS to Canceled/Failed with provenance/metrics. Does not provide leader election, rollback execution, capability revocation, or turnkey HA. |
+| HA leader election | P0 | Not implemented | Backlog; requires PostgreSQL HA and distributed consensus design. |
+| Schema drift checker | P4 | Stable | Refuses startup when `_schema_version` is newer than binary-supported version. |
+| Operator tooling (`ferrumctl`, `ferrum-tui`, `ferrum-stress`, `ferrum-migrate`) | P4 | Stable | CLI, dashboard, smoke tests, and SQLite→PostgreSQL migration. |
+| Helm chart | P2 | Experimental | Local-safe scaffold with monitoring rules; SQLite defaults are single-replica and allowlists are empty. Operators must configure PostgreSQL, secrets, topology, TLS, and HA for production. |
+| Perf regression gate | P1 | Design / spike | ADR 011; advisory CI gate until baselines are authoritative. |
+| Coverage gate | P1 | Design / spike | Coverage and SBOM artifacts produced; no threshold enforcement yet. |
+| Release automation | P4 | Stable | CI release workflow, cargo-deny, release-profile smoke. Does not imply managed service. |
+| External opencode verifier parity | P0 | Out of scope | Remains out-of-product unless tracked separately. |
 
 ## Next (separate-PR proposals)
 
@@ -68,8 +65,7 @@ These are **deferred to upcoming separate PRs**. They are not implemented and ha
 
 These require broader design decisions, additional evidence, or an ADR before they can be committed.
 
-- **WORM export** — Write-once-read-many sink integration and portable `ferrumctl audit export` bundle for stronger tamper resistance. Depends on external anchoring design. See ADR 009.
-  - Acceptance: `AuditSink` trait with `WormSink` behind feature gate; MinIO Object Lock integration test; background export with retry logic.
+- **WORM hardening follow-ups** — External anchoring evidence, operator runbook, and live Object Lock validation remain future; the feature-gated sink exists and is not a compliance claim.
 - **Performance regression gate** — Automated CI gate that blocks changes regressing established baselines. See ADR 011.
   - Acceptance: `make perf-gate` runs short `ferrum-stress` scenarios and compares against baselines; advisory in CI until baselines are authoritative.
 - **MCP resumability** — Session resumability. Not implemented; no committed timeline.
@@ -78,8 +74,7 @@ These require broader design decisions, additional evidence, or an ADR before th
   - Acceptance: Load test evidence (≥100 concurrent sessions, 0% errors over 5 min); reconnect test evidence; ADR 005 updated to Accepted.
 - **Azure Blob adapter** — Object-store adapter. Deferred until GCS adapter semantics are stable.
   - Acceptance: Adapter implements `AdapterPort` with put/delete/get; versioning-based rollback; local emulator integration tests.
-- **HA reconciler** — Background task to reconcile capability and execution state across restarted or failed-over instances.
-  - Acceptance: Reconciler scans stale `in_flight` executions and transitions them to `failed` or `compensated` with audit entries; works with PostgreSQL and SQLite.
+- **HA follow-ups** — Leader election and multi-node coordination remain future; the opt-in stale in-flight reconciler exists.
 - **Persistent nonce cache** — ✅ Implemented in ADR-015: `NonceCache` seam with `InMemoryNonceCache` (default) and `PostgresNonceCache` (multi-process).
 - **HA leader election** — Distributed leader election for coordinated multi-node operations beyond per-task reconciliation leases. Not implemented; requires PostgreSQL HA design.
 - **Runtime PostgreSQL default-on / packaging** — Enable `postgres` by default or provide a separate binary with PostgreSQL bundled. Requires feature-gate, binary-size, and dependency tradeoff review.
