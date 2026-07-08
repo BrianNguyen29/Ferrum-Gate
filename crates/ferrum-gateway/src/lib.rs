@@ -23,6 +23,7 @@ mod provenance;
 mod quarantine;
 mod rate_limit;
 mod response;
+mod router;
 mod server;
 mod state;
 
