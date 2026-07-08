@@ -96,22 +96,26 @@ PostgreSQL is recommended for deployments requiring materially higher sustained 
 
 ## Performance Regression Gate
 
-A conservative performance regression gate is available via `make perf-gate`. It runs short-duration `ferrum-stress` scenarios and compares JSON output against baselines in `baselines/`.
+A conservative performance regression gate is available via `make perf-gate`. This is **Phase A scaffolding**; it runs short-duration `ferrum-stress` scenarios and compares JSON output against baselines in `baselines/`.
 
 ### Baselines
 - Baselines are stored in `baselines/*.json` and keyed by scenario (e.g., `health`, `intent-compile`, `sqlite-contention`).
 - Each baseline contains:
   - Metric baseline values and relative thresholds (`min_ratio` for throughput, `max_ratio` for latency).
-  - A `meta` block with `last_validated_commit`, `validated_at`, and a `note`.
+  - A `meta` block with `authoritative` (boolean), `last_validated_commit`, `validated_at`, and a `note`.
 - Current baselines are **sample / non-authoritative**. They are labeled as such and should not be used for blocking gates until validated on a controlled runner.
+- Use `make perf-baseline-update` to regenerate sample baselines. Generated files are non-authoritative by default; the generator will only emit authoritative metadata when explicit promotion inputs are supplied.
 
 ### Running the gate locally
 ```bash
 # Advisory mode (default: short 5s duration, non-blocking)
 make perf-gate
 
-# Regenerate baselines after a deliberate optimization PR
+# Regenerate sample baselines after a deliberate optimization PR
 make perf-baseline-update
+
+# Enforced mode (requires authoritative baselines)
+make perf-gate-enforce
 ```
 
 ### Threshold policy
@@ -124,13 +128,24 @@ make perf-baseline-update
 ### Why advisory?
 CI runners have variable CPU and I/O performance. Relative thresholds reduce noise, but absolute thresholds require hardware-normalized baselines. The gate will become blocking only after baselines are validated on a representative runner class and the ADR is updated. See `docs/adr/011-performance-regression-gate.md`.
 
+### Enforced mode (`make perf-gate-enforce`)
+
+`make perf-gate-enforce` runs the comparator in enforced mode. It fails closed if any selected baseline is:
+- Missing
+- Malformed (invalid JSON or missing `scenario`)
+- Non-authoritative (`meta.authoritative` is not `true`, or the note contains "sample" / "non-authoritative")
+- Lacking validation metadata (`last_validated_commit`, `validated_at`)
+- Exceeding a metric threshold
+
+Enforced mode is intended for controlled environments and manual gates only. It is not enabled in regular CI or release workflows.
+
 ### Promoting Baselines from Advisory to Blocking
 
 To promote a performance baseline from SAMPLE/advisory to authoritative:
 
 1. **Controlled runner**: Run `make perf-baseline-update` on a representative, stable CI runner or dedicated benchmarking host. Document the hardware spec (CPU, RAM, disk type) in the baseline `meta.note`.
 2. **Statistical stability**: Execute at least 5 consecutive runs on the same commit. All runs must pass the relative thresholds against each other (within 10% variance).
-3. **Remove SAMPLE label**: Update the `meta.note` field from "SAMPLE / NON-AUTHORITATIVE" to a descriptive label (e.g., "Authoritative — validated on GitHub Actions ubuntu-latest runner"), set `last_validated_commit` to the exact commit SHA, and set `validated_at` to the current ISO 8601 timestamp.
+3. **Promote metadata**: Supply `PERF_BASELINE_AUTHORITATIVE_COMMIT` (required) and optionally `PERF_BASELINE_AUTHORITATIVE_AT` (defaults to the current UTC time) when generating, or manually set `meta.authoritative=true`, `last_validated_commit` to the exact commit SHA, and `validated_at` to the current ISO 8601 timestamp. Update the `meta.note` to a descriptive label (e.g., "Authoritative — validated on GitHub Actions ubuntu-latest runner").
 4. **Update thresholds**: Ensure `min_ratio` and `max_ratio` values are conservative enough to absorb runner variance without missing real regressions (typically `min_ratio >= 0.70` for throughput, `max_ratio <= 2.50` for latency).
 5. **ADR update**: If making the gate blocking, update `docs/adr/011-performance-regression-gate.md` to reflect the change from advisory to enforced.
 6. **Coverage gate parity**: Only promote perf baselines to blocking after the critical-crate coverage gate (`make coverage-threshold-hard`) has been stable for at least two release cycles.

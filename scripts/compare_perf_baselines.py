@@ -6,11 +6,17 @@ Usage:
         --stress-json /tmp/ferrum-stress.json \
         --baselines-dir baselines/ \
         [--relative-threshold 0.20] \
-        [--dry-run]
+        [--dry-run] \
+        [--enforce]
 
 Exit codes:
-    0 — all checked scenarios pass (or dry-run)
-    1 — one or more thresholds exceeded and not in dry-run
+    0 — all checked scenarios pass (or dry-run, or advisory mode)
+    1 — one or more thresholds exceeded or enforcement preconditions failed
+
+Baselines are accepted as authoritative only when `meta.authoritative` is true
+and the baseline contains required validation metadata. Non-authoritative or
+sample baselines are rejected in enforced mode. In dry-run/advisory mode they
+continue to warn/skip.
 
 Baseline JSON format (example):
     {
@@ -25,9 +31,10 @@ Baseline JSON format (example):
         "error_rate":  { "baseline": 0.0,     "unit": "ratio","max_absolute": 0.01 }
       },
       "meta": {
-        "last_validated_commit": "sample",
+        "authoritative": true,
+        "last_validated_commit": "abc123",
         "validated_at": "2026-06-25T00:00:00Z",
-        "note": "SAMPLE / NON-AUTHORITATIVE"
+        "note": "Authoritative baseline"
       }
     }
 
@@ -37,36 +44,89 @@ Rules:
     - error_rate: actual <= max_absolute (if defined) or baseline * max_ratio
 """
 
+from __future__ import annotations
+
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 
-def load_baselines(baselines_dir: str) -> dict[str, dict]:
-    """Load all baseline JSON files keyed by scenario name."""
+def load_baselines(baselines_dir: str) -> tuple[dict[str, dict], list[str]]:
+    """Load all baseline JSON files keyed by scenario name.
+
+    Returns a tuple of (baselines, errors). In enforce mode callers should
+    treat errors as fatal; in advisory/dry-run mode they are warnings.
+    """
     baselines: dict[str, dict] = {}
+    errors: list[str] = []
     dir_path = Path(baselines_dir)
     if not dir_path.is_dir():
-        print(f"[WARN] Baselines directory not found: {baselines_dir}")
-        return baselines
+        msg = f"Baselines directory not found: {baselines_dir}"
+        errors.append(msg)
+        return baselines, errors
 
     for file_path in sorted(dir_path.glob("*.json")):
         try:
             with file_path.open(encoding="utf-8") as fh:
                 data = json.load(fh)
+            if not isinstance(data, dict):
+                errors.append(f"Baseline {file_path} is not a JSON object")
+                continue
             scenario = data.get("scenario")
             if not scenario:
-                print(f"[WARN] Baseline file missing 'scenario': {file_path}")
+                errors.append(f"Baseline file missing 'scenario': {file_path}")
                 continue
+            data["_source_path"] = str(file_path)
             baselines[scenario] = data
         except json.JSONDecodeError as exc:
-            print(f"[WARN] Invalid JSON in baseline {file_path}: {exc}")
-        except Exception as exc:
-            print(f"[WARN] Failed to read baseline {file_path}: {exc}")
-    return baselines
+            errors.append(f"Invalid JSON in baseline {file_path}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Failed to read baseline {file_path}: {exc}")
+    return baselines, errors
+
+
+def is_authoritative_baseline(baseline: dict[str, Any]) -> tuple[bool, str]:
+    """Return (is_authoritative, reason) for a loaded baseline.
+
+    Enforced mode requires the baseline to explicitly declare itself
+    authoritative and to contain validation metadata.
+    """
+    meta = baseline.get("meta")
+    if not isinstance(meta, dict) or not meta:
+        return False, "missing meta block"
+
+    if not meta.get("authoritative"):
+        note = str(meta.get("note", "")).lower()
+        if "sample" in note or "non-authoritative" in note:
+            return False, "sample / non-authoritative baseline"
+        return False, "meta.authoritative is not true"
+
+    for required in ("last_validated_commit", "validated_at"):
+        if not meta.get(required):
+            return False, f"missing meta.{required}"
+
+    if meta.get("last_validated_commit") == "sample":
+        return False, "last_validated_commit is sample"
+
+    return True, ""
+
+
+def is_sample_named_baseline(path: Path) -> bool:
+    """Return True if the baseline filename starts with sample_."""
+    return path.name.lower().startswith("sample_")
+
+
+def validate_enforced_baseline(baseline: dict[str, Any]) -> tuple[bool, str]:
+    """Validate a baseline for enforce mode. Returns (valid, reason)."""
+    source_path = baseline.get("_source_path")
+    if not source_path:
+        return False, "missing _source_path"
+    path = Path(source_path)
+    if is_sample_named_baseline(path):
+        return False, f"sample-named source file: {path.name}"
+    return is_authoritative_baseline(baseline)
 
 
 def compare_metric(
@@ -170,7 +230,7 @@ def compare_scenario(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare ferrum-stress JSON output against baselines."
+        description="Compare ferrum-stress JSON output against baselines.",
     )
     parser.add_argument(
         "--stress-json",
@@ -193,36 +253,56 @@ def main() -> int:
         action="store_true",
         help="Print comparison but always exit 0 (advisory mode).",
     )
+    parser.add_argument(
+        "--enforce",
+        action="store_true",
+        help=(
+            "Fail closed on missing, malformed, or non-authoritative baselines. "
+            "Implies non-dry-run."
+        ),
+    )
     args = parser.parse_args()
+
+    enforce = args.enforce
+    dry_run = args.dry_run and not enforce
 
     # Load stress output
     stress_path = Path(args.stress_json)
     if not stress_path.is_file():
         print(f"[ERROR] Stress JSON file not found: {args.stress_json}")
-        return 0 if args.dry_run else 1
+        return 0 if dry_run else 1
 
     try:
         with stress_path.open(encoding="utf-8") as fh:
             stress_data = json.load(fh)
     except json.JSONDecodeError as exc:
         print(f"[ERROR] Invalid stress JSON: {exc}")
-        return 0 if args.dry_run else 1
+        return 0 if dry_run else 1
 
     scenarios = stress_data.get("scenarios", [])
     if not scenarios:
         print("[WARN] No scenarios found in stress output.")
-        return 0 if args.dry_run else 1
+        return 0 if dry_run else 1
 
     # Load baselines
-    baselines = load_baselines(args.baselines_dir)
+    baselines, baseline_errors = load_baselines(args.baselines_dir)
+    if baseline_errors:
+        if enforce:
+            for error in baseline_errors:
+                print(f"[FAIL] {error}")
+            return 1
+        for error in baseline_errors:
+            print(f"[WARN] {error}")
     if not baselines:
         print("[WARN] No baselines loaded. Comparison skipped.")
-        return 0 if args.dry_run else 1
+        return 0 if dry_run else 1
 
     # Compare each scenario
     all_passed = True
     print("═══════════════════════════════════════════════════════════════")
     print("  PERFORMANCE REGRESSION GATE")
+    if enforce:
+        print("  MODE: enforced (authoritative baselines required)")
     print("═══════════════════════════════════════════════════════════════")
     print()
 
@@ -230,9 +310,22 @@ def main() -> int:
         scenario_name = scenario.get("scenario", "unknown")
         baseline = baselines.get(scenario_name)
         if not baseline:
-            print(f"[SKIP] No baseline for scenario '{scenario_name}'")
+            msg = f"[SKIP] No baseline for scenario '{scenario_name}'"
+            if enforce:
+                print(f"[FAIL] {msg}")
+                all_passed = False
+            else:
+                print(msg)
             print()
             continue
+
+        if enforce:
+            valid, reason = validate_enforced_baseline(baseline)
+            if not valid:
+                print(f"[FAIL] Baseline for '{scenario_name}' is not enforceable: {reason}")
+                print()
+                all_passed = False
+                continue
 
         passed, messages = compare_scenario(scenario, baseline, args.relative_threshold)
         for msg in messages:
@@ -246,13 +339,13 @@ def main() -> int:
     if all_passed:
         print("[PASS] All scenarios within baseline thresholds.")
     else:
-        if args.dry_run:
+        if dry_run:
             print("[ADVISORY] Thresholds exceeded, but dry-run mode prevents failure.")
         else:
             print("[FAIL] One or more scenarios exceeded baseline thresholds.")
     print("───────────────────────────────────────────────────────────────")
 
-    if args.dry_run:
+    if dry_run:
         return 0
     return 0 if all_passed else 1
 
