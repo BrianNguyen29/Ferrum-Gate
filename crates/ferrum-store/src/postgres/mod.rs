@@ -35,9 +35,11 @@ mod ledger;
 mod lifecycle_outbox;
 mod mfa_credentials;
 mod migrations;
+mod nonce_cache;
 mod policy_bundles;
 mod proposals;
 mod provenance;
+mod quarantine;
 mod rollback;
 mod tokens;
 
@@ -52,9 +54,11 @@ pub use intents::PostgresIntentRepo;
 pub use ledger::PostgresLedgerRepo;
 pub use lifecycle_outbox::PostgresLifecycleOutboxRepo;
 pub use mfa_credentials::PostgresMfaCredentialRepo;
+pub use nonce_cache::PostgresNonceCache;
 pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
+pub use quarantine::PostgresQuarantineHoldRepo;
 pub use rollback::PostgresRollbackRepo;
 pub use tokens::PostgresTokenRepo;
 
@@ -62,7 +66,8 @@ use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
     CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, MfaCredentialRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo, RollbackRepo, StoreFacade,
+    TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -304,6 +309,10 @@ impl PostgresStore {
         PostgresApprovalRepo::new(self.pool.clone())
     }
 
+    pub fn quarantine_holds(&self) -> PostgresQuarantineHoldRepo {
+        PostgresQuarantineHoldRepo::new(self.pool.clone())
+    }
+
     pub fn provenance(&self) -> PostgresProvenanceRepo {
         PostgresProvenanceRepo::new(self.pool.clone())
     }
@@ -453,6 +462,10 @@ impl StoreFacade for PostgresStore {
 
     fn approvals(&self) -> Arc<dyn ApprovalRepo> {
         Arc::new(self.approvals())
+    }
+
+    fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+        Arc::new(self.quarantine_holds())
     }
 
     fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
@@ -653,7 +666,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 13);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 16);
     }
 
     #[test]

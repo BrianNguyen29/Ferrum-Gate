@@ -218,4 +218,72 @@ impl ApprovalRepo for SqliteApprovalRepo {
             .map(|row| from_json(&row.try_get::<String, _>("raw_json")?))
             .collect()
     }
+
+    async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> Result<Vec<ApprovalRequest>> {
+        if let Some(ref queue) = self.write_queue {
+            return queue
+                .expire_stale_pending(now, max_age_seconds, batch_size)
+                .await;
+        }
+        expire_stale_pending_sqlite(&self.pool, now, max_age_seconds, batch_size).await
+    }
+}
+
+/// Atomically transition stale pending approvals to `Expired` using a
+/// conditional UPDATE so concurrent resolves cannot be overwritten.
+///
+/// Only approvals whose database row is still `Pending` are transitioned and
+/// returned. Rows that changed to a terminal state between selection and the
+/// conditional UPDATE are silently skipped.
+pub(crate) async fn expire_stale_pending_sqlite(
+    pool: &SqlitePool,
+    now: Timestamp,
+    max_age_seconds: u64,
+    batch_size: u32,
+) -> Result<Vec<ApprovalRequest>> {
+    let age_cutoff = now - chrono::Duration::seconds(max_age_seconds as i64);
+    let sql = "SELECT approval_id, raw_json FROM approvals
+        WHERE state = ?1
+          AND (expires_at < ?2 OR created_at < ?3)
+        LIMIT ?4";
+    let rows = sqlx::query(sql)
+        .bind("Pending")
+        .bind(now)
+        .bind(age_cutoff)
+        .bind(batch_size)
+        .fetch_all(pool)
+        .await?;
+
+    let mut expired = Vec::with_capacity(rows.len());
+    for row in rows {
+        let approval_id_str: String = row.try_get("approval_id")?;
+        let raw_json: String = row.try_get("raw_json")?;
+        let mut approval: ApprovalRequest = from_json(&raw_json)?;
+        approval.state = ApprovalState::Expired;
+        let new_raw_json = to_json(&approval)?;
+
+        let result = sqlx::query(
+            "UPDATE approvals
+             SET state = ?2,
+                 raw_json = ?3
+             WHERE approval_id = ?1
+               AND state = ?4",
+        )
+        .bind(&approval_id_str)
+        .bind(enum_text(&ApprovalState::Expired)?)
+        .bind(&new_raw_json)
+        .bind("Pending")
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() > 0 {
+            expired.push(approval);
+        }
+    }
+    Ok(expired)
 }

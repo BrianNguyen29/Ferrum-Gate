@@ -307,3 +307,15 @@ fn email_send_rejected_via_tool_name_path() {
     let err = infer_action_type_and_adapter("email_send", &metadata).unwrap_err();
     assert!(err.contains("EmailSend is reserved/R3"));
 }
+
+#[test]
+fn gcs_tool_names_are_not_inferred_without_explicit_binding() {
+    let metadata = ferrum_proto::JsonMap::new();
+    for tool in ["gcs_put", "gcs_delete", "gcs_get"] {
+        let err = infer_action_type_and_adapter(tool, &metadata).unwrap_err();
+        assert!(
+            err.contains("unknown mutating tool"),
+            "{tool} should not be inferred implicitly: {err}"
+        );
+    }
+}

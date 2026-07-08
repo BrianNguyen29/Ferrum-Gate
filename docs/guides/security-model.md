@@ -79,6 +79,7 @@
 | `policy_bundle_rollback` | `POST /v1/policy-bundles/{id}/rollback` |
 | `approval_resolve` | `POST /v1/approvals/{id}/resolve` |
 | `execution_cancel` | `POST /v1/executions/{id}/cancel` |
+| `behavioral_anomaly` | `POST /v1/proposals/{proposal_id}/evaluate` (advisory, when enabled) |
 
 ### How to query
 
@@ -101,14 +102,57 @@ ferrumctl admin audit list --limit 20
 
 ## MFA lockout
 
-When `approval_mfa_required = true` (or any MFA verification flow), repeated failed verification attempts against an active factor trigger a per-factor lockout:
+When `approval_mfa_required = true` (or any MFA verification flow), repeated failed
+verification attempts increment both a per-factor and a per-agent lockout counter.
+Both layers use the same configuration:
 
 - **Threshold**: `mfa_lockout_max_attempts` (default `5`, minimum `1`).
 - **Duration**: `mfa_lockout_duration_secs` (default `900` seconds, max `86400`).
-- **Post-expiry one-strike re-lock**: After a lockout expires, the factor retains its failed-attempt counter. A single subsequent failure immediately re-locks the factor for the full duration, and the lockout count increments.
-- **Break-glass bypass**: An operator with the `admin:mfa:breakglass` scope can bypass the active lockout by providing a non-empty `reason` in the request body (e.g., disable or rotate without re-verification). The bypass is audited.
 
-Lockout state is stored in the database (`failed_attempts`, `locked_until`, `last_failed_at`, `lockout_count`) and reset on successful verification.
+**Per-factor lockout**: failures against a specific factor lock that factor. After a
+lockout expires, the factor retains its failed-attempt counter, so a single
+subsequent failure immediately re-locks the factor for the full duration.
+
+**Per-agent lockout** (agent-level MFA challenge surface): failures against any
+factor for the same agent increment a shared agent counter. When the threshold is
+reached, all MFA challenge operations for that agent (admin verify/disable/rotate,
+approval resolve, quarantine resolve) are blocked, regardless of factor ID. After a
+lockout expires, the agent counter is reset, so stale attempts do not immediately
+re-lock the agent.
+
+**Break-glass bypass**: An operator with the `admin:mfa:breakglass` scope can bypass
+verification by providing a non-empty `reason` in the request body (e.g., disable or
+rotate without re-verification). The bypass is audited and is not blocked by agent
+or factor lockout.
+
+Lockout state is stored in the database. Per-factor state lives in `mfa_credentials`
+(`failed_attempts`, `locked_until`, `last_failed_at`, `lockout_count`). Per-agent
+state lives in `mfa_agent_lockouts` with the same columns. Successful verification
+resets both counters while preserving the lifetime `lockout_count`.
+
+## Behavioral anomaly detection
+
+When `behavioral_anomaly_enabled = true`, the gateway tracks each principal's
+high-risk (`High`/`Critical`) and R3 proposal rate in a bounded in-memory rolling
+window. If the count within the window reaches the configured warning or critical
+threshold, the gateway emits:
+
+- An audit log entry with `action = behavioral_anomaly` and sanitized metadata
+  (severity, window count, window seconds, threshold). No actor IDs or raw
+  arguments are included.
+- A Prometheus counter `ferrumgate_behavioral_anomaly_detected_total{severity}`.
+- Sanitized `behavioral_anomaly` metadata in the `PolicyEvaluated` provenance event.
+
+This is **advisory only**: it does not change the policy decision, auto-block,
+escalate to approval, or write to the lifecycle outbox.
+
+Configuration (all `[server]`):
+
+- `behavioral_anomaly_enabled` — default `false`.
+- `behavioral_anomaly_window_secs` — default `60`, range `1..=3600`.
+- `behavioral_anomaly_warning_threshold` — default `5`.
+- `behavioral_anomaly_critical_threshold` — default `10`, must be `>= warning_threshold`.
+- `behavioral_anomaly_max_actors` — default `1000`, bounds memory.
 
 ## Secret handling
 
@@ -173,7 +217,7 @@ Tenant
 - Evaluate mTLS for service-to-service auth.
 - Evaluate audit fail-closed mode (ADR 007).
 - Evaluate R3 approval timeout auto-deny (ADR 008 Phase 2).
-- Evaluate behavioral anomaly detection (ADR 010).
+- Evaluate behavioral anomaly detection (ADR 010); enable `behavioral_anomaly_enabled` after tuning thresholds.
 
 ## Related docs
 

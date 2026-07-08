@@ -8,7 +8,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 - **Intent-scoped execution** with policy evaluation, capability minting, rollback prepare/verify/compensate, and provenance chain.
 - **Local pilot and controlled evaluation** with SQLite or PostgreSQL.
 - **MCP stdio server** as the default, stable integration surface.
-- **Bounded adapters** for filesystem, HTTP, Git, SQLite, mail draft, and S3 (experimental) side effects.
+- **Bounded adapters** for filesystem, HTTP, Git, SQLite, mail draft, S3 (experimental), and GCS (shape-only, experimental) side effects.
 - **Operator tooling**: `ferrumctl`, `ferrum-tui`, `ferrum-stress`, `ferrum-migrate`.
 
 ## Operator-owned
@@ -28,17 +28,18 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Managed SaaS / hosted service | Not implemented | No roadmap commitment |
 | Email sending | Not implemented | Mail draft adapter manages drafts only |
 | Compliance certification (SOC 2, ISO 27001, etc.) | Out of scope | Open-source project; operator must certify their own deployment |
-| MCP Streamable HTTP / SSE transport | Experimental | Not production-ready; requires `--features http` |
-| MCP resumability | Not implemented | Future priority; no committed timeline |
+| MCP Streamable HTTP / SSE transport | Experimental | Session/replay skeleton implemented; not production-ready |
+| MCP resumability | In-memory skeleton | Replay buffer implemented; not restart-resumable |
 | Turnkey HA product | Not implemented | Operator must design HA topology |
 | Store-backed CapabilityService | Not implemented | Deferred to separate PR |
 | PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
 | MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; per-factor lockout implemented; WebAuthn/backup codes deferred |
 | Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
-| WORM audit sink | Not implemented | Backlog; depends on external anchoring design |
-| Behavioral anomaly detection | Not implemented | Backlog; see ADR 010 |
-| Persistent nonce cache (shared) | Not implemented | Backlog; in-memory cache is process-local; multi-node requires shared cache |
-| GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |
+| WORM audit sink | Implemented (feature-gated) | S3 Object Lock WORM-compatible sink behind the `worm-sink` feature; disabled by default; operator provisions bucket and Object Lock configuration |
+| Behavioral anomaly detection | Implemented (Phase 1 V1) | In-memory advisory high-risk/R3 burst detection; opt-in, no ML/external service |
+| Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
+| GCS adapter | Implemented (shape-only) | Feature-gated behind `gcs`; generation-based rollback modeled; live SDK path is a declared seam. See ADR-018. |
+| Azure Blob adapter | Not implemented | Deferred to a future slice after GCS semantics are stable |
 | HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
 | HA leader election | Not implemented | Backlog; requires PostgreSQL HA design and distributed consensus |
 | Schema-drift checker | Implemented | Startup refuses databases with `_schema_version` newer than the binary-supported schema version |

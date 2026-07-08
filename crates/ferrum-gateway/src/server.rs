@@ -9,26 +9,24 @@ use ferrum_cap::InMemoryCapabilityService;
 use ferrum_pdp::StaticPdpEngine;
 #[allow(unused_imports)] // IntentStatus is used in `mod tests` via `use super::*;`.
 use ferrum_proto::{
-    AgentListResponse, ApiError, ApiErrorCode, AuditAction, AuditLogEntry, AuditResourceType,
-    Decision, DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse, EvaluateProposalResponse,
-    ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope, IntentStatus,
-    ListPolicyBundleVersionsResponse, Matcher, OutcomeClause, OutcomeReport, PolicyBundle,
-    PolicyBundleId, PolicyBundleSimulateRequest, PolicyBundleSimulateResponse, PolicyRule,
-    PolicySimulateRequest, ProposalId, ProvenanceEventKind, ProvenanceQueryRequest,
-    RegisterAgentRequest, RegisterAgentResponse, ResourceSelector, RevokeAgentRequest, RiskTier,
-    RollbackClass, RollbackPolicyBundleRequest, RollbackPolicyBundleResponse, RollbackState,
-    RollbackTarget, TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
+    ActorRef, ActorType, AgentListResponse, ApiError, ApiErrorCode, AuditAction, AuditLogEntry,
+    AuditResourceType, Decision, DiffPolicyBundleVersionsResponse, EvaluateOutcomeResponse,
+    EvaluateProposalResponse, EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
+    IntentEnvelope, IntentStatus, ListPolicyBundleVersionsResponse, Matcher, ObjectRef, ObjectType,
+    OutcomeClause, OutcomeReport, PolicyBundle, PolicyBundleId, PolicyBundleSimulateRequest,
+    PolicyBundleSimulateResponse, PolicyRule, PolicySimulateRequest, ProposalId, ProvenanceEvent,
+    ProvenanceEventKind, ProvenanceQueryRequest, RegisterAgentRequest, RegisterAgentResponse,
+    ResourceSelector, RevokeAgentRequest, RiskTier, RollbackClass, RollbackPolicyBundleRequest,
+    RollbackPolicyBundleResponse, RollbackState, RollbackTarget, TimeBudget, TrustContextSummary,
+    TrustLabel as ProtoTrustLabel,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
-use ferrum_store::SqliteStore;
-use ferrum_store::StoreFacade;
+use ferrum_store::{InMemoryNonceCache, SqliteStore, StoreFacade};
 use ferrum_sync::RuntimeBridge;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Duration as StdDuration;
 use tower::ServiceBuilder;
 
 use ed25519_dalek::Verifier;
@@ -39,13 +37,8 @@ use tower_governor::{
 use tower_http::trace::TraceLayer;
 
 use crate::AuthActor;
+use crate::behavioral::{BehavioralSeverity, build_profiler};
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
-
-/// Maximum number of entries in the agent nonce replay cache.
-/// When the cache exceeds this limit, oldest entries are evicted
-/// after TTL cleanup. This prevents unbounded growth under
-/// high-volume agent traffic.
-const NONCE_CACHE_MAX_ENTRIES: usize = 10_000;
 
 /// Rate-limiting key that buckets authenticated requests by a principal
 /// identifier combined with IP, and anonymous requests by IP alone.
@@ -108,9 +101,10 @@ pub(crate) struct AppState {
     pub(crate) runtime: GatewayRuntime,
     pub(crate) server_config: ServerConfig,
     pub(crate) metrics: Arc<Metrics>,
+    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
     pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
-    /// In-memory nonce cache for Agent auth replay protection.
-    nonce_cache: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Nonce cache for Agent auth replay protection.
+    nonce_cache: Arc<dyn ferrum_store::NonceCache>,
 }
 
 #[cfg(test)]
@@ -119,10 +113,13 @@ impl AppState {
     pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
         Arc::new(AppState {
             runtime,
-            server_config,
+            server_config: server_config.clone(),
             metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
             jwks_cache: None,
-            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
         })
     }
 }
@@ -155,6 +152,9 @@ pub(crate) struct Metrics {
     pub(crate) governance_errors_v1_approvals: AtomicU64,
     pub(crate) governance_errors_v1_approvals_approval_id: AtomicU64,
     pub(crate) governance_errors_v1_approvals_resolve: AtomicU64,
+    pub(crate) governance_errors_v1_quarantines: AtomicU64,
+    pub(crate) governance_errors_v1_quarantines_hold_id: AtomicU64,
+    pub(crate) governance_errors_v1_quarantines_resolve: AtomicU64,
     pub(crate) governance_errors_v1_policy_bundles_create: AtomicU64,
     pub(crate) governance_errors_v1_policy_bundles_list: AtomicU64,
     pub(crate) governance_errors_v1_policy_bundles_get: AtomicU64,
@@ -198,6 +198,9 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_approvals: AtomicU64,
     pub(crate) governance_success_v1_approvals_approval_id: AtomicU64,
     pub(crate) governance_success_v1_approvals_resolve: AtomicU64,
+    pub(crate) governance_success_v1_quarantines: AtomicU64,
+    pub(crate) governance_success_v1_quarantines_hold_id: AtomicU64,
+    pub(crate) governance_success_v1_quarantines_resolve: AtomicU64,
     pub(crate) governance_success_v1_policy_bundles_create: AtomicU64,
     pub(crate) governance_success_v1_policy_bundles_list: AtomicU64,
     pub(crate) governance_success_v1_policy_bundles_get: AtomicU64,
@@ -225,6 +228,21 @@ pub(crate) struct Metrics {
     pub(crate) governance_success_v1_mfa_get: AtomicU64,
     // Audit fail-closed rejection counter
     pub(crate) audit_fail_closed_rejections: AtomicU64,
+    // WORM sink counters
+    pub(crate) audit_worm_sink_exports_total: AtomicU64,
+    pub(crate) audit_worm_sink_failures_total: AtomicU64,
+    pub(crate) audit_worm_sink_last_success_timestamp_seconds: AtomicU64,
+    // Approval timeout counter
+    pub(crate) approval_timeouts_total: AtomicU64,
+    // Quarantine hold timeout counter
+    pub(crate) quarantine_timeouts_total: AtomicU64,
+    // HA reconciler counters
+    pub(crate) ha_reconciler_canceled_total: AtomicU64,
+    pub(crate) ha_reconciler_failed_total: AtomicU64,
+    pub(crate) ha_reconciler_errors_total: AtomicU64,
+    // Behavioral anomaly advisory counters
+    pub(crate) behavioral_anomaly_warnings_total: AtomicU64,
+    pub(crate) behavioral_anomaly_critical_total: AtomicU64,
     // Latency histogram for /v1/healthz (always status 200)
     pub(crate) healthz_latency_buckets: [AtomicU64; 11],
     pub(crate) healthz_latency_sum: AtomicU64,
@@ -273,6 +291,9 @@ impl Metrics {
             governance_errors_v1_approvals: AtomicU64::new(0),
             governance_errors_v1_approvals_approval_id: AtomicU64::new(0),
             governance_errors_v1_approvals_resolve: AtomicU64::new(0),
+            governance_errors_v1_quarantines: AtomicU64::new(0),
+            governance_errors_v1_quarantines_hold_id: AtomicU64::new(0),
+            governance_errors_v1_quarantines_resolve: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_create: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_list: AtomicU64::new(0),
             governance_errors_v1_policy_bundles_get: AtomicU64::new(0),
@@ -315,6 +336,9 @@ impl Metrics {
             governance_success_v1_approvals: AtomicU64::new(0),
             governance_success_v1_approvals_approval_id: AtomicU64::new(0),
             governance_success_v1_approvals_resolve: AtomicU64::new(0),
+            governance_success_v1_quarantines: AtomicU64::new(0),
+            governance_success_v1_quarantines_hold_id: AtomicU64::new(0),
+            governance_success_v1_quarantines_resolve: AtomicU64::new(0),
             governance_success_v1_policy_bundles_create: AtomicU64::new(0),
             governance_success_v1_policy_bundles_list: AtomicU64::new(0),
             governance_success_v1_policy_bundles_get: AtomicU64::new(0),
@@ -341,6 +365,16 @@ impl Metrics {
             governance_success_v1_mfa_list: AtomicU64::new(0),
             governance_success_v1_mfa_get: AtomicU64::new(0),
             audit_fail_closed_rejections: AtomicU64::new(0),
+            audit_worm_sink_exports_total: AtomicU64::new(0),
+            audit_worm_sink_failures_total: AtomicU64::new(0),
+            audit_worm_sink_last_success_timestamp_seconds: AtomicU64::new(0),
+            approval_timeouts_total: AtomicU64::new(0),
+            quarantine_timeouts_total: AtomicU64::new(0),
+            ha_reconciler_canceled_total: AtomicU64::new(0),
+            ha_reconciler_failed_total: AtomicU64::new(0),
+            ha_reconciler_errors_total: AtomicU64::new(0),
+            behavioral_anomaly_warnings_total: AtomicU64::new(0),
+            behavioral_anomaly_critical_total: AtomicU64::new(0),
             // Latency histogram fields
             healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
             healthz_latency_sum: AtomicU64::new(0),
@@ -413,6 +447,15 @@ impl Metrics {
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::ApprovalsResolve => self
                 .governance_errors_v1_approvals_resolve
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::Quarantines => self
+                .governance_errors_v1_quarantines
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesHoldId => self
+                .governance_errors_v1_quarantines_hold_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesResolve => self
+                .governance_errors_v1_quarantines_resolve
                 .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesCreate => self
                 .governance_errors_v1_policy_bundles_create
@@ -546,6 +589,15 @@ impl Metrics {
             GovernanceRoute::ApprovalsResolve => self
                 .governance_success_v1_approvals_resolve
                 .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::Quarantines => self
+                .governance_success_v1_quarantines
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesHoldId => self
+                .governance_success_v1_quarantines_hold_id
+                .fetch_add(1, Ordering::Relaxed),
+            GovernanceRoute::QuarantinesResolve => self
+                .governance_success_v1_quarantines_resolve
+                .fetch_add(1, Ordering::Relaxed),
             GovernanceRoute::PolicyBundlesCreate => self
                 .governance_success_v1_policy_bundles_create
                 .fetch_add(1, Ordering::Relaxed),
@@ -635,6 +687,18 @@ impl Metrics {
         err
     }
 
+    /// Increments the behavioral anomaly advisory counter for the given severity.
+    pub(crate) fn record_behavioral_anomaly(&self, severity: BehavioralSeverity) {
+        match severity {
+            BehavioralSeverity::Warning => self
+                .behavioral_anomaly_warnings_total
+                .fetch_add(1, Ordering::Relaxed),
+            BehavioralSeverity::Critical => self
+                .behavioral_anomaly_critical_total
+                .fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
     /// Records a latency sample in the appropriate histogram based on route and status.
     /// `elapsed_ns` is the elapsed time in nanoseconds.
     pub(crate) fn record_latency(&self, route: PublicRoute, status: u16, elapsed_ns: u64) {
@@ -706,6 +770,9 @@ pub(crate) enum GovernanceRoute {
     Approvals,
     ApprovalsApprovalId,
     ApprovalsResolve,
+    Quarantines,
+    QuarantinesHoldId,
+    QuarantinesResolve,
     PolicyBundlesCreate,
     PolicyBundlesList,
     PolicyBundlesGet,
@@ -756,6 +823,9 @@ impl GovernanceRoute {
             GovernanceRoute::Approvals => "/v1/approvals",
             GovernanceRoute::ApprovalsApprovalId => "/v1/approvals/{approval_id}",
             GovernanceRoute::ApprovalsResolve => "/v1/approvals/{approval_id}/resolve",
+            GovernanceRoute::Quarantines => "/v1/quarantines",
+            GovernanceRoute::QuarantinesHoldId => "/v1/quarantines/{hold_id}",
+            GovernanceRoute::QuarantinesResolve => "/v1/quarantines/{hold_id}/resolve",
             GovernanceRoute::PolicyBundlesCreate => "/v1/policy-bundles",
             GovernanceRoute::PolicyBundlesList => "/v1/policy-bundles",
             GovernanceRoute::PolicyBundlesGet => "/v1/policy-bundles/{bundle_id}",
@@ -807,6 +877,9 @@ impl GovernanceRoute {
             GovernanceRoute::Approvals => "GET",
             GovernanceRoute::ApprovalsApprovalId => "GET",
             GovernanceRoute::ApprovalsResolve => "POST",
+            GovernanceRoute::Quarantines => "GET",
+            GovernanceRoute::QuarantinesHoldId => "GET",
+            GovernanceRoute::QuarantinesResolve => "POST",
             GovernanceRoute::PolicyBundlesCreate => "POST",
             GovernanceRoute::PolicyBundlesList => "GET",
             GovernanceRoute::PolicyBundlesGet => "GET",
@@ -849,6 +922,213 @@ pub(crate) enum PublicRoute {
 // I11 Output Sanitization helpers
 // ---------------------------------------------------------------------------
 
+const APPROVAL_TIMEOUT_BATCH_SIZE: u32 = 100;
+const QUARANTINE_TIMEOUT_BATCH_SIZE: u32 = 100;
+
+/// Emit a provenance event recording that an approval timed out.
+async fn emit_approval_timed_out_provenance(
+    state: &AppState,
+    approval: &ferrum_proto::ApprovalRequest,
+) {
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "approval_id".to_string(),
+        serde_json::json!(approval.approval_id.to_string()),
+    );
+    metadata.insert(
+        "previous_state".to_string(),
+        serde_json::json!(format!("{:?}", approval.state)),
+    );
+
+    let event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::ApprovalTimedOut,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("FerrumGate Gateway".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::Approval,
+            object_id: approval.approval_id.to_string(),
+            summary: Some("Approval timed out and was transitioned to Expired".to_string()),
+        },
+        intent_id: Some(approval.intent_id),
+        proposal_id: Some(approval.proposal_id),
+        execution_id: approval.execution_id,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+
+    if let Err(e) = state.runtime.store.provenance().append_event(&event).await {
+        tracing::warn!(
+            error = %e,
+            approval_id = %approval.approval_id,
+            "failed to append ApprovalTimedOut provenance event"
+        );
+    }
+}
+
+/// Background task that periodically reconciles stale pending approvals.
+async fn approval_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::sync::Notify>) {
+    let interval_secs = state.server_config.approval_reconciliation_interval_secs;
+    let timeout_seconds = state.server_config.approval_timeout_seconds;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let now = chrono::Utc::now();
+                match state
+                    .runtime
+                    .store
+                    .approvals()
+                    .expire_stale_pending(now, timeout_seconds, APPROVAL_TIMEOUT_BATCH_SIZE)
+                    .await
+                {
+                    Ok(expired) => {
+                        for approval in &expired {
+                            state
+                                .metrics
+                                .approval_timeouts_total
+                                .fetch_add(1, Ordering::Relaxed);
+                            emit_approval_timed_out_provenance(&state, approval).await;
+                        }
+                        if !expired.is_empty() {
+                            tracing::info!(
+                                count = expired.len(),
+                                "approval timeout reconciliation expired stale pending approvals"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "approval timeout reconciliation failed");
+                    }
+                }
+            }
+            _ = shutdown.notified() => {
+                tracing::info!("approval timeout reconciler shutting down");
+                break;
+            }
+        }
+    }
+}
+
+/// Emit a provenance event recording that a quarantine hold timed out.
+async fn emit_quarantine_timed_out_provenance(
+    state: &AppState,
+    hold: &ferrum_proto::QuarantineHold,
+) {
+    let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "hold_id".to_string(),
+        serde_json::json!(hold.hold_id.to_string()),
+    );
+    metadata.insert(
+        "previous_state".to_string(),
+        serde_json::json!(format!("{:?}", hold.state)),
+    );
+
+    let event = ProvenanceEvent {
+        event_id: EventId::new(),
+        kind: ProvenanceEventKind::QuarantineTimedOut,
+        occurred_at: chrono::Utc::now(),
+        actor: ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "ferrum-gateway".to_string(),
+            display_name: Some("FerrumGate Gateway".to_string()),
+        },
+        object: ObjectRef {
+            object_type: ObjectType::QuarantineHold,
+            object_id: hold.hold_id.to_string(),
+            summary: Some("Quarantine hold timed out and was transitioned to Expired".to_string()),
+        },
+        intent_id: Some(hold.intent_id),
+        proposal_id: Some(hold.proposal_id),
+        execution_id: None,
+        capability_id: None,
+        rollback_contract_id: None,
+        policy_bundle_id: None,
+        trust_labels: Vec::new(),
+        sensitivity_labels: Vec::new(),
+        parent_edges: Vec::new(),
+        hash_chain: HashChainRef {
+            content_hash: None,
+            manifest_hash: None,
+            policy_bundle_hash: None,
+            previous_ledger_hash: None,
+        },
+        metadata,
+        source_runtime_id: None,
+    };
+
+    if let Err(e) = crate::provenance::append_governance_event(&state.runtime.store, event).await {
+        tracing::warn!(
+            error = %e,
+            hold_id = %hold.hold_id,
+            "failed to append QuarantineTimedOut provenance event"
+        );
+    }
+}
+
+/// Background task that periodically reconciles stale pending quarantine holds.
+async fn quarantine_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::sync::Notify>) {
+    let interval_secs = state.server_config.quarantine_reconciliation_interval_secs;
+    let timeout_seconds = state.server_config.quarantine_timeout_seconds;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let now = chrono::Utc::now();
+                match state
+                    .runtime
+                    .store
+                    .quarantine_holds()
+                    .expire_stale_pending(now, timeout_seconds, QUARANTINE_TIMEOUT_BATCH_SIZE)
+                    .await
+                {
+                    Ok(expired) => {
+                        for hold in &expired {
+                            state
+                                .metrics
+                                .quarantine_timeouts_total
+                                .fetch_add(1, Ordering::Relaxed);
+                            emit_quarantine_timed_out_provenance(&state, hold).await;
+                        }
+                        if !expired.is_empty() {
+                            tracing::info!(
+                                count = expired.len(),
+                                "quarantine timeout reconciliation expired stale pending holds"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "quarantine timeout reconciliation failed");
+                    }
+                }
+            }
+            _ = shutdown.notified() => {
+                tracing::info!("quarantine timeout reconciler shutting down");
+                break;
+            }
+        }
+    }
+}
+
 /// Wait for shutdown signal (Ctrl+C or SIGTERM on unix).
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -874,7 +1154,11 @@ async fn shutdown_signal() {
     tracing::info!("shutdown signal received, draining connections...");
 }
 
-pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> anyhow::Result<()> {
+pub async fn run_http_server(
+    config: ServerConfig,
+    runtime: GatewayRuntime,
+    nonce_cache: Arc<dyn ferrum_store::NonceCache>,
+) -> anyhow::Result<()> {
     let jwks_cache = config.oidc_config.as_ref().and_then(|oidc| {
         oidc.jwks_url
             .as_ref()
@@ -884,9 +1168,82 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
         runtime,
         server_config: config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&config),
         jwks_cache,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache,
     });
+
+    let approval_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    let approval_reconciler_handle = if config.approval_timeout_enabled {
+        Some(tokio::spawn(approval_timeout_reconciler(
+            Arc::clone(&state),
+            Arc::clone(&approval_reconciler_shutdown),
+        )))
+    } else {
+        None
+    };
+
+    let quarantine_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    let quarantine_reconciler_handle = if config.quarantine_timeout_enabled {
+        Some(tokio::spawn(quarantine_timeout_reconciler(
+            Arc::clone(&state),
+            Arc::clone(&quarantine_reconciler_shutdown),
+        )))
+    } else {
+        None
+    };
+
+    let ha_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    let ha_reconciler_handle = if config.ha_reconciler_enabled {
+        // Startup scan: recover any stale in-flight executions from before the
+        // crash before the gateway begins accepting traffic.
+        crate::ha_reconciler::run_ha_reconciler_pass(&state).await;
+        Some(tokio::spawn(crate::ha_reconciler::ha_reconciler(
+            Arc::clone(&state),
+            Arc::clone(&ha_reconciler_shutdown),
+        )))
+    } else {
+        None
+    };
+
+    #[cfg(feature = "worm-sink")]
+    let worm_sink_shutdown = Arc::new(tokio::sync::Notify::new());
+    #[cfg(feature = "worm-sink")]
+    let worm_sink_handle = if config.audit_worm_sink_enabled {
+        if let Some(ref worm_cfg) = config.worm_sink_config {
+            let uploader = Arc::new(ferrum_adapter_s3::WormUploader::new(
+                worm_cfg.to_upload_config(),
+            )) as Arc<dyn crate::worm_sink::WormUploader>;
+            match uploader.validate_bucket().await {
+                Ok(()) => {
+                    tracing::info!(
+                        bucket = %worm_cfg.bucket,
+                        prefix = %worm_cfg.prefix,
+                        "WORM sink worker starting"
+                    );
+                    Some(tokio::spawn(crate::worm_sink::worm_sink_worker(
+                        Arc::clone(&state),
+                        Arc::clone(&worm_sink_shutdown),
+                        worm_cfg.clone(),
+                        uploader,
+                    )))
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "WORM sink bucket validation failed for bucket '{}': {}",
+                        worm_cfg.bucket,
+                        e
+                    ));
+                }
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "audit_worm_sink_enabled is true but worm_sink_config is missing"
+            ));
+        }
+    } else {
+        None
+    };
 
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
@@ -941,6 +1298,30 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
+
+    approval_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = approval_reconciler_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    quarantine_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = quarantine_reconciler_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    ha_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = ha_reconciler_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    #[cfg(feature = "worm-sink")]
+    {
+        worm_sink_shutdown.notify_waiters();
+        if let Some(handle) = worm_sink_handle {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        }
+    }
+
     Ok(())
 }
 
@@ -952,12 +1333,16 @@ pub async fn run_http_server(config: ServerConfig, runtime: GatewayRuntime) -> a
 /// governance endpoints without credential checks.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn build_router(runtime: GatewayRuntime) -> Router {
+    let server_config = ServerConfig::default();
     let state = Arc::new(AppState {
         runtime,
-        server_config: ServerConfig::default(),
+        server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&server_config),
         jwks_cache: None,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache: Arc::new(InMemoryNonceCache::new(
+            server_config.nonce_cache_max_entries,
+        )),
     });
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state);
@@ -975,8 +1360,11 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&server_config),
         jwks_cache,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache: Arc::new(InMemoryNonceCache::new(
+            server_config.nonce_cache_max_entries,
+        )),
     });
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
     let workload_router = build_workload_router(state.clone());
@@ -1023,12 +1411,16 @@ pub fn build_router_with_governor(
         .finish()
         .unwrap();
 
+    let server_config = ServerConfig::default();
     let state = Arc::new(AppState {
         runtime,
-        server_config: ServerConfig::default(),
+        server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
+        profiler: build_profiler(&server_config),
         jwks_cache: None,
-        nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+        nonce_cache: Arc::new(InMemoryNonceCache::new(
+            server_config.nonce_cache_max_entries,
+        )),
     });
 
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
@@ -1078,6 +1470,19 @@ fn build_workload_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/approvals/{approval_id}/resolve",
             post(crate::approval::resolve_approval),
+        )
+        // Quarantine hold endpoints
+        .route(
+            "/v1/quarantines",
+            get(crate::quarantine::list_quarantine_holds),
+        )
+        .route(
+            "/v1/quarantines/{hold_id}",
+            get(crate::quarantine::get_quarantine_hold),
+        )
+        .route(
+            "/v1/quarantines/{hold_id}/resolve",
+            post(crate::quarantine::resolve_quarantine_hold),
         )
         // Policy/evaluation endpoints
         .route("/v1/intents/compile", post(crate::intents::compile_intent))
@@ -1518,18 +1923,27 @@ async fn verify_agent_request(
     }
 
     // Verify nonce (replay protection)
-    let nonce_ttl =
-        StdDuration::from_secs((state.server_config.agent_clock_skew_secs * 2).max(60) as u64);
-    {
-        let mut cache = state.nonce_cache.lock().unwrap();
-        let now_instant = Instant::now();
-        cache.retain(|_, &mut inserted| now_instant.duration_since(inserted) < nonce_ttl);
-        // Enforce max capacity to prevent unbounded growth
-        prune_nonce_cache_oldest(&mut cache, NONCE_CACHE_MAX_ENTRIES.saturating_sub(1));
-        if cache.contains_key(nonce) {
+    if nonce.chars().count() > 256 {
+        return Err(AgentAuthError::Unauthorized(
+            "nonce exceeds maximum length".to_string(),
+        ));
+    }
+    let nonce_ttl = if state.server_config.nonce_cache_ttl_secs > 0 {
+        StdDuration::from_secs(state.server_config.nonce_cache_ttl_secs)
+    } else {
+        StdDuration::from_secs((state.server_config.agent_clock_skew_secs * 2).max(60) as u64)
+    };
+    match state.nonce_cache.check_and_insert(nonce, nonce_ttl).await {
+        Ok(true) => {}
+        Ok(false) => {
             return Err(AgentAuthError::Unauthorized("replayed nonce".to_string()));
         }
-        cache.insert(nonce.to_string(), now_instant);
+        Err(error) => {
+            tracing::error!(%error, "nonce cache check failed");
+            return Err(AgentAuthError::Unauthorized(
+                "nonce cache unavailable".to_string(),
+            ));
+        }
     }
 
     // Read body and verify body hash
@@ -1617,23 +2031,6 @@ async fn verify_agent_request(
     });
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
-}
-
-/// Prune the oldest entries from the nonce cache until it is at or below
-/// `max_entries`. This is called after TTL cleanup to enforce a hard
-/// capacity bound and prevent unbounded growth.
-fn prune_nonce_cache_oldest(cache: &mut HashMap<String, Instant>, max_entries: usize) {
-    while cache.len() > max_entries {
-        let oldest = cache
-            .iter()
-            .min_by_key(|(_, instant)| *instant)
-            .map(|(k, _)| k.clone());
-        if let Some(key) = oldest {
-            cache.remove(&key);
-        } else {
-            break;
-        }
-    }
 }
 
 fn auth_error(message: &str) -> Response {
@@ -1740,6 +2137,14 @@ fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
             Some("approval:read")
         }
         ("POST", p) if p.starts_with("/v1/approvals/") && p.ends_with("/resolve") => {
+            Some("approval:resolve")
+        }
+        // Quarantine holds (Phase 1: mirror approval scopes)
+        ("GET", "/v1/quarantines") => Some("approval:read"),
+        ("GET", p) if p.starts_with("/v1/quarantines/") && !p.ends_with("/resolve") => {
+            Some("approval:read")
+        }
+        ("POST", p) if p.starts_with("/v1/quarantines/") && p.ends_with("/resolve") => {
             Some("approval:resolve")
         }
         // Policy bundles
@@ -2237,12 +2642,17 @@ mod tests {
     use chrono::DurationRound;
     use ferrum_cap::InMemoryCapabilityService;
     use ferrum_pdp::StaticPdpEngine;
-    use ferrum_proto::{DeepHealthResponse, ProvenanceIngestRequest, ProvenanceIngestResponse};
+    use ferrum_proto::{
+        ActorRef, ActorType, ApprovalId, DeepHealthResponse, IntentId, PrincipalId,
+        ProvenanceEventKind, ProvenanceIngestRequest, ProvenanceIngestResponse,
+        ProvenanceQueryRequest,
+    };
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::repos::{
         AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
         CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
-        MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, TokenRepo,
+        MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo,
+        RollbackRepo, TokenRepo,
     };
     use ferrum_store::{SqliteStore, StoreError, StoreFacade};
     use ferrum_sync::{BridgeToolInfo, ExternalEventSource, McpBridge};
@@ -2329,6 +2739,9 @@ mod tests {
         }
         fn approvals(&self) -> Arc<dyn ApprovalRepo> {
             self.inner.approvals()
+        }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
         }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
@@ -2648,6 +3061,9 @@ mod tests {
         fn approvals(&self) -> Arc<dyn ApprovalRepo> {
             self.inner.approvals()
         }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
+        }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
         }
@@ -2787,6 +3203,9 @@ mod tests {
         }
         fn approvals(&self) -> Arc<dyn ApprovalRepo> {
             self.inner.approvals()
+        }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
         }
         fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
             self.inner.provenance()
@@ -4132,6 +4551,9 @@ mod tests {
                 GovernanceRoute::Approvals,
                 GovernanceRoute::ApprovalsApprovalId,
                 GovernanceRoute::ApprovalsResolve,
+                GovernanceRoute::Quarantines,
+                GovernanceRoute::QuarantinesHoldId,
+                GovernanceRoute::QuarantinesResolve,
                 GovernanceRoute::PolicyBundlesCreate,
                 GovernanceRoute::PolicyBundlesList,
                 GovernanceRoute::PolicyBundlesGet,
@@ -4180,6 +4602,9 @@ mod tests {
                 GovernanceRoute::Approvals => (),
                 GovernanceRoute::ApprovalsApprovalId => (),
                 GovernanceRoute::ApprovalsResolve => (),
+                GovernanceRoute::Quarantines => (),
+                GovernanceRoute::QuarantinesHoldId => (),
+                GovernanceRoute::QuarantinesResolve => (),
                 GovernanceRoute::PolicyBundlesCreate => (),
                 GovernanceRoute::PolicyBundlesList => (),
                 GovernanceRoute::PolicyBundlesGet => (),
@@ -4955,6 +5380,508 @@ mod tests {
         let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
         assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaInvalid);
         assert!(err.message.contains("invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_lockout_blocks_other_factor_for_same_agent() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 2,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+
+        // Active factor for the agent (used to consume failed attempts).
+        let active_secret = crate::mfa::generate_totp_secret();
+        let (active_enc, active_nonce) =
+            crate::mfa::encrypt_secret(&key_bytes, &active_secret).unwrap();
+        let active_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-agent",
+            ferrum_proto::MfaFactorType::Totp,
+            &active_enc,
+            &active_nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+        runtime
+            .store
+            .mfa_credentials()
+            .activate(active_record.mfa_factor_id)
+            .await
+            .unwrap();
+
+        // Pending factor for the same agent (target of the locked-out verify).
+        let pending_secret = crate::mfa::generate_totp_secret();
+        let (pending_enc, pending_nonce) =
+            crate::mfa::encrypt_secret(&key_bytes, &pending_secret).unwrap();
+        let pending_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-agent",
+            ferrum_proto::MfaFactorType::Totp,
+            &pending_enc,
+            &pending_nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&pending_record)
+            .await
+            .unwrap();
+
+        // Consume both allowed failed attempts on the active factor.
+        for _ in 0..2 {
+            let bad_request = ferrum_proto::MfaVerifyRequest {
+                code: "000000".to_string(),
+            };
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/admin/agents/test-agent/mfa/verify")
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(serde_json::to_string(&bad_request).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            // The active factor is pending, so the first verify will try to
+            // activate it with a bad code. The agent lockout still increments.
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+
+        // Agent is now locked. A correct code on the pending factor should still
+        // be rejected because the agent's challenge surface is locked.
+        let now = chrono::Utc::now().timestamp() as u64;
+        let valid_code = crate::mfa::generate_totp_code(&pending_secret, now);
+        let verify_request = ferrum_proto::MfaVerifyRequest { code: valid_code };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/test-agent/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let err: ferrum_proto::ApiError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, ferrum_proto::ApiErrorCode::MfaLocked);
+        assert!(
+            err.details
+                .get("retry_after_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_successful_mfa_resets_agent_lockout() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "test-agent",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&record)
+            .await
+            .unwrap();
+
+        // Seed a failed attempt so the agent has a lockout record.
+        runtime
+            .store
+            .mfa_credentials()
+            .record_agent_failed_attempt("test-agent", 5, 900)
+            .await
+            .unwrap();
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-agent")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 1);
+
+        // Successful verification should reset the agent lockout.
+        let now = chrono::Utc::now().timestamp() as u64;
+        let valid_code = crate::mfa::generate_totp_code(&secret, now);
+        let verify_request = ferrum_proto::MfaVerifyRequest { code: valid_code };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents/test-agent/mfa/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&verify_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-agent")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 0);
+        assert!(lockout.locked_until.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_approval_resolve_invalid_totp_increments_agent_lockout() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let active_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+        runtime
+            .store
+            .mfa_credentials()
+            .activate(active_record.mfa_factor_id)
+            .await
+            .unwrap();
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test-intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "read".to_string(),
+                description: "read only analysis".to_string(),
+                effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+                required: true,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(1),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: now,
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        let approval = ferrum_proto::ApprovalRequest {
+            approval_id,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "requester".to_string(),
+                display_name: Some("Requester".to_string()),
+            },
+            reason: "test approval".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: chrono::Utc::now(),
+        };
+        runtime.store.approvals().insert(&approval).await.unwrap();
+
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some("000000".to_string()),
+            }),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-operator")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn test_quarantine_resolve_invalid_totp_increments_agent_lockout() {
+        let runtime = test_runtime().await;
+        let secret_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let config = ServerConfig {
+            approval_mfa_required: true,
+            mfa_secret_key: Some(secret_key.to_string()),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let key_bytes = crate::mfa::decode_hex_key(secret_key).unwrap();
+        let secret = crate::mfa::generate_totp_secret();
+        let (encrypted, nonce) = crate::mfa::encrypt_secret(&key_bytes, &secret).unwrap();
+        let active_record = ferrum_proto::MfaCredentialRecord::new(
+            "test-operator",
+            ferrum_proto::MfaFactorType::Totp,
+            &encrypted,
+            &nonce,
+            "default",
+        );
+        runtime
+            .store
+            .mfa_credentials()
+            .insert(&active_record)
+            .await
+            .unwrap();
+        runtime
+            .store
+            .mfa_credentials()
+            .activate(active_record.mfa_factor_id)
+            .await
+            .unwrap();
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test-intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![ferrum_proto::OutcomeClause {
+                id: "read".to_string(),
+                description: "read only analysis".to_string(),
+                effect_type: ferrum_proto::EffectType::ReadOnlyAnalysis,
+                required: true,
+            }],
+            forbidden_outcomes: Vec::new(),
+            resource_scope: Vec::new(),
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: Vec::new(),
+            tags: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(1),
+        };
+        runtime.store.intents().insert(&intent).await.unwrap();
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Medium,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: Vec::new(),
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: now,
+        };
+        runtime.store.proposals().insert(&proposal).await.unwrap();
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        let hold = ferrum_proto::QuarantineHold {
+            hold_id,
+            intent_id,
+            proposal_id,
+            reason: "test".to_string(),
+            matched_rule_ids: vec![],
+            policy_bundle_id: None,
+            state: ferrum_proto::QuarantineHoldState::Pending,
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            created_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+            resolution_reason: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&hold)
+            .await
+            .unwrap();
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "test-operator".to_string(),
+                display_name: Some("Test Operator".to_string()),
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: Some(ferrum_proto::MfaFactor {
+                id: active_record.mfa_factor_id,
+                factor_type: ferrum_proto::MfaFactorType::Totp,
+                status: ferrum_proto::MfaFactorStatus::Active,
+                label: None,
+                created_at: chrono::Utc::now(),
+                code: Some("000000".to_string()),
+            }),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let lockout = runtime
+            .store
+            .mfa_credentials()
+            .get_agent_lockout("test-operator")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lockout.failed_attempts, 1);
     }
 
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and
@@ -7410,12 +8337,16 @@ rules:
         let _ = cache.get_key("test-rsa-key").await.unwrap();
 
         let runtime = test_runtime().await;
+        let server_config = ServerConfig::default();
         let state = Arc::new(AppState {
             runtime,
-            server_config: ServerConfig::default(),
+            server_config: server_config.clone(),
             metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
             jwks_cache: Some(cache),
-            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
         });
 
         let response = crate::monitoring::metrics_handler(axum::extract::State(state)).await;
@@ -7623,26 +8554,6 @@ rules:
         assert_eq!(response2.status(), StatusCode::UNAUTHORIZED);
     }
 
-    #[test]
-    fn test_nonce_cache_prune_oldest_enforces_max_capacity() {
-        let mut cache = HashMap::new();
-        let now = Instant::now();
-        // Insert 5 entries with staggered times
-        for i in 0..5 {
-            cache.insert(format!("nonce-{}", i), now - StdDuration::from_secs(i));
-        }
-        assert_eq!(cache.len(), 5);
-        // Prune to max 3
-        prune_nonce_cache_oldest(&mut cache, 3);
-        assert_eq!(cache.len(), 3);
-        // The oldest entries (nonce-4, nonce-3) should have been removed
-        assert!(!cache.contains_key("nonce-4"));
-        assert!(!cache.contains_key("nonce-3"));
-        assert!(cache.contains_key("nonce-2"));
-        assert!(cache.contains_key("nonce-1"));
-        assert!(cache.contains_key("nonce-0"));
-    }
-
     #[tokio::test]
     async fn test_agent_auth_body_hash_mismatch() {
         let runtime = test_runtime().await;
@@ -7689,6 +8600,62 @@ rules:
                     .header("X-Ferrum-Timestamp", &timestamp)
                     .header("X-Ferrum-Nonce", &nonce)
                     .header("X-Ferrum-Body-Hash", "wrong_hash")
+                    .header("X-Ferrum-Signature", &signature)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_agent_auth_long_nonce_rejected() {
+        let runtime = test_runtime().await;
+        let (signing_key, verifying_key) = generate_agent_keypair();
+        let pk_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            verifying_key.as_bytes(),
+        );
+        let fingerprint = compute_fingerprint(&verifying_key);
+        register_test_agent(
+            &runtime.store,
+            "agent_1",
+            &pk_b64,
+            &fingerprint,
+            vec!["approval:read".to_string()],
+        )
+        .await;
+
+        let config = ServerConfig {
+            auth_mode: AuthMode::Agent,
+            agent_clock_skew_secs: 30,
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime, config);
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let nonce = "x".repeat(257);
+        let body_hash = "null".to_string();
+        let signature = sign_agent_request(
+            &signing_key,
+            "agent_1",
+            &timestamp,
+            &nonce,
+            &body_hash,
+            "GET",
+            "/v1/approvals",
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("X-Ferrum-Agent-Id", "agent_1")
+                    .header("X-Ferrum-Timestamp", &timestamp)
+                    .header("X-Ferrum-Nonce", &nonce)
+                    .header("X-Ferrum-Body-Hash", &body_hash)
                     .header("X-Ferrum-Signature", &signature)
                     .body(Body::empty())
                     .unwrap(),
@@ -10801,5 +11768,167 @@ rules:
             .find(|e| e.action == AuditAction::TokenRevoke)
             .expect("TokenRevoke audit entry");
         assert_eq!(entry.actor_id, "unknown");
+    }
+
+    #[tokio::test]
+    async fn approval_timeout_reconciler_emits_provenance_and_increments_metric() {
+        let runtime = test_runtime().await;
+        let store = runtime.store.clone();
+
+        let intent_id = IntentId::new();
+        let proposal_id = ProposalId::new();
+        let intent = ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: ferrum_proto::RiskTier::Low,
+            approval_mode: ferrum_proto::ApprovalMode::None,
+            default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            time_budget: ferrum_proto::TimeBudget {
+                max_duration_ms: 30000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: ferrum_proto::TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            status: ferrum_proto::IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        };
+        store.intents().insert(&intent).await.unwrap();
+
+        let proposal = ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test".to_string(),
+            tool_name: "test-tool".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test-effect".to_string(),
+            estimated_risk: ferrum_proto::RiskTier::Low,
+            requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+            taint_inputs: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+        store.proposals().insert(&proposal).await.unwrap();
+
+        let approval_id = ApprovalId::new();
+        let now = chrono::Utc::now();
+        let approval = ferrum_proto::ApprovalRequest {
+            approval_id,
+            intent_id,
+            proposal_id,
+            execution_id: None,
+            requested_by: ActorRef {
+                actor_type: ActorType::User,
+                actor_id: "test-actor".to_string(),
+                display_name: Some("Test Actor".to_string()),
+            },
+            reason: "test approval".to_string(),
+            action_digest: "test-digest".to_string(),
+            expires_at: now - chrono::Duration::minutes(1),
+            state: ferrum_proto::ApprovalState::Pending,
+            created_at: now - chrono::Duration::hours(2),
+        };
+        store.approvals().insert(&approval).await.unwrap();
+
+        let config = ServerConfig {
+            approval_timeout_seconds: 3600,
+            approval_reconciliation_interval_secs: 300,
+            ..Default::default()
+        };
+        let timeout_seconds = config.approval_timeout_seconds;
+        let state = AppState::test_new(runtime, config);
+
+        let expired = store
+            .approvals()
+            .expire_stale_pending(now, timeout_seconds, 100)
+            .await
+            .unwrap();
+        assert_eq!(expired.len(), 1);
+
+        for approval in &expired {
+            state
+                .metrics
+                .approval_timeouts_total
+                .fetch_add(1, Ordering::Relaxed);
+            emit_approval_timed_out_provenance(&state, approval).await;
+        }
+
+        assert_eq!(
+            state
+                .metrics
+                .approval_timeouts_total
+                .load(Ordering::Relaxed),
+            1
+        );
+
+        let events = store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::ApprovalTimedOut),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].object.object_id, approval_id.to_string());
+        assert!(matches!(
+            events[0].kind,
+            ProvenanceEventKind::ApprovalTimedOut
+        ));
+    }
+
+    #[test]
+    fn test_required_scope_for_quarantine_paths() {
+        assert_eq!(
+            required_scope_for_path("GET", "/v1/quarantines"),
+            Some("approval:read")
+        );
+        assert_eq!(
+            required_scope_for_path(
+                "GET",
+                "/v1/quarantines/550e8400-e29b-41d4-a716-446655440000"
+            ),
+            Some("approval:read")
+        );
+        assert_eq!(
+            required_scope_for_path(
+                "POST",
+                "/v1/quarantines/550e8400-e29b-41d4-a716-446655440000/resolve"
+            ),
+            Some("approval:resolve")
+        );
+        // Unknown quarantine sub-resource should fall through to deny-by-default.
+        assert_eq!(
+            required_scope_for_path(
+                "DELETE",
+                "/v1/quarantines/550e8400-e29b-41d4-a716-446655440000"
+            ),
+            Some("admin:tokens")
+        );
     }
 }

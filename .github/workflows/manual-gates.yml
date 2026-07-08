@@ -25,7 +25,13 @@ on:
           - pg-batch
           - ha-drills
           - perf-gate
+          - perf-gate-enforce
           - all
+      perf-gate-enforce:
+        description: 'Run perf gate in enforce mode (requires authoritative baselines)'
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: '0 3 * * *'
 
@@ -110,6 +116,13 @@ jobs:
           echo "Running perf-gate (advisory, non-blocking)."
           bash scripts/run_perf_gate.sh --dry-run --duration 5 --scenarios "health,intent-compile,sqlite-contention"
 
+      - name: Gate — perf-gate-enforce (ADR 011, optional)
+        id: gate-perf-gate-enforce
+        if: ${{ inputs.gate == 'perf-gate-enforce' || (inputs.gate == 'all' && inputs.perf-gate-enforce) }}
+        run: |
+          echo "Running perf-gate in enforce mode (authoritative baselines required)."
+          PERF_GATE_ENFORCE=1 bash scripts/run_perf_gate.sh --duration 5 --scenarios "health,intent-compile,sqlite-contention"
+
       - name: Upload drill logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -150,6 +163,7 @@ jobs:
           echo "| pg-batch | ${{ steps.gate-pg-batch.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ha-drills | ${{ steps.gate-ha-drills.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| perf-gate | ${{ steps.gate-perf-gate.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| perf-gate-enforce | ${{ steps.gate-perf-gate-enforce.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "This does NOT constitute:" >> $GITHUB_STEP_SUMMARY
           echo "- G2 evidence (G2.1-G2.8 remain pending operator action)" >> $GITHUB_STEP_SUMMARY
@@ -183,6 +197,7 @@ jobs:
           | pg-batch | ${{ steps.gate-pg-batch.outcome || 'skipped' }} |
           | ha-drills | ${{ steps.gate-ha-drills.outcome || 'skipped' }} |
           | perf-gate | ${{ steps.gate-perf-gate.outcome || 'skipped' }} |
+          | perf-gate-enforce | ${{ steps.gate-perf-gate-enforce.outcome || 'skipped' }} |
 
           ## Notes
 

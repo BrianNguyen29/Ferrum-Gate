@@ -41,6 +41,7 @@ pub enum ProvenanceEventKind {
     ApprovalRequested,
     ApprovalGranted,
     ApprovalDenied,
+    ApprovalTimedOut,
     ToolCallPrepared,
     ToolCallIntercepted,
     ToolCallExecuted,
@@ -53,6 +54,9 @@ pub enum ProvenanceEventKind {
     SideEffectCompensated,
     SideEffectRolledBack,
     Quarantined,
+    QuarantineHoldCreated,
+    QuarantineResolved,
+    QuarantineTimedOut,
     ErrorRaised,
     ExternalEventReceived,
     PolicyBundleActivated,
@@ -96,10 +100,22 @@ pub fn lineage_parent_spec(
             ProvenanceEventKind::CapabilityMinted,
             ProvenanceEdgeType::References,
         )),
-        ProvenanceEventKind::ApprovalGranted | ProvenanceEventKind::ApprovalDenied => Some((
+        ProvenanceEventKind::ApprovalGranted
+        | ProvenanceEventKind::ApprovalDenied
+        | ProvenanceEventKind::ApprovalTimedOut => Some((
             ProvenanceEventKind::PolicyEvaluated,
             ProvenanceEdgeType::ApprovedBy,
         )),
+        ProvenanceEventKind::QuarantineHoldCreated => Some((
+            ProvenanceEventKind::PolicyEvaluated,
+            ProvenanceEdgeType::Caused,
+        )),
+        ProvenanceEventKind::QuarantineResolved | ProvenanceEventKind::QuarantineTimedOut => {
+            Some((
+                ProvenanceEventKind::QuarantineHoldCreated,
+                ProvenanceEdgeType::Caused,
+            ))
+        }
         ProvenanceEventKind::ActionProposalSubmitted => Some((
             ProvenanceEventKind::CapabilityMinted,
             ProvenanceEdgeType::AuthorizedBy,

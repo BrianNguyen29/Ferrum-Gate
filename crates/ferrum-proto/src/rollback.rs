@@ -67,6 +67,10 @@ pub enum ActionType {
     S3DeleteObject,
     S3GetObject,
     S3CopyObject,
+    /// Google Cloud Storage object operations; adapter groundwork in P2-4.
+    GcsPutObject,
+    GcsDeleteObject,
+    GcsGetObject,
     Unknown,
 }
 
@@ -101,6 +105,11 @@ pub enum RollbackTarget {
         key: String,
         version_id: Option<String>,
     },
+    GcsObject {
+        bucket: String,
+        key: String,
+        generation: Option<i64>,
+    },
     Generic {
         namespace: String,
         identifier: String,
@@ -126,6 +135,10 @@ pub enum CheckType {
     S3ObjectExists,
     /// S3 version-id check for rollback/verify phases.
     S3VersionIdMatches,
+    /// GCS object existence check for prepare/verify phases.
+    GcsObjectExists,
+    /// GCS generation check for rollback/verify phases.
+    GcsGenerationMatches,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

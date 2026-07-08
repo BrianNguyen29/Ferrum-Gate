@@ -1,7 +1,7 @@
 //! PostgreSQL embedded migration parity.
 //!
 //! `MIGRATIONS` is the ordered list of forward-only schema changes.
-//! `CURRENT_SCHEMA_VERSION` is **10** after adding lifecycle outbox fencing.
+//! `CURRENT_SCHEMA_VERSION` is **16** after adding the per-agent MFA lockout table.
 //!
 //! # SQLite-only migrations intentionally skipped
 //!
@@ -138,12 +138,36 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/013_add_mfa_lockout_columns.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 14,
+        name: "014_add_quarantine_holds",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/014_add_quarantine_holds.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 15,
+        name: "015_add_nonce_cache",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/015_add_nonce_cache.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 16,
+        name: "016_add_mfa_agent_lockouts",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/016_add_mfa_agent_lockouts.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 13;
+pub const CURRENT_SCHEMA_VERSION: i64 = 16;
 
 #[cfg(test)]
 mod tests {

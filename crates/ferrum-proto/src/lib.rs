@@ -11,6 +11,7 @@ pub mod lifecycle_outbox;
 pub mod mfa;
 pub mod policy_bundle;
 pub mod provenance;
+pub mod quarantine;
 pub mod rollback;
 pub mod token;
 
@@ -27,5 +28,6 @@ pub use lifecycle_outbox::*;
 pub use mfa::*;
 pub use policy_bundle::*;
 pub use provenance::*;
+pub use quarantine::*;
 pub use rollback::*;
 pub use token::*;

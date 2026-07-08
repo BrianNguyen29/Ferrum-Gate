@@ -8,17 +8,18 @@ use crate::repos::LedgerEntry;
 use crate::sqlite::{
     SqliteApprovalRepo, SqliteCapabilityRepo, SqliteExecutionRepo, SqliteIntentRepo,
     SqliteLedgerRepo, SqliteLifecycleOutboxRepo, SqliteProposalRepo, SqliteProvenanceRepo,
-    SqliteRollbackRepo,
+    SqliteQuarantineHoldRepo, SqliteRollbackRepo,
 };
 use crate::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
-    ProposalRepo, ProvenanceRepo, Result, RollbackRepo,
+    ProposalRepo, ProvenanceRepo, QuarantineHoldRepo, Result, RollbackRepo,
 };
 use ferrum_proto::{
-    ActionProposal, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId, CapabilityLease,
-    CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
-    IntentId, IntentStatus, LifecycleOutboxRecord, ProvenanceEdge, ProvenanceEvent,
-    RollbackContract, RollbackContractId, RollbackState,
+    ActionProposal, ActorRef, ApprovalId, ApprovalRequest, ApprovalState, CapabilityId,
+    CapabilityLease, CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState,
+    IntentEnvelope, IntentId, IntentStatus, LifecycleOutboxRecord, ProvenanceEdge, ProvenanceEvent,
+    QuarantineHold, QuarantineHoldId, RollbackContract, RollbackContractId, RollbackState,
+    Timestamp,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -122,6 +123,32 @@ pub enum WriteOp {
         state: ApprovalState,
         reply: oneshot::Sender<Result<()>>,
     },
+    ExpireStalePending {
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+        reply: oneshot::Sender<Result<Vec<ApprovalRequest>>>,
+    },
+
+    // Quarantine hold operations
+    InsertQuarantineHold {
+        data: QuarantineHold,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    ResolveQuarantineHold {
+        hold_id: QuarantineHoldId,
+        allow: bool,
+        actor: ActorRef,
+        reason: Option<String>,
+        resolved_at: Timestamp,
+        reply: oneshot::Sender<Result<bool>>,
+    },
+    ExpireStaleQuarantineHolds {
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+        reply: oneshot::Sender<Result<Vec<QuarantineHold>>>,
+    },
 
     // Provenance operations
     AppendProvenanceEvent {
@@ -179,6 +206,88 @@ impl WriteQueue {
         }
 
         // Wait for result; decrement happens in writer_loop after execute_write_op
+        recv.await
+            .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
+    }
+
+    /// Send an approval expiration operation and wait for the transitioned approvals.
+    pub async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> crate::Result<Vec<ApprovalRequest>> {
+        let (reply, recv) = oneshot::channel();
+        let op = WriteOp::ExpireStalePending {
+            now,
+            max_age_seconds,
+            batch_size,
+            reply,
+        };
+
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
+        let send_result = self.sender.send(op).await;
+        if send_result.is_err() {
+            self.pending_ops.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::Other("write queue closed".to_string()));
+        }
+
+        recv.await
+            .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
+    }
+
+    /// Send a quarantine hold resolve operation and wait for the CAS result.
+    pub async fn resolve_quarantine_hold(
+        &self,
+        hold_id: QuarantineHoldId,
+        allow: bool,
+        actor: ActorRef,
+        reason: Option<String>,
+        resolved_at: Timestamp,
+    ) -> crate::Result<bool> {
+        let (reply, recv) = oneshot::channel();
+        let op = WriteOp::ResolveQuarantineHold {
+            hold_id,
+            allow,
+            actor,
+            reason,
+            resolved_at,
+            reply,
+        };
+
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
+        let send_result = self.sender.send(op).await;
+        if send_result.is_err() {
+            self.pending_ops.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::Other("write queue closed".to_string()));
+        }
+
+        recv.await
+            .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
+    }
+
+    /// Send a quarantine hold expiration operation and wait for transitioned holds.
+    pub async fn expire_stale_quarantine_holds(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> crate::Result<Vec<QuarantineHold>> {
+        let (reply, recv) = oneshot::channel();
+        let op = WriteOp::ExpireStaleQuarantineHolds {
+            now,
+            max_age_seconds,
+            batch_size,
+            reply,
+        };
+
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
+        let send_result = self.sender.send(op).await;
+        if send_result.is_err() {
+            self.pending_ops.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::Other("write queue closed".to_string()));
+        }
+
         recv.await
             .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
     }
@@ -284,6 +393,36 @@ impl WriteQueue {
             } => WriteOp::ResolveApproval {
                 approval_id,
                 state,
+                reply,
+            },
+            WriteOp::ExpireStalePending {
+                now,
+                max_age_seconds,
+                batch_size,
+                reply,
+            } => WriteOp::ExpireStalePending {
+                now,
+                max_age_seconds,
+                batch_size,
+                reply,
+            },
+            WriteOp::InsertQuarantineHold { data, .. } => {
+                WriteOp::InsertQuarantineHold { data, reply }
+            }
+            WriteOp::ResolveQuarantineHold { .. } => {
+                // This op carries its own typed reply (Result<bool>) and is not
+                // routed through the generic Result<()> send path; leave it intact.
+                op
+            }
+            WriteOp::ExpireStaleQuarantineHolds {
+                now,
+                max_age_seconds,
+                batch_size,
+                reply,
+            } => WriteOp::ExpireStaleQuarantineHolds {
+                now,
+                max_age_seconds,
+                batch_size,
                 reply,
             },
             WriteOp::AppendProvenanceEvent { data, .. } => {
@@ -427,6 +566,55 @@ async fn execute_write_op(pool: &SqlitePool, op: WriteOp) -> Result<()> {
         } => {
             let repo = SqliteApprovalRepo::new(pool.clone());
             let result = repo.resolve(approval_id, state).await;
+            let _ = reply.send(result);
+        }
+        WriteOp::ExpireStalePending {
+            now,
+            max_age_seconds,
+            batch_size,
+            reply,
+        } => {
+            let result = super::approvals::expire_stale_pending_sqlite(
+                pool,
+                now,
+                max_age_seconds,
+                batch_size,
+            )
+            .await;
+            let _ = reply.send(result);
+        }
+        WriteOp::InsertQuarantineHold { data, reply } => {
+            let repo = SqliteQuarantineHoldRepo::new(pool.clone());
+            let result = repo.insert(&data).await;
+            let _ = reply.send(result);
+        }
+        WriteOp::ResolveQuarantineHold {
+            hold_id,
+            allow,
+            actor,
+            reason,
+            resolved_at,
+            reply,
+        } => {
+            let repo = SqliteQuarantineHoldRepo::new(pool.clone());
+            let result = repo
+                .resolve(hold_id, allow, &actor, reason.as_deref(), resolved_at)
+                .await;
+            let _ = reply.send(result);
+        }
+        WriteOp::ExpireStaleQuarantineHolds {
+            now,
+            max_age_seconds,
+            batch_size,
+            reply,
+        } => {
+            let result = super::quarantine::expire_stale_pending_sqlite(
+                pool,
+                now,
+                max_age_seconds,
+                batch_size,
+            )
+            .await;
             let _ = reply.send(result);
         }
         WriteOp::AppendProvenanceEvent { data, reply } => {
@@ -769,5 +957,133 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(all_intents.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_write_queue_resolve_quarantine_hold_returns_cas_bool() {
+        use ferrum_proto::{
+            ActionProposal, ActorRef, ActorType, IntentEnvelope, JsonMap, QuarantineHold,
+            QuarantineHoldId, QuarantineHoldState, RiskTier, RollbackClass,
+        };
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let (queue, _handle, _state) = spawn_writer_task(store.pool().clone());
+
+        let hold_id = QuarantineHoldId::new();
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+
+        store
+            .intents()
+            .insert(&IntentEnvelope {
+                intent_id,
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: "test".to_string(),
+                goal: "test".to_string(),
+                normalized_goal: "test".to_string(),
+                allowed_outcomes: vec![],
+                forbidden_outcomes: vec![],
+                resource_scope: vec![],
+                risk_tier: RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: RollbackClass::R0NativeReversible,
+                time_budget: ferrum_proto::TimeBudget {
+                    max_duration_ms: 30000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: ferrum_proto::TrustContextSummary {
+                    input_labels: vec![],
+                    sensitivity_labels: vec![],
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: vec![],
+                tags: vec![],
+                metadata: JsonMap::new(),
+                status: ferrum_proto::IntentStatus::Active,
+                created_at: now,
+                expires_at: now + chrono::Duration::minutes(15),
+            })
+            .await
+            .unwrap();
+        store
+            .proposals()
+            .insert(&ActionProposal {
+                proposal_id,
+                intent_id,
+                step_index: 0,
+                title: "test".to_string(),
+                tool_name: "test".to_string(),
+                server_name: "test".to_string(),
+                raw_arguments: serde_json::json!({}),
+                expected_effect: "test".to_string(),
+                estimated_risk: RiskTier::Low,
+                requested_rollback_class: RollbackClass::R0NativeReversible,
+                taint_inputs: vec![],
+                metadata: JsonMap::new(),
+                created_at: now,
+            })
+            .await
+            .unwrap();
+
+        let hold = QuarantineHold {
+            hold_id,
+            intent_id,
+            proposal_id,
+            reason: "test".to_string(),
+            matched_rule_ids: vec!["rule".to_string()],
+            policy_bundle_id: None,
+            state: QuarantineHoldState::Pending,
+            expires_at: now + chrono::Duration::seconds(300),
+            created_at: now,
+            resolved_at: None,
+            resolved_by: None,
+            resolution_reason: None,
+            metadata: JsonMap::new(),
+        };
+
+        let (reply, _) = oneshot::channel();
+        queue
+            .send(WriteOp::InsertQuarantineHold { data: hold, reply })
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let actor = ActorRef {
+            actor_type: ActorType::Gateway,
+            actor_id: "test".to_string(),
+            display_name: None,
+        };
+
+        let first = queue
+            .resolve_quarantine_hold(hold_id, true, actor.clone(), None, now)
+            .await
+            .unwrap();
+        assert!(first, "first resolve of pending hold should succeed");
+
+        let second = queue
+            .resolve_quarantine_hold(hold_id, true, actor.clone(), None, now)
+            .await
+            .unwrap();
+        assert!(
+            !second,
+            "second resolve of already-resolved hold should return false"
+        );
+
+        let fetched = store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(fetched.state, QuarantineHoldState::Allowed));
     }
 }

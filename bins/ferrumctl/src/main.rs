@@ -510,8 +510,62 @@ enum AdminCommand {
         #[command(subcommand)]
         sub: AdminAuditCommand,
     },
+    /// List, inspect, and resolve quarantine holds.
+    Quarantines {
+        #[command(subcommand)]
+        sub: AdminQuarantinesCommand,
+    },
     /// Show effective CLI/client configuration (read-only, no server call).
     Config,
+}
+
+/// Quarantines subcommands under `admin quarantines`.
+#[derive(Debug, Subcommand)]
+enum AdminQuarantinesCommand {
+    /// List pending quarantine holds.
+    List {
+        /// Filter by proposal ID (UUID).
+        #[arg(long)]
+        proposal_id: Option<String>,
+    },
+    /// Get a specific quarantine hold by ID.
+    Get {
+        /// Quarantine hold ID.
+        hold_id: String,
+    },
+    /// Resolve (allow or deny) a pending quarantine hold.
+    Resolve {
+        /// Quarantine hold ID (UUID).
+        hold_id: String,
+
+        /// Allow the proposal to proceed.
+        #[arg(long)]
+        allow: bool,
+
+        /// Deny the proposal.
+        #[arg(long)]
+        deny: bool,
+
+        /// Actor type resolving this hold.
+        #[arg(long, value_enum)]
+        actor_type: ActorTypeCli,
+
+        /// Actor ID (username, agent name, etc.).
+        #[arg(long)]
+        actor_id: String,
+
+        /// Optional display name for the actor.
+        #[arg(long)]
+        actor_display_name: Option<String>,
+
+        /// Reason for the decision. Required when --deny is set.
+        #[arg(long)]
+        reason: Option<String>,
+
+        /// Output the resolved hold as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Approvals subcommands under `admin approvals`.
@@ -2151,6 +2205,53 @@ async fn main() -> Result<()> {
                             println!("Dry-run complete");
                         } else {
                             println!("Restore complete");
+                        }
+                    }
+                },
+                AdminCommand::Quarantines { sub } => match sub {
+                    AdminQuarantinesCommand::List { proposal_id } => {
+                        let holds = client.list_quarantines(proposal_id.as_deref()).await?;
+                        println!("{}", serde_json::to_string_pretty(&holds)?);
+                    }
+                    AdminQuarantinesCommand::Get { hold_id } => {
+                        let hold = client.get_quarantine(&hold_id).await?;
+                        println!("{}", serde_json::to_string_pretty(&hold)?);
+                    }
+                    AdminQuarantinesCommand::Resolve {
+                        hold_id,
+                        allow,
+                        deny,
+                        actor_type,
+                        actor_id,
+                        actor_display_name,
+                        reason,
+                        json,
+                    } => {
+                        if allow && deny {
+                            bail!("--allow and --deny are mutually exclusive; set only one");
+                        }
+                        if !allow && !deny {
+                            bail!("one of --allow or --deny must be set");
+                        }
+                        if deny && reason.is_none() {
+                            bail!("--reason is required when --deny is set");
+                        }
+
+                        let actor = ferrum_proto::ActorRef {
+                            actor_type: actor_type.into(),
+                            actor_id,
+                            display_name: actor_display_name,
+                        };
+                        let resolved = client
+                            .resolve_quarantine(&hold_id, &actor, allow, reason.as_deref())
+                            .await?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resolved)?);
+                        } else {
+                            println!(
+                                "Quarantine hold {} resolved to {:?}",
+                                resolved.hold_id, resolved.state
+                            );
                         }
                     }
                 },

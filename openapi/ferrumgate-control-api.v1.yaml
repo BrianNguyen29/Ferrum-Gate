@@ -457,11 +457,17 @@ paths:
       description: |
         Resolves a pending approval by granting or denying it.
         Only pending approvals can be resolved; terminal approvals return 409 Conflict.
-        Expired approvals return 403 Forbidden.
+        Expired approvals return 403 Forbidden. Pending approvals are also
+        automatically transitioned to `Expired` by the background reconciler when
+        their `expires_at` passes or when they exceed `approval_timeout_seconds`.
         When `approval_mfa_required` is enabled, the request must include a valid
         active `mfa_factor` with a correct `code` (e.g. TOTP code). Missing factor
         returns 403 with `MfaRequired`; invalid factor or code returns 403 with
-        `MfaInvalid`.
+        `MfaInvalid` and increments both the factor-level and the agent-level
+        failed-attempt counters. Repeated failures across any factor for the same
+        agent can lock the agent's MFA challenge surface, returning 403 with
+        `MfaLocked` and a `retry_after_seconds` detail. A successful verification
+        resets both the agent and factor lockout counters.
       operationId: resolveApproval
       parameters:
         - $ref: '#/components/parameters/ApprovalId'
@@ -488,6 +494,113 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '403':
           description: Approval has expired, MFA is required, or MFA verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines:
+    get:
+      summary: List quarantine holds
+      operationId: listQuarantineHolds
+      parameters:
+        - name: proposal_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter to the hold for this proposal (exact match)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of holds to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of holds to skip
+      responses:
+        '200':
+          description: List of quarantine holds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineListEnvelope'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines/{hold_id}:
+    get:
+      summary: Get quarantine hold
+      operationId: getQuarantineHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+      responses:
+        '200':
+          description: Quarantine hold object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineHold'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines/{hold_id}/resolve:
+    post:
+      summary: Resolve quarantine hold
+      description: |
+        Resolves a pending quarantine hold by allowing or denying it.
+        Only pending holds can be resolved; terminal holds return 409 Conflict.
+        Expired holds return 403 Forbidden. Pending holds are also automatically
+        transitioned to `Expired` by the background reconciler when their
+        `expires_at` passes or when they exceed `quarantine_timeout_seconds`.
+        When `approval_mfa_required` is enabled, the request must include a valid
+        active `mfa_factor` with a correct `code`. Missing factor returns 403 with
+        `MfaRequired`; invalid factor or code returns 403 with `MfaInvalid` and
+        increments both the factor-level and the agent-level failed-attempt
+        counters. Repeated failures across any factor for the same agent can lock
+        the agent's MFA challenge surface, returning 403 with `MfaLocked` and a
+        `retry_after_seconds` detail. A successful verification resets both the
+        agent and factor lockout counters.
+      operationId: resolveQuarantineHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuarantineResolveRequest'
+      responses:
+        '200':
+          description: Updated quarantine hold object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineHold'
+        '403':
+          description: Hold has expired or MFA verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Hold is in terminal state
           content:
             application/json:
               schema:
@@ -1158,6 +1271,12 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/verify:
     post:
       summary: Verify a pending MFA factor
+      description: |
+        Verifies a pending MFA factor for the agent. If the agent's MFA challenge
+        surface is locked due to repeated failed attempts on any factor, the
+        request returns 403 with `MfaLocked` and a `retry_after_seconds` detail
+        before the factor secret is verified. A successful verification resets
+        both the agent-level and factor-level lockout counters.
       operationId: verifyMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1186,6 +1305,15 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/disable:
     post:
       summary: Disable an active MFA factor
+      description: |
+        Disables the agent's active MFA factor. When an active factor exists and
+        a `code` is provided, the code is verified against the factor secret.
+        Agent-level and factor-level lockout checks apply before verification.
+        Repeated failures across any factor for the same agent can lock the
+        agent's MFA challenge surface, returning 403 with `MfaLocked`. A
+        successful verification resets both lockout counters. Alternatively,
+        a caller with the `admin:mfa:breakglass` scope may provide a non-empty
+        `reason` to bypass verification.
       operationId: disableMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1213,6 +1341,16 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/rotate:
     post:
       summary: Rotate an active MFA factor
+      description: |
+        Rotates the agent's active MFA factor by revoking it and creating a new
+        pending factor. When an active factor exists and a `code` is provided,
+        the code is verified against the current factor secret. Agent-level and
+        factor-level lockout checks apply before verification. Repeated failures
+        across any factor for the same agent can lock the agent's MFA challenge
+        surface, returning 403 with `MfaLocked`. A successful verification resets
+        both lockout counters. Alternatively, a caller with the
+        `admin:mfa:breakglass` scope may provide a non-empty `reason` to bypass
+        verification.
       operationId: rotateMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1653,6 +1791,13 @@ components:
         format: uuid
     ApprovalId:
       name: approval_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    HoldId:
+      name: hold_id
       in: path
       required: true
       schema:
@@ -2365,6 +2510,9 @@ components:
             - S3DeleteObject
             - S3GetObject
             - S3CopyObject
+            - GcsPutObject
+            - GcsDeleteObject
+            - GcsGetObject
             - Unknown
         rollback_class:
           type: string
@@ -2459,6 +2607,90 @@ components:
         actor:
           $ref: '#/components/schemas/Actor'
         approve:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        mfa_factor:
+          $ref: '#/components/schemas/MfaFactor'
+          nullable: true
+
+    QuarantineHold:
+      type: object
+      required:
+        - hold_id
+        - intent_id
+        - proposal_id
+        - reason
+        - matched_rule_ids
+        - state
+        - expires_at
+        - created_at
+      properties:
+        hold_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        policy_bundle_id:
+          type: string
+          nullable: true
+        state:
+          type: string
+          enum:
+            - Pending
+            - Allowed
+            - Denied
+            - Expired
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          $ref: '#/components/schemas/Actor'
+          nullable: true
+        resolution_reason:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    QuarantineListEnvelope:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuarantineHold'
+        next_cursor:
+          type: string
+          nullable: true
+
+    QuarantineResolveRequest:
+      type: object
+      required: [actor, allow]
+      properties:
+        actor:
+          $ref: '#/components/schemas/Actor'
+        allow:
           type: boolean
         reason:
           type: string
@@ -2644,6 +2876,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2717,6 +2953,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2869,6 +3109,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -3533,6 +3777,8 @@ components:
             - JsonPredicate
             - S3ObjectExists
             - S3VersionIdMatches
+            - GcsObjectExists
+            - GcsGenerationMatches
         config:
           type: object
 
@@ -4001,6 +4247,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4031,6 +4281,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4166,6 +4420,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted

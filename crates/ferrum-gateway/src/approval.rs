@@ -28,6 +28,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::macros::{governance_err, governance_ok};
+use crate::mfa::{TotpVerifyResult, check_agent_mfa_lockout, reset_mfa_lockout_after_success};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
 use crate::state::AppState;
@@ -136,6 +137,38 @@ fn parse_proposal_id(value: &str) -> Result<ferrum_proto::ProposalId, ApiProblem
         )
     })?;
     Ok(ferrum_proto::ProposalId(parsed))
+}
+
+fn mfa_locked_problem(retry_after_secs: u64) -> ApiProblem {
+    ApiProblem(
+        ApiError {
+            code: ApiErrorCode::MfaLocked,
+            message: "MFA is locked due to too many failed attempts".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
+        },
+        StatusCode::FORBIDDEN,
+    )
+}
+
+fn totp_verify_result_to_problem(result: TotpVerifyResult) -> ApiProblem {
+    match result {
+        TotpVerifyResult::Locked {
+            retry_after_seconds,
+        } => mfa_locked_problem(retry_after_seconds),
+        TotpVerifyResult::Invalid => ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::MfaInvalid,
+            "MFA verification code is invalid",
+        ),
+        TotpVerifyResult::Internal => {
+            ApiProblem::internal(anyhow::anyhow!("MFA verification failed"))
+        }
+        TotpVerifyResult::Success { .. } => {
+            unreachable!("totp_verify_result_to_problem should not be called with Success")
+        }
+    }
 }
 
 pub(crate) async fn list_approvals(
@@ -348,6 +381,31 @@ pub(crate) async fn resolve_approval(
             }
         };
 
+        // Check agent-level lockout before fetching the factor to avoid leaking
+        // factor existence while the agent is locked.
+        match check_agent_mfa_lockout(
+            state.runtime.store.mfa_credentials(),
+            &request.actor.actor_id,
+        )
+        .await
+        {
+            Ok(Some(retry_after_secs)) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    mfa_locked_problem(retry_after_secs)
+                );
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
+        }
+
         let record = match state
             .runtime
             .store
@@ -400,49 +458,6 @@ pub(crate) async fn resolve_approval(
             );
         }
 
-        // Check lockout before attempting verification.
-        if let Some(locked_until) = record.locked_until {
-            let now = chrono::Utc::now();
-            if locked_until > now {
-                let retry_after_secs = (locked_until - now).num_seconds().max(0) as u64;
-                return governance_err!(
-                    state,
-                    GovernanceRoute::ApprovalsResolve,
-                    ApiProblem(
-                        ApiError {
-                            code: ApiErrorCode::MfaLocked,
-                            message: "MFA factor is locked due to too many failed attempts"
-                                .to_string(),
-                            correlation_id: uuid::Uuid::new_v4().to_string(),
-                            retriable: false,
-                            details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
-                        },
-                        StatusCode::FORBIDDEN,
-                    )
-                );
-            }
-        }
-
-        let secret = match crate::mfa::decrypt_secret(
-            &key_bytes,
-            &record.encrypted_secret,
-            &record.secret_nonce,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "mfa decrypt_secret failed during approval resolve");
-                return governance_err!(
-                    state,
-                    GovernanceRoute::ApprovalsResolve,
-                    ApiProblem::new(
-                        StatusCode::FORBIDDEN,
-                        ApiErrorCode::MfaInvalid,
-                        "failed to verify MFA factor",
-                    )
-                );
-            }
-        };
-
         let code = match mfa_factor.code {
             Some(ref c) => c,
             None => {
@@ -458,61 +473,27 @@ pub(crate) async fn resolve_approval(
             }
         };
 
-        let now = chrono::Utc::now().timestamp() as u64;
-        let matched_counter = match crate::mfa::verify_totp_code_with_counter(&secret, code, now) {
-            Ok(c) => c,
-            Err(_) => {
-                let repo = state.runtime.store.mfa_credentials();
-                let locked = repo
-                    .record_failed_attempt(
-                        mfa_factor.id,
-                        state.server_config.mfa_lockout_max_attempts,
-                        state.server_config.mfa_lockout_duration_secs,
-                    )
-                    .await;
-                if let Ok(true) = locked {
-                    let retry_after_secs = state.server_config.mfa_lockout_duration_secs;
-                    return governance_err!(
-                        state,
-                        GovernanceRoute::ApprovalsResolve,
-                        ApiProblem(
-                            ApiError {
-                                code: ApiErrorCode::MfaLocked,
-                                message: "MFA factor is locked due to too many failed attempts"
-                                    .to_string(),
-                                correlation_id: uuid::Uuid::new_v4().to_string(),
-                                retriable: false,
-                                details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
-                            },
-                            StatusCode::FORBIDDEN,
-                        )
-                    );
-                }
-                if let Err(ref e) = locked {
-                    tracing::warn!(error = %e, "record_failed_attempt failed during approval resolve");
-                }
+        let result = crate::mfa::verify_totp_with_lockout(
+            state.runtime.store.mfa_credentials(),
+            &key_bytes,
+            &record.agent_id,
+            &record,
+            code,
+            state.server_config.mfa_lockout_max_attempts,
+            state.server_config.mfa_lockout_duration_secs,
+        )
+        .await;
+
+        let matched_counter = match result {
+            TotpVerifyResult::Success { counter } => counter,
+            other => {
                 return governance_err!(
                     state,
                     GovernanceRoute::ApprovalsResolve,
-                    ApiProblem::new(
-                        StatusCode::FORBIDDEN,
-                        ApiErrorCode::MfaInvalid,
-                        "MFA verification code is invalid",
-                    )
+                    totp_verify_result_to_problem(other)
                 );
             }
         };
-
-        // Reset lockout on successful verification.
-        if let Err(e) = state
-            .runtime
-            .store
-            .mfa_credentials()
-            .reset_lockout(mfa_factor.id)
-            .await
-        {
-            tracing::warn!(error = %e, "reset_lockout failed during approval resolve");
-        }
 
         // Record successful use with counter for replay protection (CAS in DB)
         match state
@@ -522,7 +503,22 @@ pub(crate) async fn resolve_approval(
             .record_use(mfa_factor.id, matched_counter)
             .await
         {
-            Ok(true) => {}
+            Ok(true) => {
+                if let Err(e) = reset_mfa_lockout_after_success(
+                    state.runtime.store.mfa_credentials(),
+                    &record.agent_id,
+                    record.mfa_factor_id,
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "mfa lockout reset failed during approval resolve");
+                    return governance_err!(
+                        state,
+                        GovernanceRoute::ApprovalsResolve,
+                        ApiProblem::internal(anyhow::Error::from(e))
+                    );
+                }
+            }
             Ok(false) => {
                 return governance_err!(
                     state,

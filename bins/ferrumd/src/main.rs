@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use ferrum_adapter_fs::{FsAdapter, FsBoundsConfig, PlannableFsAdapter};
+#[cfg(feature = "gcs")]
+use ferrum_adapter_gcs::{GcsAdapter, PlannableGcsAdapter};
 use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_http::{PlannableHttpAdapter, register_http_adapter};
 use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_adapter};
@@ -8,12 +10,14 @@ use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_ada
 use ferrum_adapter_s3::{PlannableS3Adapter, S3Adapter};
 use ferrum_adapter_sqlite::{PlannableSqliteAdapter, SqliteAdapter};
 use ferrum_cap::CapabilityService;
-use ferrum_gateway::{GatewayRuntime, run_http_server};
+use ferrum_gateway::{GatewayRuntime, NonceCacheBackend, run_http_server};
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 #[cfg(feature = "postgres")]
-use ferrum_store::postgres::PostgresStore;
-use ferrum_store::{LifecycleReconciliationReport, SqliteStore, SqliteWalTuning, StoreFacade};
+use ferrum_store::postgres::{PostgresNonceCache, PostgresStore};
+use ferrum_store::{
+    InMemoryNonceCache, LifecycleReconciliationReport, SqliteStore, SqliteWalTuning, StoreFacade,
+};
 use std::sync::Arc;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -34,6 +38,42 @@ async fn reconcile_lifecycle_outbox_before_startup(
         "lifecycle outbox reconciliation completed before HTTP startup"
     );
     Ok(report)
+}
+
+#[cfg(feature = "postgres")]
+fn build_nonce_cache(
+    config: &ferrum_gateway::ServerConfig,
+    pg_store: Option<&ferrum_store::postgres::PostgresStore>,
+) -> anyhow::Result<Arc<dyn ferrum_store::NonceCache>> {
+    match config.nonce_cache_backend {
+        NonceCacheBackend::Auto if pg_store.is_some() => Ok(Arc::new(PostgresNonceCache::new(
+            pg_store.expect("pg_store checked above").pool().clone(),
+        ))),
+        NonceCacheBackend::Auto | NonceCacheBackend::Memory => Ok(Arc::new(
+            InMemoryNonceCache::new(config.nonce_cache_max_entries),
+        )),
+        NonceCacheBackend::Postgres => {
+            let store = pg_store.ok_or_else(|| {
+                anyhow::anyhow!("nonce_cache_backend='postgres' requires a PostgreSQL store DSN")
+            })?;
+            Ok(Arc::new(PostgresNonceCache::new(store.pool().clone())))
+        }
+    }
+}
+
+#[cfg(not(feature = "postgres"))]
+fn build_nonce_cache(
+    config: &ferrum_gateway::ServerConfig,
+    _pg_store: Option<&()>,
+) -> anyhow::Result<Arc<dyn ferrum_store::NonceCache>> {
+    match config.nonce_cache_backend {
+        NonceCacheBackend::Postgres => Err(anyhow::anyhow!(
+            "PostgreSQL nonce cache is not enabled. Build with --features postgres to enable it."
+        )),
+        _ => Ok(Arc::new(InMemoryNonceCache::new(
+            config.nonce_cache_max_entries,
+        ))),
+    }
 }
 
 #[tokio::main]
@@ -156,6 +196,32 @@ async fn main() -> Result<()> {
     {
         tracing::info!("S3 adapter not registered because s3 feature is not enabled");
     }
+    #[cfg(feature = "gcs")]
+    {
+        if let Some(ref gcs_cfg) = config.gcs_config {
+            if let Err(e) = gcs_cfg.validate() {
+                tracing::warn!("GCS config invalid; adapter not registered: {}", e);
+            } else {
+                registry.register(Arc::new(GcsAdapter::new_with_config(
+                    "gcs",
+                    gcs_cfg.clone(),
+                )));
+                tracing::info!(
+                    "GCS adapter registered for bucket '{}'",
+                    gcs_cfg.allowed_bucket
+                );
+            }
+        } else {
+            tracing::warn!(
+                "GCS adapter not registered because gcs_config is not configured; \
+                 set FERRUMD_GCS_ALLOWED_BUCKET or server.gcs_config.allowed_bucket to enable bounded GCS mutations"
+            );
+        }
+    }
+    #[cfg(not(feature = "gcs"))]
+    {
+        tracing::info!("GCS adapter not registered because gcs feature is not enabled");
+    }
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
     if sqlite_adapter_enabled {
@@ -178,9 +244,24 @@ async fn main() -> Result<()> {
             }
         }
     }
+    #[cfg(feature = "gcs")]
+    {
+        if let Some(ref gcs_cfg) = config.gcs_config {
+            if gcs_cfg.validate().is_ok() {
+                rollback_service.register_planner(Arc::new(PlannableGcsAdapter));
+                tracing::info!(
+                    "GCS planner registered for bucket '{}'",
+                    gcs_cfg.allowed_bucket
+                );
+            }
+        }
+    }
     let rollback = Arc::new(rollback_service);
 
-    let store: Arc<dyn StoreFacade> = if config.store_dsn.to_lowercase().starts_with("postgres://")
+    let (store, nonce_cache): (Arc<dyn StoreFacade>, Arc<dyn ferrum_store::NonceCache>) = if config
+        .store_dsn
+        .to_lowercase()
+        .starts_with("postgres://")
         || config.store_dsn.to_lowercase().starts_with("postgresql://")
     {
         #[cfg(feature = "postgres")]
@@ -199,7 +280,8 @@ async fn main() -> Result<()> {
                 .apply_embedded_migrations()
                 .await
                 .context("failed to apply postgres migrations")?;
-            Arc::new(pg_store) as Arc<dyn StoreFacade>
+            let nonce_cache = build_nonce_cache(&config, Some(&pg_store))?;
+            (Arc::new(pg_store) as Arc<dyn StoreFacade>, nonce_cache)
         }
         #[cfg(not(feature = "postgres"))]
         {
@@ -221,7 +303,8 @@ async fn main() -> Result<()> {
             .apply_embedded_migrations()
             .await
             .context("failed to apply migrations")?;
-        Arc::new(sqlite_store) as Arc<dyn StoreFacade>
+        let nonce_cache = build_nonce_cache(&config, None)?;
+        (Arc::new(sqlite_store) as Arc<dyn StoreFacade>, nonce_cache)
     };
 
     let cap: Arc<dyn CapabilityService> = Arc::new(ferrum_gateway::StoreCapabilityService::new(
@@ -275,12 +358,60 @@ async fn main() -> Result<()> {
         None
     };
 
+    let nonce_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
+    // The vacuum task is only needed when the resolved backend is PostgreSQL.
+    // `Auto` resolves to Postgres when the store DSN is PostgreSQL.
+    let is_postgres_nonce_cache = config.nonce_cache_backend == NonceCacheBackend::Postgres
+        || (config.nonce_cache_backend == NonceCacheBackend::Auto
+            && (config.store_dsn.to_lowercase().starts_with("postgres://")
+                || config.store_dsn.to_lowercase().starts_with("postgresql://")));
+    let nonce_reconciler_handle = if is_postgres_nonce_cache {
+        let nonce_cache_clone = Arc::clone(&nonce_cache);
+        let shutdown = Arc::clone(&nonce_reconciler_shutdown);
+        // Mirror the quarantine reconciler interval for the periodic vacuum.
+        let interval_secs = config.quarantine_reconciliation_interval_secs.max(60);
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match nonce_cache_clone.vacuum().await {
+                            Ok(removed) => {
+                                if removed > 0 {
+                                    tracing::info!(
+                                        removed,
+                                        "nonce cache vacuum removed expired rows"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                tracing::error!(%error, "nonce cache vacuum failed");
+                            }
+                        }
+                    }
+                    _ = shutdown.notified() => {
+                        tracing::info!("nonce cache vacuum reconciler shutting down");
+                        break;
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     let runtime = GatewayRuntime::new(pdp, cap, rollback, Arc::clone(&store), vec![])
         .with_lifecycle_reconciliation_report(reconciliation_report);
-    let result = run_http_server(config, runtime).await;
+    let result = run_http_server(config, runtime, nonce_cache).await;
 
     if let Some(handle) = worker_handle {
         shutdown_notify.notify_waiters();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
+
+    nonce_reconciler_shutdown.notify_waiters();
+    if let Some(handle) = nonce_reconciler_handle {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
     }
 

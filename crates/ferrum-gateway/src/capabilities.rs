@@ -26,6 +26,7 @@ use ferrum_proto::{
     ActorRef, ActorType, ApiErrorCode, CapabilityId, CapabilityLease, CapabilityMintRequest,
     CapabilityMintResponse, CapabilityStatus, Decision, EventId, HashChainRef, ObjectRef,
     ObjectType, PolicyBundleId, ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest,
+    QuarantineHoldState,
 };
 use ferrum_store::StoreFacade;
 use std::sync::Arc;
@@ -105,6 +106,49 @@ async fn latest_policy_decision_for_proposal(
             "PolicyEvaluated event is missing a valid decision",
         )
     })
+}
+
+/// Ensure there is an explicit `Allowed` quarantine hold for the proposal.
+/// Only an `Allowed` hold permits minting; a missing hold, or a `Pending`,
+/// `Denied`, or `Expired` hold blocks.
+async fn validate_quarantine_hold_for_proposal(
+    state: &AppState,
+    proposal_id: ferrum_proto::ProposalId,
+) -> Result<(), ApiProblem> {
+    let hold = state
+        .runtime
+        .store
+        .quarantine_holds()
+        .get_by_proposal(proposal_id)
+        .await
+        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
+
+    let Some(hold) = hold else {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "quarantine hold is missing for quarantined proposal",
+        ));
+    };
+
+    match hold.state {
+        QuarantineHoldState::Allowed => Ok(()),
+        QuarantineHoldState::Pending => Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "proposal is under quarantine and awaiting operator resolution",
+        )),
+        QuarantineHoldState::Denied => Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "proposal was denied by quarantine resolution",
+        )),
+        QuarantineHoldState::Expired => Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ApiErrorCode::PolicyDenied,
+            "quarantine hold expired; proposal cannot be minted",
+        )),
+    }
 }
 
 pub(crate) async fn mint_capability(
@@ -204,6 +248,13 @@ pub(crate) async fn mint_capability(
             if let Err(problem) =
                 validate_approval_binding_digest(&state.runtime.store, binding, request.proposal_id)
                     .await
+            {
+                return governance_err!(state, GovernanceRoute::CapabilitiesMint, problem);
+            }
+        }
+        Ok(Decision::Quarantine) => {
+            if let Err(problem) =
+                validate_quarantine_hold_for_proposal(&state, request.proposal_id).await
             {
                 return governance_err!(state, GovernanceRoute::CapabilitiesMint, problem);
             }
@@ -1007,5 +1058,344 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let result = service.get(minted.lease.capability_id).await;
         assert!(matches!(result, Err(CapabilityError::Expired)));
+    }
+}
+
+#[cfg(test)]
+mod quarantine_hold_tests {
+    use super::*;
+    use crate::state::{AppState, GatewayRuntime, ServerConfig};
+    use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+    use ferrum_store::{SqliteStore, StoreFacade};
+    use std::sync::Arc;
+
+    async fn test_runtime() -> GatewayRuntime {
+        let pdp = Arc::new(ferrum_pdp::StaticPdpEngine);
+        let cap = Arc::new(ferrum_cap::InMemoryCapabilityService::default());
+        let mut registry = AdapterRegistry::default();
+        registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+        let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, vec![])
+    }
+
+    fn make_intent(intent_id: ferrum_proto::IntentId) -> ferrum_proto::IntentEnvelope {
+        use ferrum_proto::{
+            ApprovalMode, IntentStatus, JsonMap, ResourceMode, ResourceSelector, RiskTier,
+            RollbackClass, TimeBudget, TrustContextSummary,
+        };
+        ferrum_proto::IntentEnvelope {
+            intent_id,
+            principal_id: ferrum_proto::PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test intent".to_string(),
+            goal: "test goal".to_string(),
+            normalized_goal: "test goal".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![ResourceSelector::FilesystemPath {
+                path: "/tmp".to_string(),
+                mode: ResourceMode::Write,
+                content_hash: None,
+            }],
+            risk_tier: RiskTier::Low,
+            approval_mode: ApprovalMode::None,
+            default_rollback_class: RollbackClass::R0NativeReversible,
+            time_budget: TimeBudget {
+                max_duration_ms: 60000,
+                max_steps: 100,
+                max_retries_per_step: 3,
+            },
+            trust_context: TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: JsonMap::new(),
+            status: IntentStatus::Active,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now(),
+        }
+    }
+
+    fn make_proposal(
+        proposal_id: ferrum_proto::ProposalId,
+        intent_id: ferrum_proto::IntentId,
+    ) -> ferrum_proto::ActionProposal {
+        use ferrum_proto::{JsonMap, RiskTier, RollbackClass};
+        ferrum_proto::ActionProposal {
+            proposal_id,
+            intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "git.commit".to_string(),
+            server_name: "test-server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test effect".to_string(),
+            estimated_risk: RiskTier::Low,
+            requested_rollback_class: RollbackClass::R1SnapshotRecoverable,
+            taint_inputs: vec![],
+            metadata: JsonMap::new(),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    async fn insert_hold(
+        runtime: &GatewayRuntime,
+        state: ferrum_proto::QuarantineHoldState,
+    ) -> (ferrum_proto::ProposalId, ferrum_proto::IntentId) {
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        runtime
+            .store
+            .intents()
+            .insert(&make_intent(intent_id))
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&make_proposal(proposal_id, intent_id))
+            .await
+            .unwrap();
+
+        let hold = ferrum_proto::QuarantineHold {
+            hold_id: ferrum_proto::QuarantineHoldId::new(),
+            intent_id,
+            proposal_id,
+            reason: "test".to_string(),
+            matched_rule_ids: vec!["rule".to_string()],
+            policy_bundle_id: None,
+            state,
+            expires_at: chrono::Utc::now() + chrono::Duration::seconds(300),
+            created_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+            resolution_reason: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&hold)
+            .await
+            .unwrap();
+        (proposal_id, intent_id)
+    }
+
+    #[tokio::test]
+    async fn test_no_hold_blocks_mint() {
+        let runtime = test_runtime().await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let result = validate_quarantine_hold_for_proposal(&state, proposal_id).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().1, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_pending_hold_blocks_mint() {
+        let runtime = test_runtime().await;
+        let (proposal_id, _) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Pending).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let result = validate_quarantine_hold_for_proposal(&state, proposal_id).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().1, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_allowed_hold_permits_mint() {
+        let runtime = test_runtime().await;
+        let (proposal_id, _) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Allowed).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let result = validate_quarantine_hold_for_proposal(&state, proposal_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_denied_hold_blocks_mint() {
+        let runtime = test_runtime().await;
+        let (proposal_id, _) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Denied).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let result = validate_quarantine_hold_for_proposal(&state, proposal_id).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_expired_hold_blocks_mint() {
+        let runtime = test_runtime().await;
+        let (proposal_id, _) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Expired).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let result = validate_quarantine_hold_for_proposal(&state, proposal_id).await;
+        assert!(result.is_err());
+    }
+
+    async fn insert_quarantine_policy_event(
+        runtime: &GatewayRuntime,
+        proposal_id: ferrum_proto::ProposalId,
+        intent_id: ferrum_proto::IntentId,
+    ) {
+        let mut metadata = ferrum_proto::JsonMap::new();
+        metadata.insert("decision".to_string(), serde_json::json!("Quarantine"));
+        let event = ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::PolicyEvaluated,
+            occurred_at: chrono::Utc::now(),
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Gateway,
+                actor_id: "ferrum-gateway".to_string(),
+                display_name: Some("FerrumGate Gateway".to_string()),
+            },
+            object: ferrum_proto::ObjectRef {
+                object_type: ferrum_proto::ObjectType::PolicyBundle,
+                object_id: proposal_id.to_string(),
+                summary: Some("Policy evaluated for proposal".to_string()),
+            },
+            intent_id: Some(intent_id),
+            proposal_id: Some(proposal_id),
+            execution_id: None,
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: ferrum_proto::HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata,
+            source_runtime_id: None,
+        };
+        runtime
+            .store
+            .provenance()
+            .append_event(&event)
+            .await
+            .unwrap();
+    }
+
+    fn make_mint_request(
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) -> ferrum_proto::CapabilityMintRequest {
+        use ferrum_proto::{JsonMap, TaintBudget, ToolBinding};
+        ferrum_proto::CapabilityMintRequest {
+            intent_id,
+            proposal_id,
+            tool_binding: ToolBinding {
+                server_name: "test-server".to_string(),
+                tool_name: "git.commit".to_string(),
+                tool_version: None,
+            },
+            resource_bindings: vec![],
+            argument_constraints: vec![],
+            taint_budget: TaintBudget {
+                max_taint_score: 0,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
+            },
+            approval_binding: None,
+            requested_ttl_secs: 60,
+            metadata: JsonMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mint_quarantine_decision_allowed_hold_succeeds() {
+        let runtime = test_runtime().await;
+        let (proposal_id, intent_id) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Allowed).await;
+        insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let result = mint_capability(State(Arc::clone(&state)), axum::Json(request)).await;
+        assert!(
+            result.is_ok(),
+            "expected mint to succeed for Allowed hold, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mint_quarantine_decision_pending_hold_blocked() {
+        let runtime = test_runtime().await;
+        let (proposal_id, intent_id) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Pending).await;
+        insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_mint_quarantine_decision_denied_hold_blocked() {
+        let runtime = test_runtime().await;
+        let (proposal_id, intent_id) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Denied).await;
+        insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_mint_quarantine_decision_expired_hold_blocked() {
+        let runtime = test_runtime().await;
+        let (proposal_id, intent_id) =
+            insert_hold(&runtime, ferrum_proto::QuarantineHoldState::Expired).await;
+        insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_mint_quarantine_decision_no_hold_blocked() {
+        let runtime = test_runtime().await;
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        runtime
+            .store
+            .intents()
+            .insert(&make_intent(intent_id))
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&make_proposal(proposal_id, intent_id))
+            .await
+            .unwrap();
+        insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
     }
 }

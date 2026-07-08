@@ -1,4 +1,5 @@
 use super::*;
+use ferrum_gateway::NonceCacheBackend;
 use std::fs;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -41,12 +42,46 @@ fn clear_test_env() {
         "FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED",
         "FERRUMD_LIFECYCLE_RECONCILIATION_INTERVAL_SECS",
         "FERRUMD_LIFECYCLE_RECONCILIATION_BATCH_LIMIT",
+        "FERRUMD_APPROVAL_TIMEOUT_ENABLED",
+        "FERRUMD_APPROVAL_TIMEOUT_SECONDS",
+        "FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS",
+        "FERRUMD_HA_RECONCILER_ENABLED",
+        "FERRUMD_HA_RECONCILER_INTERVAL_SECS",
+        "FERRUMD_HA_RECONCILER_STALE_THRESHOLD_SECS",
+        "FERRUMD_HA_RECONCILER_BATCH_SIZE",
         "FERRUMD_AUDIT_FAIL_CLOSED",
         "FERRUMD_APPROVAL_MFA_REQUIRED",
+        "FERRUMD_PDP_MODE",
         "FERRUMD_MFA_SECRET_KEY",
         "FERRUMD_MFA_TOTP_ISSUER",
         "FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS",
         "FERRUMD_MFA_LOCKOUT_DURATION_SECS",
+        "FERRUMD_NONCE_CACHE_BACKEND",
+        "FERRUMD_NONCE_CACHE_TTL_SECS",
+        "FERRUMD_NONCE_CACHE_MAX_ENTRIES",
+        "FERRUMD_BEHAVIORAL_ANOMALY_ENABLED",
+        "FERRUMD_BEHAVIORAL_ANOMALY_WINDOW_SECS",
+        "FERRUMD_BEHAVIORAL_ANOMALY_WARNING_THRESHOLD",
+        "FERRUMD_BEHAVIORAL_ANOMALY_CRITICAL_THRESHOLD",
+        "FERRUMD_BEHAVIORAL_ANOMALY_MAX_ACTORS",
+        "FERRUMD_AUDIT_WORM_SINK_ENABLED",
+        "FERRUMD_AUDIT_WORM_SINK_BUCKET",
+        "FERRUMD_AUDIT_WORM_SINK_PREFIX",
+        "FERRUMD_AUDIT_WORM_SINK_OBJECT_LOCK_MODE",
+        "FERRUMD_AUDIT_WORM_SINK_RETENTION_DAYS",
+        "FERRUMD_AUDIT_WORM_SINK_LEGAL_HOLD",
+        "FERRUMD_AUDIT_WORM_SINK_EXPORT_INTERVAL_SECS",
+        "FERRUMD_AUDIT_WORM_SINK_BATCH_LIMIT",
+        "FERRUMD_AUDIT_WORM_SINK_LIVE",
+        "FERRUMD_AUDIT_WORM_SINK_ENDPOINT_URL",
+        "FERRUMD_AUDIT_WORM_SINK_REGION",
+        "FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID",
+        "FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY",
+        "FERRUMD_GCS_ALLOWED_BUCKET",
+        "FERRUMD_GCS_ENDPOINT_URL",
+        "FERRUMD_GCS_PROJECT_ID",
+        "FERRUMD_GCS_CREDENTIALS_PATH",
+        "FERRUMD_GCS_LIVE",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -101,6 +136,7 @@ sqlite_db_roots = ["/from/file/databases"]
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -110,12 +146,16 @@ sqlite_db_roots = ["/from/file/databases"]
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -183,6 +223,7 @@ allow_insecure_nonlocal_bind = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -192,12 +233,16 @@ allow_insecure_nonlocal_bind = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -234,6 +279,7 @@ auth_mode = "bearer"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -243,12 +289,16 @@ auth_mode = "bearer"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -284,6 +334,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -293,12 +344,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -340,6 +395,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -349,12 +405,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -396,6 +456,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -405,12 +466,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -446,6 +511,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -455,12 +521,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).expect("expected config to be accepted");
@@ -495,6 +565,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -504,12 +575,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -547,6 +622,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -556,12 +632,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -599,6 +679,7 @@ rate_limit_burst = 100
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -608,12 +689,16 @@ rate_limit_burst = 100
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -651,6 +736,7 @@ rate_limit_burst = 100
         rate_limit_per_second: Some(10),
         rate_limit_burst: Some(200),
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -660,12 +746,16 @@ rate_limit_burst = 100
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -708,6 +798,7 @@ rate_limit_burst = 100
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -717,12 +808,16 @@ rate_limit_burst = 100
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -760,6 +855,7 @@ rate_limit_per_second = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -769,12 +865,16 @@ rate_limit_per_second = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -813,6 +913,7 @@ rate_limit_burst = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -822,12 +923,16 @@ rate_limit_burst = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -866,6 +971,7 @@ rate_limit_burst = 20000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -875,12 +981,16 @@ rate_limit_burst = 20000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -918,6 +1028,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -927,12 +1038,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -967,6 +1082,7 @@ log_format = "json"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -976,12 +1092,16 @@ log_format = "json"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1016,6 +1136,7 @@ log_format = "text"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: Some("json".to_string()),
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1025,12 +1146,16 @@ log_format = "text"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1069,6 +1194,7 @@ log_format = "text"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1078,12 +1204,16 @@ log_format = "text"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1119,6 +1249,7 @@ log_format = "invalid"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1128,12 +1259,16 @@ log_format = "invalid"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1168,6 +1303,7 @@ log_format = "compact"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1177,12 +1313,16 @@ log_format = "compact"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1219,6 +1359,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1228,12 +1369,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1269,6 +1414,7 @@ write_queue_threshold = 500
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1278,12 +1424,16 @@ write_queue_threshold = 500
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1319,6 +1469,7 @@ write_queue_threshold = 500
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: Some(200),
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1328,12 +1479,16 @@ write_queue_threshold = 500
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1373,6 +1528,7 @@ write_queue_threshold = 500
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1382,12 +1538,16 @@ write_queue_threshold = 500
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1423,6 +1583,7 @@ write_queue_threshold = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1432,12 +1593,16 @@ write_queue_threshold = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1476,6 +1641,7 @@ write_queue_threshold = 10001
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1485,12 +1651,16 @@ write_queue_threshold = 10001
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1530,6 +1700,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1539,12 +1710,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1583,6 +1758,7 @@ pg_acquire_timeout_secs = 10
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1592,12 +1768,16 @@ pg_acquire_timeout_secs = 10
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1642,6 +1822,7 @@ pg_acquire_timeout_secs = 10
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1651,12 +1832,16 @@ pg_acquire_timeout_secs = 10
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1697,6 +1882,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: Some(50),
         pg_min_idle: None,
@@ -1706,12 +1892,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1747,6 +1937,7 @@ pg_max_connections = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1756,12 +1947,16 @@ pg_max_connections = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1800,6 +1995,7 @@ pg_acquire_timeout_secs = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1809,12 +2005,16 @@ pg_acquire_timeout_secs = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -1852,6 +2052,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1861,12 +2062,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1903,6 +2108,7 @@ pg_idle_in_transaction_timeout_ms = 7000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1912,12 +2118,16 @@ pg_idle_in_transaction_timeout_ms = 7000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -1959,6 +2169,7 @@ pg_idle_in_transaction_timeout_ms = 7000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -1968,12 +2179,16 @@ pg_idle_in_transaction_timeout_ms = 7000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2013,6 +2228,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2022,12 +2238,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2064,6 +2284,7 @@ pg_idle_in_transaction_timeout_ms = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2073,12 +2294,16 @@ pg_idle_in_transaction_timeout_ms = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2129,6 +2354,7 @@ fg-operators = "operator"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2138,12 +2364,16 @@ fg-operators = "operator"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2229,6 +2459,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2238,12 +2469,16 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2308,6 +2543,7 @@ audiences = ["ferrumgate-test"]
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2317,12 +2553,16 @@ audiences = ["ferrumgate-test"]
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let err = resolve_config(&args).expect_err("expected config error");
@@ -2368,6 +2608,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2377,12 +2618,16 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let err = resolve_config(&args).expect_err("expected config error");
@@ -2430,6 +2675,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2439,12 +2685,16 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2500,6 +2750,7 @@ fg-admins = "admin"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2509,12 +2760,16 @@ fg-admins = "admin"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2552,6 +2807,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2561,12 +2817,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2609,6 +2869,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2618,12 +2879,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2659,6 +2924,7 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2668,12 +2934,16 @@ fn test_resolve_config_lifecycle_reconciliation_cli_overrides_env() {
         lifecycle_reconciliation_enabled: true,
         lifecycle_reconciliation_interval_secs: Some(30),
         lifecycle_reconciliation_batch_limit: Some(2500),
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2712,6 +2982,7 @@ lifecycle_reconciliation_batch_limit = 200
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2721,18 +2992,483 @@ lifecycle_reconciliation_batch_limit = 200
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
     assert!(config.lifecycle_reconciliation_enabled);
     assert_eq!(config.lifecycle_reconciliation_interval_secs, 90);
     assert_eq!(config.lifecycle_reconciliation_batch_limit, 200);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+// === approval timeout config tests ===
+
+#[test]
+fn test_resolve_config_approval_timeout_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 3600);
+    assert_eq!(config.approval_reconciliation_interval_secs, 300);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_seconds = 7200
+approval_reconciliation_interval_secs = 600
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 7200);
+    assert_eq!(config.approval_reconciliation_interval_secs, 600);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_seconds = 7200
+approval_reconciliation_interval_secs = 600
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_APPROVAL_TIMEOUT_SECONDS", "1800");
+        std::env::set_var("FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS", "120");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 1800);
+    assert_eq!(config.approval_reconciliation_interval_secs, 120);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_APPROVAL_TIMEOUT_SECONDS", "1800");
+        std::env::set_var("FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS", "120");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: Some(900),
+        approval_reconciliation_interval_secs: Some(60),
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.approval_timeout_seconds, 900);
+    assert_eq!(config.approval_reconciliation_interval_secs, 60);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_approval_timeout_too_small() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_enabled = true
+approval_timeout_seconds = 30
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("approval_timeout_seconds must be between 60 and 86400")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_approval_reconciliation_interval_too_small() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_enabled = true
+approval_reconciliation_interval_secs = 1
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("approval_reconciliation_interval_secs must be between 5 and 86400")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_enabled_defaults_to_false() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.approval_timeout_enabled);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_approval_timeout_enabled_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+approval_timeout_enabled = true
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.approval_timeout_enabled);
 
     let _ = fs::remove_file(path);
     clear_test_env();
@@ -2765,6 +3501,7 @@ lifecycle_reconciliation_interval_secs = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2774,12 +3511,16 @@ lifecycle_reconciliation_interval_secs = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -2819,6 +3560,7 @@ lifecycle_reconciliation_batch_limit = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2828,12 +3570,16 @@ lifecycle_reconciliation_batch_limit = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -2871,6 +3617,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2880,12 +3627,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2925,6 +3676,7 @@ approval_mfa_required = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2934,12 +3686,16 @@ approval_mfa_required = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -2971,6 +3727,7 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -2980,12 +3737,16 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3023,6 +3784,7 @@ lifecycle_reconciliation_enabled = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3032,12 +3794,16 @@ lifecycle_reconciliation_enabled = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3076,6 +3842,7 @@ audit_fail_closed = false
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3085,12 +3852,16 @@ audit_fail_closed = false
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3125,6 +3896,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3134,12 +3906,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3183,6 +3959,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3192,12 +3969,16 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3243,6 +4024,7 @@ auth_mode = "disabled"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3252,6 +4034,9 @@ auth_mode = "disabled"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: Some(
@@ -3260,6 +4045,7 @@ auth_mode = "disabled"
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3299,6 +4085,7 @@ mfa_totp_issuer = "FileIssuer"
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3308,12 +4095,16 @@ mfa_totp_issuer = "FileIssuer"
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3353,6 +4144,7 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3362,12 +4154,16 @@ mfa_secret_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
@@ -3411,6 +4207,7 @@ mfa_lockout_max_attempts = 0
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3420,12 +4217,16 @@ mfa_lockout_max_attempts = 0
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -3464,6 +4265,7 @@ mfa_lockout_duration_secs = 90000
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3473,12 +4275,16 @@ mfa_lockout_duration_secs = 90000
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let error = resolve_config(&args).expect_err("expected config error");
@@ -3512,6 +4318,7 @@ fn test_resolve_config_mfa_lockout_from_env() {
         rate_limit_per_second: None,
         rate_limit_burst: None,
         log_format: None,
+        pdp_mode: None,
         write_queue_threshold: None,
         pg_max_connections: None,
         pg_min_idle: None,
@@ -3521,17 +4328,1030 @@ fn test_resolve_config_mfa_lockout_from_env() {
         lifecycle_reconciliation_enabled: false,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
         mfa_lockout_duration_secs: None,
+        ..Default::default()
     };
 
     let config = resolve_config(&args).unwrap();
     assert_eq!(config.mfa_lockout_max_attempts, 3);
     assert_eq!(config.mfa_lockout_duration_secs, 300);
 
+    clear_test_env();
+}
+
+// === PDP mode config tests ===
+
+#[test]
+fn test_resolve_config_pdp_mode_defaults_to_dual() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Dual);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pdp_mode_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "static"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Static);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pdp_mode_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "static"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_PDP_MODE", "bundles");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Bundles);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_pdp_mode_cli_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "static"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: Some("dual".to_string()),
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pdp_mode, ferrum_gateway::PdpMode::Dual);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_pdp_mode() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pdp_mode = "unknown"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(error.to_string().contains("invalid pdp mode"));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args::default();
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Auto);
+    assert_eq!(config.nonce_cache_ttl_secs, 0);
+    assert_eq!(config.nonce_cache_max_entries, 10_000);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_cli_overrides() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args {
+        nonce_cache_backend: Some("memory".to_string()),
+        nonce_cache_ttl_secs: Some(120),
+        nonce_cache_max_entries: Some(500),
+        ..Default::default()
+    };
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 120);
+    assert_eq!(config.nonce_cache_max_entries, 500);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_env_overrides_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_NONCE_CACHE_BACKEND", "memory");
+        std::env::set_var("FERRUMD_NONCE_CACHE_TTL_SECS", "180");
+        std::env::set_var("FERRUMD_NONCE_CACHE_MAX_ENTRIES", "250");
+    }
+
+    let args = Args::default();
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 180);
+    assert_eq!(config.nonce_cache_max_entries, 250);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_NONCE_CACHE_BACKEND", "postgres");
+        std::env::set_var("FERRUMD_NONCE_CACHE_TTL_SECS", "180");
+        std::env::set_var("FERRUMD_NONCE_CACHE_MAX_ENTRIES", "250");
+    }
+
+    let args = Args {
+        nonce_cache_backend: Some("memory".to_string()),
+        nonce_cache_ttl_secs: Some(120),
+        nonce_cache_max_entries: Some(500),
+        ..Default::default()
+    };
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 120);
+    assert_eq!(config.nonce_cache_max_entries, 500);
+}
+
+#[test]
+fn test_resolve_config_nonce_cache_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+nonce_cache_backend = "memory"
+nonce_cache_ttl_secs = 240
+nonce_cache_max_entries = 1000
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.nonce_cache_backend, NonceCacheBackend::Memory);
+    assert_eq!(config.nonce_cache_ttl_secs, 240);
+    assert_eq!(config.nonce_cache_max_entries, 1000);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_postgres_nonce_cache_with_sqlite_store() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args {
+        nonce_cache_backend: Some("postgres".to_string()),
+        store_dsn: Some("sqlite::memory:".to_string()),
+        ..Default::default()
+    };
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("PostgreSQL store DSN"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_nonce_cache_backend() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let args = Args {
+        nonce_cache_backend: Some("redis".to_string()),
+        ..Default::default()
+    };
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("invalid nonce cache backend"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_defaults_disabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 60);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 1800);
+    assert_eq!(config.ha_reconciler_batch_size, 100);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = true
+ha_reconciler_interval_secs = 120
+ha_reconciler_stale_threshold_secs = 600
+ha_reconciler_batch_size = 50
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 120);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 600);
+    assert_eq!(config.ha_reconciler_batch_size, 50);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = false
+ha_reconciler_interval_secs = 120
+ha_reconciler_stale_threshold_secs = 600
+ha_reconciler_batch_size = 50
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HA_RECONCILER_ENABLED", "true");
+        std::env::set_var("FERRUMD_HA_RECONCILER_INTERVAL_SECS", "300");
+        std::env::set_var("FERRUMD_HA_RECONCILER_STALE_THRESHOLD_SECS", "900");
+        std::env::set_var("FERRUMD_HA_RECONCILER_BATCH_SIZE", "200");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 300);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 900);
+    assert_eq!(config.ha_reconciler_batch_size, 200);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_cli_overrides_all() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = false
+ha_reconciler_interval_secs = 120
+ha_reconciler_stale_threshold_secs = 600
+ha_reconciler_batch_size = 50
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HA_RECONCILER_ENABLED", "false");
+        std::env::set_var("FERRUMD_HA_RECONCILER_INTERVAL_SECS", "300");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ha_reconciler_enabled: true,
+        ha_reconciler_interval_secs: Some(10),
+        ha_reconciler_stale_threshold_secs: Some(120),
+        ha_reconciler_batch_size: Some(10),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.ha_reconciler_enabled);
+    assert_eq!(config.ha_reconciler_interval_secs, 10);
+    assert_eq!(config.ha_reconciler_stale_threshold_secs, 120);
+    assert_eq!(config.ha_reconciler_batch_size, 10);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_validation_when_enabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = true
+ha_reconciler_interval_secs = 3
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("ha_reconciler_interval_secs must be between 5 and 3600"),
+        "unexpected error: {error}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_ha_reconciler_invalid_values_ignored_when_disabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+ha_reconciler_enabled = false
+ha_reconciler_interval_secs = 3
+ha_reconciler_stale_threshold_secs = 30
+ha_reconciler_batch_size = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.ha_reconciler_enabled);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_behavioral_anomaly_defaults_disabled() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.behavioral_anomaly_enabled);
+    assert_eq!(config.behavioral_anomaly_window_secs, 60);
+    assert_eq!(config.behavioral_anomaly_warning_threshold, 5);
+    assert_eq!(config.behavioral_anomaly_critical_threshold, 10);
+    assert_eq!(config.behavioral_anomaly_max_actors, 1000);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_behavioral_anomaly_env_over_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+behavioral_anomaly_enabled = true
+behavioral_anomaly_window_secs = 120
+behavioral_anomaly_warning_threshold = 3
+behavioral_anomaly_critical_threshold = 7
+behavioral_anomaly_max_actors = 500
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_BEHAVIORAL_ANOMALY_ENABLED", "false");
+        std::env::set_var("FERRUMD_BEHAVIORAL_ANOMALY_WINDOW_SECS", "30");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(!config.behavioral_anomaly_enabled);
+    assert_eq!(config.behavioral_anomaly_window_secs, 30);
+    assert_eq!(config.behavioral_anomaly_warning_threshold, 3);
+    assert_eq!(config.behavioral_anomaly_critical_threshold, 7);
+    assert_eq!(config.behavioral_anomaly_max_actors, 500);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_behavioral_anomaly_validation_rejects_invalid_thresholds() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+behavioral_anomaly_enabled = true
+behavioral_anomaly_warning_threshold = 10
+behavioral_anomaly_critical_threshold = 5
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).expect_err("expected config validation error");
+    assert!(
+        err.to_string().contains(
+            "behavioral_anomaly_critical_threshold must be >= behavioral_anomaly_warning_threshold"
+        ),
+        "unexpected error: {}",
+        err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_rejects_worm_enabled_without_bucket() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        err.to_string()
+            .contains("audit_worm_sink_enabled is true but audit_worm_sink_bucket is not set"),
+        "unexpected error: {}",
+        err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_worm_sink_accepts_file_config() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "my-worm-bucket"
+prefix = "audit"
+object_lock_mode = "compliance"
+retention_days = 7
+export_interval_secs = 60
+batch_limit = 1000
+live = false
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.audit_worm_sink_enabled);
+    let cfg = config.worm_sink_config.as_ref().unwrap();
+    assert_eq!(cfg.bucket, "my-worm-bucket");
+    assert_eq!(cfg.prefix, "audit");
+    assert_eq!(
+        cfg.object_lock_mode,
+        ferrum_adapter_s3::ObjectLockMode::Compliance
+    );
+    assert_eq!(cfg.retention_days, 7);
+    assert_eq!(cfg.export_interval_secs, 60);
+    assert_eq!(cfg.batch_limit, 1000);
+    assert!(!cfg.live);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_worm_sink_rejects_invalid_object_lock_mode() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "my-worm-bucket"
+object_lock_mode = "invalid-mode"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        err.to_string()
+            .contains("invalid audit_worm_sink object_lock_mode"),
+        "unexpected error: {}",
+        err
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_resolve_config_worm_sink_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_BUCKET", "env-bucket");
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_PREFIX", "env-prefix");
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_OBJECT_LOCK_MODE", "compliance");
+        std::env::set_var("FERRUMD_AUDIT_WORM_SINK_RETENTION_DAYS", "14");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "file-bucket"
+prefix = "file-prefix"
+object_lock_mode = "governance"
+retention_days = 7
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let cfg = config.worm_sink_config.as_ref().unwrap();
+    assert_eq!(cfg.bucket, "env-bucket");
+    assert_eq!(cfg.prefix, "env-prefix");
+    assert_eq!(
+        cfg.object_lock_mode,
+        ferrum_adapter_s3::ObjectLockMode::Compliance
+    );
+    assert_eq!(cfg.retention_days, 14);
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "worm-sink")]
+#[test]
+fn test_server_config_debug_redacts_worm_credentials() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+audit_worm_sink_enabled = true
+
+[server.audit_worm_sink]
+bucket = "my-worm-bucket"
+access_key_id = "AKIAEXAMPLE"
+secret_access_key = "w0rmdb33f/s3cr3t"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let debug = format!("{:?}", config);
+    assert!(
+        debug.contains("my-worm-bucket"),
+        "debug output should contain non-sensitive bucket name"
+    );
+    assert!(
+        !debug.contains("AKIAEXAMPLE"),
+        "debug output must not contain WORM access key ID"
+    );
+    assert!(
+        !debug.contains("w0rmdb33f/s3cr3t"),
+        "debug output must not contain WORM secret access key"
+    );
+    assert!(
+        debug.contains("<redacted>"),
+        "debug output should show redaction placeholder"
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "gcs")]
+#[test]
+fn test_gcs_config_defaults_live_false() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.gcs_config]
+allowed_bucket = "my-gcs-bucket"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let gcs = config
+        .gcs_config
+        .as_ref()
+        .expect("gcs_config should be set");
+    assert_eq!(gcs.allowed_bucket, "my-gcs-bucket");
+    assert!(!gcs.live, "GCS live should default to false");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "gcs")]
+#[test]
+fn test_gcs_config_env_live_true() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_GCS_ALLOWED_BUCKET", "env-gcs-bucket");
+        std::env::set_var("FERRUMD_GCS_LIVE", "true");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let gcs = config
+        .gcs_config
+        .as_ref()
+        .expect("gcs_config should be set");
+    assert_eq!(gcs.allowed_bucket, "env-gcs-bucket");
+    assert!(gcs.live, "FERRUMD_GCS_LIVE=true should enable live mode");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "gcs")]
+#[test]
+fn test_gcs_config_cli_overrides_env_and_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_GCS_ALLOWED_BUCKET", "env-gcs-bucket");
+        std::env::set_var("FERRUMD_GCS_LIVE", "true");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.gcs_config]
+allowed_bucket = "file-gcs-bucket"
+live = false
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        gcs_live: true,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let gcs = config
+        .gcs_config
+        .as_ref()
+        .expect("gcs_config should be set");
+    assert_eq!(gcs.allowed_bucket, "env-gcs-bucket");
+    assert!(gcs.live, "--gcs-live should override env and file");
+
+    let _ = fs::remove_file(path);
     clear_test_env();
 }

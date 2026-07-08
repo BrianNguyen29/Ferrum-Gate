@@ -4,9 +4,11 @@ mod admin;
 mod approval;
 mod audit;
 mod auth_actor;
+mod behavioral;
 mod bridge;
 mod capabilities;
 mod execution;
+mod ha_reconciler;
 mod intents;
 mod lineage;
 mod macros;
@@ -17,9 +19,13 @@ mod policy_eval;
 mod problem;
 mod proposals;
 mod provenance;
+mod quarantine;
 mod response;
 mod server;
 mod state;
+
+#[cfg(feature = "worm-sink")]
+mod worm_sink;
 
 pub(crate) use auth_actor::AuthActor;
 pub use capabilities::StoreCapabilityService;

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ferrum_proto::{MfaCredentialRecord, MfaFactorStatus, MfaFactorType};
+use ferrum_proto::{MfaAgentLockoutRecord, MfaCredentialRecord, MfaFactorStatus, MfaFactorType};
 use sqlx::{PgPool, Row};
 
 use crate::{MfaCredentialRepo, Result};
@@ -107,6 +107,43 @@ fn row_to_record(row: &sqlx::postgres::PgRow) -> Result<MfaCredentialRecord> {
         last_failed_at,
         lockout_count: lockout_count as u32,
         raw_json,
+    })
+}
+
+fn row_to_lockout_record(row: &sqlx::postgres::PgRow) -> Result<MfaAgentLockoutRecord> {
+    let locked_until_str: Option<String> = row.try_get("locked_until")?;
+    let locked_until = locked_until_str
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| crate::StoreError::Other(format!("invalid locked_until: {}", e)))
+        })
+        .transpose()?;
+
+    let last_failed_at_str: Option<String> = row.try_get("last_failed_at")?;
+    let last_failed_at = last_failed_at_str
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| crate::StoreError::Other(format!("invalid last_failed_at: {}", e)))
+        })
+        .transpose()?;
+
+    let updated_at_str: String = row.try_get("updated_at")?;
+    let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+        .map_err(|e| crate::StoreError::Other(format!("invalid updated_at: {}", e)))?
+        .with_timezone(&chrono::Utc);
+
+    let failed_attempts: i32 = row.try_get("failed_attempts")?;
+    let lockout_count: i32 = row.try_get("lockout_count")?;
+
+    Ok(MfaAgentLockoutRecord {
+        agent_id: row.try_get("agent_id")?,
+        failed_attempts: failed_attempts as u32,
+        locked_until,
+        last_failed_at,
+        lockout_count: lockout_count as u32,
+        updated_at,
     })
 }
 
@@ -304,6 +341,107 @@ impl MfaCredentialRepo for PostgresMfaCredentialRepo {
         )
         .bind(now)
         .bind(mfa_factor_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn get_agent_lockout(&self, agent_id: &str) -> Result<Option<MfaAgentLockoutRecord>> {
+        let row = sqlx::query("SELECT * FROM mfa_agent_lockouts WHERE agent_id = $1")
+            .bind(agent_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        match row {
+            Some(row) => Ok(Some(row_to_lockout_record(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn record_agent_failed_attempt(
+        &self,
+        agent_id: &str,
+        max_attempts: u32,
+        lockout_duration_secs: u64,
+    ) -> Result<MfaAgentLockoutRecord> {
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
+        let locked_until = now + chrono::Duration::seconds(lockout_duration_secs as i64);
+        let locked_until_str = locked_until.to_rfc3339();
+        let max_attempts_i = max_attempts as i32;
+
+        let initial_lockout_count = if 1 >= max_attempts_i { 1 } else { 0 };
+
+        // Single atomic upsert. Concurrent first attempts serialize on the
+        // unique agent_id constraint; each conflicting transaction updates the
+        // row that the previous inserted/updated, so no attempt is lost.
+        let row = sqlx::query(
+            "INSERT INTO mfa_agent_lockouts (
+                agent_id, failed_attempts, locked_until, last_failed_at, lockout_count, updated_at
+            ) VALUES ($1, 1, CASE WHEN 1 >= $6 THEN $2 ELSE NULL END, $3, $4, $3)
+            ON CONFLICT (agent_id) DO UPDATE SET
+                failed_attempts = CASE
+                    WHEN mfa_agent_lockouts.locked_until IS NOT NULL
+                         AND mfa_agent_lockouts.locked_until > $5
+                        THEN mfa_agent_lockouts.failed_attempts + 1
+                    WHEN mfa_agent_lockouts.locked_until IS NOT NULL
+                        THEN 1
+                    ELSE mfa_agent_lockouts.failed_attempts + 1
+                END,
+                last_failed_at = $3,
+                lockout_count = CASE
+                    WHEN (mfa_agent_lockouts.locked_until IS NULL
+                          OR mfa_agent_lockouts.locked_until <= $5)
+                         AND (CASE
+                                WHEN mfa_agent_lockouts.locked_until IS NOT NULL
+                                     AND mfa_agent_lockouts.locked_until > $5
+                                    THEN mfa_agent_lockouts.failed_attempts + 1
+                                WHEN mfa_agent_lockouts.locked_until IS NOT NULL
+                                    THEN 1
+                                ELSE mfa_agent_lockouts.failed_attempts + 1
+                              END) >= $6
+                    THEN mfa_agent_lockouts.lockout_count + 1
+                    ELSE mfa_agent_lockouts.lockout_count
+                END,
+                locked_until = CASE
+                    WHEN (mfa_agent_lockouts.locked_until IS NOT NULL
+                          AND mfa_agent_lockouts.locked_until > $5)
+                         OR (CASE
+                                WHEN mfa_agent_lockouts.locked_until IS NOT NULL
+                                     AND mfa_agent_lockouts.locked_until > $5
+                                    THEN mfa_agent_lockouts.failed_attempts + 1
+                                WHEN mfa_agent_lockouts.locked_until IS NOT NULL
+                                    THEN 1
+                                ELSE mfa_agent_lockouts.failed_attempts + 1
+                              END) >= $6
+                    THEN $2
+                    ELSE NULL
+                END,
+                updated_at = $3
+            RETURNING *",
+        )
+        .bind(agent_id)
+        .bind(locked_until_str)
+        .bind(now_str.clone())
+        .bind(initial_lockout_count)
+        .bind(now_str)
+        .bind(max_attempts_i)
+        .fetch_one(&self.pool)
+        .await?;
+
+        row_to_lockout_record(&row)
+    }
+
+    async fn reset_agent_lockout(&self, agent_id: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE mfa_agent_lockouts
+             SET failed_attempts = 0,
+                 locked_until = NULL,
+                 last_failed_at = NULL,
+                 updated_at = $1
+             WHERE agent_id = $2",
+        )
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(agent_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)

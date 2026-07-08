@@ -16,6 +16,7 @@ mod migrations;
 mod policy_bundles;
 mod proposals;
 mod provenance;
+mod quarantine;
 mod rollback;
 mod sync_preflight;
 pub mod tokens;
@@ -37,6 +38,7 @@ pub use mfa_credentials::SqliteMfaCredentialRepo;
 pub use policy_bundles::SqlitePolicyBundleRepo;
 pub use proposals::SqliteProposalRepo;
 pub use provenance::SqliteProvenanceRepo;
+pub use quarantine::SqliteQuarantineHoldRepo;
 pub use rollback::SqliteRollbackRepo;
 pub use sync_preflight::SqliteSyncPreflightRepo;
 pub use tokens::SqliteTokenRepo;
@@ -45,7 +47,8 @@ use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
     CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, MfaCredentialRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo, RollbackRepo, StoreFacade,
+    TokenRepo,
 };
 use crate::sqlite::write_queue::{WriteQueue, WriterState, spawn_writer_task};
 use async_trait::async_trait;
@@ -351,6 +354,10 @@ impl SqliteStore {
         SqliteApprovalRepo::new(self.pool.clone())
     }
 
+    pub fn quarantine_holds(&self) -> SqliteQuarantineHoldRepo {
+        SqliteQuarantineHoldRepo::new(self.pool.clone())
+    }
+
     pub fn provenance(&self) -> SqliteProvenanceRepo {
         SqliteProvenanceRepo::new(self.pool.clone())
     }
@@ -502,6 +509,12 @@ impl StoreFacade for SqliteStore {
     fn approvals(&self) -> Arc<dyn ApprovalRepo> {
         Arc::new(
             SqliteApprovalRepo::new(self.pool.clone()).with_write_queue(self.write_queue.clone()),
+        )
+    }
+    fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+        Arc::new(
+            SqliteQuarantineHoldRepo::new(self.pool.clone())
+                .with_write_queue(self.write_queue.clone()),
         )
     }
     fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
@@ -1324,7 +1337,7 @@ mod tests {
                 .fetch_one(store.pool())
                 .await
                 .unwrap();
-        assert_eq!(version, 17);
+        assert_eq!(version, 19);
     }
 
     #[tokio::test]

@@ -40,6 +40,11 @@ use thiserror::Error;
 pub mod planner;
 pub use planner::PlannableS3Adapter;
 
+pub mod worm;
+pub use worm::{
+    ObjectLockMode, WormUploadConfig, WormUploadError, WormUploadReceipt, WormUploader,
+};
+
 pub const ADAPTER_KIND: &str = "ferrum-adapter-s3";
 
 /// Phase context for error normalization.

@@ -72,6 +72,27 @@ impl std::str::FromStr for MfaFactorStatus {
     }
 }
 
+/// Store-backed record for an agent-scoped MFA lockout.
+///
+/// Tracks failed verification attempts across all factors for an agent.
+/// This spans factor IDs and factor types (TOTP, backup codes, WebAuthn).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MfaAgentLockoutRecord {
+    pub agent_id: String,
+    /// Number of consecutive failed verification attempts since the last success.
+    #[serde(default)]
+    pub failed_attempts: u32,
+    /// If set, the agent's MFA challenge surface is locked until this timestamp.
+    pub locked_until: Option<Timestamp>,
+    /// Timestamp of the most recent failed verification attempt.
+    pub last_failed_at: Option<Timestamp>,
+    /// Total number of times this agent has been locked (lifetime counter).
+    #[serde(default)]
+    pub lockout_count: u32,
+    /// When the record was last updated.
+    pub updated_at: Timestamp,
+}
+
 /// Store-backed record for an MFA credential.
 ///
 /// Holds the encrypted TOTP secret and metadata required for

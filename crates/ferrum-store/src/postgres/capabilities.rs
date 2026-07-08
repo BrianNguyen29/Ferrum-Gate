@@ -104,7 +104,7 @@ impl CapabilityRepo for PostgresCapabilityRepo {
         let result = sqlx::query(
             "UPDATE capabilities
              SET status = $2,
-                 raw_json = jsonb_set(raw_json, '{status}', to_jsonb($2::text))
+                 raw_json = (jsonb_set(raw_json::jsonb, '{status}', to_jsonb($2::text)))::text
              WHERE capability_id = $1 AND status = $3 AND expires_at > $4",
         )
         .bind(capability_id.to_string())
@@ -127,11 +127,11 @@ impl CapabilityRepo for PostgresCapabilityRepo {
             "UPDATE capabilities
              SET status = $2,
                  revoked_at = $3,
-                 raw_json = jsonb_set(
-                     jsonb_set(raw_json, '{status}', to_jsonb($2::text)),
+                 raw_json = (jsonb_set(
+                     jsonb_set(raw_json::jsonb, '{status}', to_jsonb($2::text)),
                      '{revoked_at}',
                      to_jsonb($4::text)
-                 )
+                 ))::text
              WHERE capability_id = $1 AND status = $5 AND expires_at > $3",
         )
         .bind(capability_id.to_string())

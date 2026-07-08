@@ -155,7 +155,7 @@ impl StaticPdpEngine {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct StaticPdpEngine;
 
 #[async_trait]

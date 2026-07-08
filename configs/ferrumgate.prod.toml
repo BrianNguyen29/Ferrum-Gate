@@ -46,6 +46,24 @@ pg_max_connections = 10
 pg_min_idle = 2
 pg_acquire_timeout_secs = 5
 
+# Approval timeout reconciliation (opt-in; default false)
+# approval_timeout_enabled = false
+# approval_timeout_seconds = 3600
+# approval_reconciliation_interval_secs = 300
+
+# HA reconciler for stale in-flight executions (opt-in; default false)
+# ha_reconciler_enabled = false
+# ha_reconciler_interval_secs = 60
+# ha_reconciler_stale_threshold_secs = 1800
+# ha_reconciler_batch_size = 100
+
+# Nonce cache backend: "auto" (default), "memory", or "postgres".
+# Auto selects Postgres when store_dsn is PostgreSQL, otherwise memory.
+# Use "postgres" for shared replay protection across multiple gateway processes.
+# nonce_cache_backend = "auto"
+# nonce_cache_ttl_secs = 0
+# nonce_cache_max_entries = 10000
+
 # ── MFA Configuration (optional) ──
 # mfa_secret_key should be set via FERRUMD_MFA_SECRET_KEY environment variable
 # in production to avoid committing secrets to version control.
@@ -54,6 +72,42 @@ pg_acquire_timeout_secs = 5
 # mfa_totp_issuer = "FerrumGate"
 # mfa_lockout_max_attempts = 5
 # mfa_lockout_duration_secs = 900
+# Lockout settings above apply to both per-factor and per-agent MFA lockout.
+
+# ── WORM-Compatible Audit Bundle Sink (optional) ──
+# Requires ferrumd to be built with --features worm-sink (implies s3).
+# Disabled by default. The operator must provision the bucket and enable
+# S3 Object Lock; the adapter does not create buckets or manage IAM.
+#
+# audit_worm_sink_enabled = false
+# [server.audit_worm_sink]
+# bucket = "my-ferrumgate-audit-bucket"
+# prefix = "audit-worm"
+# object_lock_mode = "governance"
+# retention_days = 30
+# legal_hold = false
+# export_interval_secs = 300
+# batch_limit = 1000
+# live = false
+# endpoint_url = "http://localhost:9000"
+# region = "us-east-1"
+# # Credentials should be provided via environment variables:
+# # FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID
+# # FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY
+
+# ── GCS Adapter (optional) ──
+# Requires ferrumd to be built with --features gcs.
+# Disabled by default. Live SDK integration is a declared seam; shape-only
+# validation runs when live=false. Azure Blob is deferred.
+#
+# [server.gcs_config]
+# allowed_bucket = "my-ferrumgate-gcs-bucket"
+# max_object_size = 104857600
+# live = false
+# endpoint_url = "https://storage.googleapis.com"
+# project_id = "my-gcp-project"
+# # Credentials should be provided via environment variable:
+# # FERRUMD_GCS_CREDENTIALS_PATH
 
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".

@@ -11,6 +11,11 @@ default = []
 postgres = ["ferrum-store/postgres"]
 # S3 adapter support — feature-gated to reduce default dependency footprint
 s3 = ["ferrum-adapter-s3/s3-client"]
+# GCS adapter support — feature-gated to reduce default dependency footprint.
+# Live SDK integration is a planned follow-up; this slice ships shape-only behavior.
+gcs = ["ferrum-adapter-gcs/gcs-client"]
+# WORM-compatible audit bundle sink (implies S3 adapter support).
+worm-sink = ["s3", "ferrum-adapter-s3/worm-sink"]
 # Expose test-only helpers (e.g., build_router without auth) for integration tests and local tools.
 # NOT for production use.
 test-utils = []
@@ -37,6 +42,7 @@ urlencoding.workspace = true
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true
@@ -52,4 +58,6 @@ ferrum-graph = { path = "../ferrum-graph" }
 ferrum-sync = { path = "../ferrum-sync" }
 ferrum-firewall = { path = "../ferrum-firewall" }
 ferrum-adapter-s3 = { path = "../ferrum-adapter-s3" }
+ferrum-adapter-gcs = { path = "../ferrum-adapter-gcs", optional = true }
+ferrum-audit-bundle = { path = "../ferrum-audit-bundle" }
 uuid.workspace = true

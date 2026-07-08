@@ -32,6 +32,7 @@ pub enum AuditAction {
     PolicyBundleActivate,
     PolicyBundleRollback,
     ApprovalResolve,
+    QuarantineResolve,
     ExecutionCancel,
     AuthFailed,
     AgentRegister,
@@ -43,6 +44,8 @@ pub enum AuditAction {
     MfaVerify,
     MfaDisable,
     MfaRotate,
+    /// Behavioral anomaly detection advisory event (Phase 1).
+    BehavioralAnomaly,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -55,6 +58,7 @@ impl std::fmt::Display for AuditAction {
             AuditAction::PolicyBundleActivate => "policy_bundle_activate",
             AuditAction::PolicyBundleRollback => "policy_bundle_rollback",
             AuditAction::ApprovalResolve => "approval_resolve",
+            AuditAction::QuarantineResolve => "quarantine_resolve",
             AuditAction::ExecutionCancel => "execution_cancel",
             AuditAction::AuthFailed => "auth_failed",
             AuditAction::AgentRegister => "agent_register",
@@ -66,6 +70,7 @@ impl std::fmt::Display for AuditAction {
             AuditAction::MfaVerify => "mfa_verify",
             AuditAction::MfaDisable => "mfa_disable",
             AuditAction::MfaRotate => "mfa_rotate",
+            AuditAction::BehavioralAnomaly => "behavioral_anomaly",
         };
         write!(f, "{}", s)
     }
@@ -83,6 +88,7 @@ impl std::str::FromStr for AuditAction {
             "policy_bundle_activate" => Ok(AuditAction::PolicyBundleActivate),
             "policy_bundle_rollback" => Ok(AuditAction::PolicyBundleRollback),
             "approval_resolve" => Ok(AuditAction::ApprovalResolve),
+            "quarantine_resolve" => Ok(AuditAction::QuarantineResolve),
             "execution_cancel" => Ok(AuditAction::ExecutionCancel),
             "auth_failed" => Ok(AuditAction::AuthFailed),
             "agent_register" => Ok(AuditAction::AgentRegister),
@@ -94,6 +100,7 @@ impl std::str::FromStr for AuditAction {
             "mfa_verify" => Ok(AuditAction::MfaVerify),
             "mfa_disable" => Ok(AuditAction::MfaDisable),
             "mfa_rotate" => Ok(AuditAction::MfaRotate),
+            "behavioral_anomaly" => Ok(AuditAction::BehavioralAnomaly),
             _ => Err(format!("invalid audit action: {}", s)),
         }
     }
@@ -105,11 +112,14 @@ pub enum AuditResourceType {
     Token,
     PolicyBundle,
     Approval,
+    QuarantineHold,
     Execution,
     Auth,
     Agent,
     LifecycleOutbox,
     MfaCredential,
+    /// Action proposal being evaluated.
+    Proposal,
 }
 
 impl std::fmt::Display for AuditResourceType {
@@ -118,11 +128,13 @@ impl std::fmt::Display for AuditResourceType {
             AuditResourceType::Token => "token",
             AuditResourceType::PolicyBundle => "policy_bundle",
             AuditResourceType::Approval => "approval",
+            AuditResourceType::QuarantineHold => "quarantine_hold",
             AuditResourceType::Execution => "execution",
             AuditResourceType::Auth => "auth",
             AuditResourceType::Agent => "agent",
             AuditResourceType::LifecycleOutbox => "lifecycle_outbox",
             AuditResourceType::MfaCredential => "mfa_credential",
+            AuditResourceType::Proposal => "proposal",
         };
         write!(f, "{}", s)
     }
@@ -136,11 +148,13 @@ impl std::str::FromStr for AuditResourceType {
             "token" => Ok(AuditResourceType::Token),
             "policy_bundle" => Ok(AuditResourceType::PolicyBundle),
             "approval" => Ok(AuditResourceType::Approval),
+            "quarantine_hold" => Ok(AuditResourceType::QuarantineHold),
             "execution" => Ok(AuditResourceType::Execution),
             "auth" => Ok(AuditResourceType::Auth),
             "agent" => Ok(AuditResourceType::Agent),
             "lifecycle_outbox" => Ok(AuditResourceType::LifecycleOutbox),
             "mfa_credential" => Ok(AuditResourceType::MfaCredential),
+            "proposal" => Ok(AuditResourceType::Proposal),
             _ => Err(format!("invalid audit resource type: {}", s)),
         }
     }
@@ -319,4 +333,29 @@ pub fn canonical_checkpoint_hash(
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
     hasher.finalize().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn behavioral_anomaly_action_round_trip() {
+        let a = AuditAction::BehavioralAnomaly;
+        assert_eq!(a.to_string(), "behavioral_anomaly");
+        assert_eq!(
+            "behavioral_anomaly".parse::<AuditAction>().unwrap(),
+            AuditAction::BehavioralAnomaly
+        );
+    }
+
+    #[test]
+    fn proposal_resource_type_round_trip() {
+        let r = AuditResourceType::Proposal;
+        assert_eq!(r.to_string(), "proposal");
+        assert_eq!(
+            "proposal".parse::<AuditResourceType>().unwrap(),
+            AuditResourceType::Proposal
+        );
+    }
 }
