@@ -433,6 +433,10 @@ pub struct ServerConfig {
     /// S3 adapter configuration. When present, enables the S3 adapter.
     #[cfg(feature = "s3")]
     pub s3_config: Option<ferrum_adapter_s3::S3Config>,
+    /// GCS adapter configuration. When present, enables the GCS adapter.
+    /// Requires the `gcs` feature; live SDK integration is a follow-up slice.
+    #[cfg(feature = "gcs")]
+    pub gcs_config: Option<ferrum_adapter_gcs::GcsConfig>,
     /// OIDC configuration. Required when `auth_mode` is `Oidc`.
     pub oidc_config: Option<OidcConfig>,
     /// Clock skew tolerance for Agent auth timestamps in seconds.
@@ -571,6 +575,8 @@ impl std::fmt::Debug for ServerConfig {
         d.field("sqlite_db_roots", &self.sqlite_db_roots);
         #[cfg(feature = "s3")]
         d.field("s3_config", &self.s3_config);
+        #[cfg(feature = "gcs")]
+        d.field("gcs_config", &self.gcs_config);
         d.field("oidc_config", &self.oidc_config);
         d.field("agent_clock_skew_secs", &self.agent_clock_skew_secs);
         d.field("nonce_cache_backend", &self.nonce_cache_backend);
@@ -679,6 +685,8 @@ impl Default for ServerConfig {
             sqlite_db_roots: Vec::new(),
             #[cfg(feature = "s3")]
             s3_config: None,
+            #[cfg(feature = "gcs")]
+            gcs_config: None,
             oidc_config: None,
             agent_clock_skew_secs: 30,
             nonce_cache_backend: NonceCacheBackend::Auto,

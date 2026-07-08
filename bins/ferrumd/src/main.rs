@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use ferrum_adapter_fs::{FsAdapter, FsBoundsConfig, PlannableFsAdapter};
+#[cfg(feature = "gcs")]
+use ferrum_adapter_gcs::{GcsAdapter, PlannableGcsAdapter};
 use ferrum_adapter_git::{GitRollbackAdapter, PlannableGitAdapter};
 use ferrum_adapter_http::{PlannableHttpAdapter, register_http_adapter};
 use ferrum_adapter_maildraft::{PlannableMailDraftAdapter, register_maildraft_adapter};
@@ -194,6 +196,32 @@ async fn main() -> Result<()> {
     {
         tracing::info!("S3 adapter not registered because s3 feature is not enabled");
     }
+    #[cfg(feature = "gcs")]
+    {
+        if let Some(ref gcs_cfg) = config.gcs_config {
+            if let Err(e) = gcs_cfg.validate() {
+                tracing::warn!("GCS config invalid; adapter not registered: {}", e);
+            } else {
+                registry.register(Arc::new(GcsAdapter::new_with_config(
+                    "gcs",
+                    gcs_cfg.clone(),
+                )));
+                tracing::info!(
+                    "GCS adapter registered for bucket '{}'",
+                    gcs_cfg.allowed_bucket
+                );
+            }
+        } else {
+            tracing::warn!(
+                "GCS adapter not registered because gcs_config is not configured; \
+                 set FERRUMD_GCS_ALLOWED_BUCKET or server.gcs_config.allowed_bucket to enable bounded GCS mutations"
+            );
+        }
+    }
+    #[cfg(not(feature = "gcs"))]
+    {
+        tracing::info!("GCS adapter not registered because gcs feature is not enabled");
+    }
     let mut rollback_service = RollbackService::new(Arc::new(registry));
     rollback_service.register_planner(Arc::new(PlannableFsAdapter));
     if sqlite_adapter_enabled {
@@ -212,6 +240,18 @@ async fn main() -> Result<()> {
                 tracing::info!(
                     "S3 planner registered for bucket '{}'",
                     s3_cfg.allowed_bucket
+                );
+            }
+        }
+    }
+    #[cfg(feature = "gcs")]
+    {
+        if let Some(ref gcs_cfg) = config.gcs_config {
+            if gcs_cfg.validate().is_ok() {
+                rollback_service.register_planner(Arc::new(PlannableGcsAdapter));
+                tracing::info!(
+                    "GCS planner registered for bucket '{}'",
+                    gcs_cfg.allowed_bucket
                 );
             }
         }

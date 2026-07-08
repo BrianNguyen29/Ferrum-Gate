@@ -8,7 +8,7 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 - **Intent-scoped execution** with policy evaluation, capability minting, rollback prepare/verify/compensate, and provenance chain.
 - **Local pilot and controlled evaluation** with SQLite or PostgreSQL.
 - **MCP stdio server** as the default, stable integration surface.
-- **Bounded adapters** for filesystem, HTTP, Git, SQLite, mail draft, and S3 (experimental) side effects.
+- **Bounded adapters** for filesystem, HTTP, Git, SQLite, mail draft, S3 (experimental), and GCS (shape-only, experimental) side effects.
 - **Operator tooling**: `ferrumctl`, `ferrum-tui`, `ferrum-stress`, `ferrum-migrate`.
 
 ## Operator-owned
@@ -38,7 +38,8 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | WORM audit sink | Implemented (feature-gated) | S3 Object Lock WORM-compatible sink behind the `worm-sink` feature; disabled by default; operator provisions bucket and Object Lock configuration |
 | Behavioral anomaly detection | Implemented (Phase 1 V1) | In-memory advisory high-risk/R3 burst detection; opt-in, no ML/external service |
 | Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
-| GCS / Azure Blob adapters | Not implemented | Backlog; requires rollback/compensation contracts |
+| GCS adapter | Implemented (shape-only) | Feature-gated behind `gcs`; generation-based rollback modeled; live SDK path is a declared seam. See ADR-018. |
+| Azure Blob adapter | Not implemented | Deferred to a future slice after GCS semantics are stable |
 | HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
 | HA leader election | Not implemented | Backlog; requires PostgreSQL HA design and distributed consensus |
 | Schema-drift checker | Implemented | Startup refuses databases with `_schema_version` newer than the binary-supported schema version |

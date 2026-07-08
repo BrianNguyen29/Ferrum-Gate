@@ -294,6 +294,25 @@ cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --fea
 
 **Note:** `ferrum-stress`, `ferrumctl`, and `ferrum-tui` do not depend on the postgres feature and do not need the flag.
 
+**GCS adapter feature propagation**
+
+Google Cloud Storage support is feature-gated with `--features gcs`. The flag must be propagated to the binary and crate packages that depend on the GCS adapter:
+
+```bash
+# Check all GCS-dependent packages
+cargo check -p ferrumd -p ferrum-gateway --features gcs
+```
+
+**Why multiple packages?**
+- `ferrum-gateway` — Gateway `ServerConfig` and action/target inference wiring.
+- `ferrumd` — Binary entrypoint that compiles the gateway and adapter.
+
+The GCS adapter defaults to shape-only validation (`live: false`). The `gcs-client` feature enables the live client seam, but live SDK integration is a planned follow-up. Azure Blob is explicitly deferred. See ADR-018.
+
+**CI verifies:** `cargo check -p ferrumd -p ferrum-gateway --features gcs`.
+
+**Note:** `ferrum-stress`, `ferrumctl`, and `ferrum-tui` do not depend on the GCS feature and do not need the flag.
+
 ## HA Configuration
 
 - **Single-node PostgreSQL**: Default. SQLite also supported.

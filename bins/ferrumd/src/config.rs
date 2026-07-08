@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+#[cfg(feature = "gcs")]
+use ferrum_adapter_gcs::GcsConfig;
 #[cfg(feature = "s3")]
 use ferrum_adapter_s3::S3Config;
 use ferrum_gateway::{AuthMode, ServerConfig};
@@ -260,6 +262,10 @@ pub struct Args {
     /// Optional static secret access key for the WORM sink.
     #[arg(long)]
     audit_worm_sink_secret_access_key: Option<String>,
+
+    /// Enable live GCS SDK calls for the GCS adapter (default: false).
+    #[arg(long)]
+    gcs_live: bool,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -415,6 +421,9 @@ struct ServerSection {
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
+    #[cfg(feature = "gcs")]
+    #[serde(default)]
+    gcs_config: Option<GcsConfigSection>,
     #[cfg(feature = "worm-sink")]
     #[serde(default)]
     audit_worm_sink_enabled: Option<bool>,
@@ -496,6 +505,27 @@ struct S3ConfigSection {
     access_key_id: Option<String>,
     #[serde(default)]
     secret_access_key: Option<String>,
+}
+
+#[cfg(feature = "gcs")]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GcsConfigSection {
+    allowed_bucket: String,
+    #[serde(default = "default_gcs_max_object_size")]
+    max_object_size: u64,
+    #[serde(default)]
+    live: bool,
+    #[serde(default)]
+    endpoint_url: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    credentials_path: Option<String>,
+}
+
+#[cfg(feature = "gcs")]
+fn default_gcs_max_object_size() -> u64 {
+    100 * 1024 * 1024
 }
 
 #[cfg(feature = "s3")]
@@ -1125,6 +1155,41 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
     #[cfg(not(feature = "s3"))]
     let _s3_config: Option<ferrum_adapter_s3::S3Config> = None;
 
+    #[cfg(feature = "gcs")]
+    let gcs_config = {
+        let file_gcs = server.as_ref().and_then(|s| s.gcs_config.as_ref());
+        let allowed_bucket = get_env::<String>("FERRUMD_GCS_ALLOWED_BUCKET")?
+            .or_else(|| file_gcs.map(|c| c.allowed_bucket.clone()));
+        if let Some(bucket) = allowed_bucket {
+            let endpoint_url = get_env::<String>("FERRUMD_GCS_ENDPOINT_URL")?
+                .or_else(|| file_gcs.and_then(|c| c.endpoint_url.clone()));
+            let project_id = get_env::<String>("FERRUMD_GCS_PROJECT_ID")?
+                .or_else(|| file_gcs.and_then(|c| c.project_id.clone()));
+            let credentials_path = get_env::<String>("FERRUMD_GCS_CREDENTIALS_PATH")?
+                .or_else(|| file_gcs.and_then(|c| c.credentials_path.clone()));
+            let max_object_size = file_gcs
+                .map(|c| c.max_object_size)
+                .unwrap_or(100 * 1024 * 1024);
+            let live = if args.gcs_live {
+                true
+            } else {
+                get_env::<bool>("FERRUMD_GCS_LIVE")?
+                    .or_else(|| file_gcs.map(|c| c.live))
+                    .unwrap_or(false)
+            };
+            Some(GcsConfig {
+                allowed_bucket: bucket,
+                max_object_size,
+                live,
+                endpoint_url,
+                project_id,
+                credentials_path,
+            })
+        } else {
+            None
+        }
+    };
+
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("failed to parse bind address: {}", bind_addr))?;
@@ -1322,6 +1387,8 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         sqlite_db_roots,
         #[cfg(feature = "s3")]
         s3_config,
+        #[cfg(feature = "gcs")]
+        gcs_config,
         #[cfg(feature = "worm-sink")]
         audit_worm_sink_enabled,
         #[cfg(feature = "worm-sink")]

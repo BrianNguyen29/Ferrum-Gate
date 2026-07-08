@@ -95,6 +95,20 @@ pg_acquire_timeout_secs = 5
 # # FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID
 # # FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY
 
+# ── GCS Adapter (optional) ──
+# Requires ferrumd to be built with --features gcs.
+# Disabled by default. Live SDK integration is a declared seam; shape-only
+# validation runs when live=false. Azure Blob is deferred.
+#
+# [server.gcs_config]
+# allowed_bucket = "my-ferrumgate-gcs-bucket"
+# max_object_size = 104857600
+# live = false
+# endpoint_url = "https://storage.googleapis.com"
+# project_id = "my-gcp-project"
+# # Credentials should be provided via environment variable:
+# # FERRUMD_GCS_CREDENTIALS_PATH
+
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".
 # Static keys take precedence over fetched JWKS keys.

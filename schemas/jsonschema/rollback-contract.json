@@ -64,6 +64,9 @@
         "S3DeleteObject",
         "S3GetObject",
         "S3CopyObject",
+        "GcsPutObject",
+        "GcsDeleteObject",
+        "GcsGetObject",
         "Unknown"
       ]
     },
@@ -96,7 +99,9 @@
               "EmailDraftExists",
               "JsonPredicate",
               "S3ObjectExists",
-              "S3VersionIdMatches"
+              "S3VersionIdMatches",
+              "GcsObjectExists",
+              "GcsGenerationMatches"
             ]
           },
           "config": {

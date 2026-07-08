@@ -77,6 +77,11 @@ fn clear_test_env() {
         "FERRUMD_AUDIT_WORM_SINK_REGION",
         "FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID",
         "FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY",
+        "FERRUMD_GCS_ALLOWED_BUCKET",
+        "FERRUMD_GCS_ENDPOINT_URL",
+        "FERRUMD_GCS_PROJECT_ID",
+        "FERRUMD_GCS_CREDENTIALS_PATH",
+        "FERRUMD_GCS_LIVE",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -5238,6 +5243,114 @@ secret_access_key = "w0rmdb33f/s3cr3t"
         debug.contains("<redacted>"),
         "debug output should show redaction placeholder"
     );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "gcs")]
+#[test]
+fn test_gcs_config_defaults_live_false() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.gcs_config]
+allowed_bucket = "my-gcs-bucket"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let gcs = config
+        .gcs_config
+        .as_ref()
+        .expect("gcs_config should be set");
+    assert_eq!(gcs.allowed_bucket, "my-gcs-bucket");
+    assert!(!gcs.live, "GCS live should default to false");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "gcs")]
+#[test]
+fn test_gcs_config_env_live_true() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_GCS_ALLOWED_BUCKET", "env-gcs-bucket");
+        std::env::set_var("FERRUMD_GCS_LIVE", "true");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let gcs = config
+        .gcs_config
+        .as_ref()
+        .expect("gcs_config should be set");
+    assert_eq!(gcs.allowed_bucket, "env-gcs-bucket");
+    assert!(gcs.live, "FERRUMD_GCS_LIVE=true should enable live mode");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[cfg(feature = "gcs")]
+#[test]
+fn test_gcs_config_cli_overrides_env_and_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_GCS_ALLOWED_BUCKET", "env-gcs-bucket");
+        std::env::set_var("FERRUMD_GCS_LIVE", "true");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.gcs_config]
+allowed_bucket = "file-gcs-bucket"
+live = false
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        gcs_live: true,
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let gcs = config
+        .gcs_config
+        .as_ref()
+        .expect("gcs_config should be set");
+    assert_eq!(gcs.allowed_bucket, "env-gcs-bucket");
+    assert!(gcs.live, "--gcs-live should override env and file");
 
     let _ = fs::remove_file(path);
     clear_test_env();

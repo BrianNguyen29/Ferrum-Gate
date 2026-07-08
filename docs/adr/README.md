@@ -22,6 +22,7 @@ This directory records significant architecture decisions made in the FerrumGate
 | [015](015-shared-nonce-cache.md) | Shared Nonce Cache for Agent Auth Replay Protection | Accepted |
 | [016](016-ha-reconciler.md) | HA Reconciler for Stale In-Flight Executions | Accepted |
 | [017](017-mfa-defense-in-depth.md) | Per-Agent MFA Lockout (Defense in Depth) | Accepted |
+| [018](018-gcs-adapter-az-deferred.md) | P2-4 GCS-First Object-Storage Adapter Split | Accepted |
 
 ## Format
 

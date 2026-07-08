@@ -14,6 +14,8 @@ Current direction and near-term priorities for FerrumGate.
 | MCP stdio server | Default, stable; tools validated locally | Stable |
 | MCP HTTP/SSE transport | Streamable HTTP / SSE transport; P2-3a in-memory session/replay skeleton implemented | Experimental |
 | AWS S3 adapter | Live execution (put/delete/get/copy) with versioning-based rollback; MinIO-gated integration tests; gateway/MCP wired | Implemented (experimental) |
+| Google Cloud Storage adapter | Shape-only put/delete/get with generation-based rollback; live SDK path is a declared seam | Implemented (experimental) |
+| Azure Blob adapter | Deferred to a future slice after GCS semantics are stable | Not implemented |
 | Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
 | Multi-tenancy | Not on current roadmap | Not implemented |
 | Compliance certification | Out of scope for open-source project | Not implemented |
@@ -74,8 +76,8 @@ These require broader design decisions, additional evidence, or an ADR before th
   - Acceptance: Resume checkpoint persisted to store; session ID rehydration restores tool context and pending capability state.
 - **Production MCP HTTP/SSE** — Production-ready Streamable HTTP / SSE transport. Requires target-host smoke, load, and reconnect evidence first.
   - Acceptance: Load test evidence (≥100 concurrent sessions, 0% errors over 5 min); reconnect test evidence; ADR 005 updated to Accepted.
-- **GCS / Azure Blob adapters** — Object-store adapters. Require rollback/compensation contracts and local validation.
-  - Acceptance: Adapter implements `AdapterPort` with put/delete/get/copy; versioning-based rollback; local emulator integration tests.
+- **Azure Blob adapter** — Object-store adapter. Deferred until GCS adapter semantics are stable.
+  - Acceptance: Adapter implements `AdapterPort` with put/delete/get; versioning-based rollback; local emulator integration tests.
 - **HA reconciler** — Background task to reconcile capability and execution state across restarted or failed-over instances.
   - Acceptance: Reconciler scans stale `in_flight` executions and transitions them to `failed` or `compensated` with audit entries; works with PostgreSQL and SQLite.
 - **Persistent nonce cache** — ✅ Implemented in ADR-015: `NonceCache` seam with `InMemoryNonceCache` (default) and `PostgresNonceCache` (multi-process).

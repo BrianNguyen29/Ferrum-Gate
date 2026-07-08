@@ -2510,6 +2510,9 @@ components:
             - S3DeleteObject
             - S3GetObject
             - S3CopyObject
+            - GcsPutObject
+            - GcsDeleteObject
+            - GcsGetObject
             - Unknown
         rollback_class:
           type: string
@@ -3774,6 +3777,8 @@ components:
             - JsonPredicate
             - S3ObjectExists
             - S3VersionIdMatches
+            - GcsObjectExists
+            - GcsGenerationMatches
         config:
           type: object
 
