@@ -817,21 +817,23 @@ impl ServerConfig {
         }
 
         if production_like && !self.lifecycle_reconciliation_enabled {
-            tracing::warn!(
-                "lifecycle_reconciliation_enabled is false in a production-like configuration; \
-                 periodic lifecycle outbox reconciliation is disabled"
+            return Err(
+                "lifecycle_reconciliation_enabled must be true for production-like non-loopback \
+                 deployments"
+                    .to_string(),
             );
         }
         if production_like && !self.approval_timeout_enabled {
-            tracing::warn!(
-                "approval_timeout_enabled is false in a production-like configuration; \
-                 stale pending approvals will not be expired automatically"
+            return Err(
+                "approval_timeout_enabled must be true for production-like non-loopback \
+                 deployments"
+                    .to_string(),
             );
         }
         if production_like && !self.audit_fail_closed {
-            tracing::warn!(
-                "audit_fail_closed is false in a production-like configuration; \
-                 audit append failures will not block actions"
+            return Err(
+                "audit_fail_closed must be true for production-like non-loopback deployments"
+                    .to_string(),
             );
         }
 

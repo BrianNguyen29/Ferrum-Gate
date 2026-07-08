@@ -3756,7 +3756,7 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
 }
 
 #[test]
-fn test_validate_warns_but_allows_disabled_lifecycle_reconciliation_in_production() {
+fn test_validate_rejects_disabled_lifecycle_reconciliation_in_production() {
     let _guard = env_lock().lock().unwrap();
     clear_test_env();
 
@@ -3767,6 +3767,8 @@ auth_mode = "bearer"
 bearer_token = "valid-test-token"
 store_dsn = "sqlite:///tmp/ferrumgate/test.db"
 fs_workdir = "/tmp/ferrumgate"
+approval_timeout_enabled = true
+audit_fail_closed = true
 lifecycle_reconciliation_enabled = false
 "#,
     );
@@ -3796,8 +3798,8 @@ lifecycle_reconciliation_enabled = false
         lifecycle_reconciliation_batch_limit: None,
         approval_timeout_seconds: None,
         approval_reconciliation_interval_secs: None,
-        approval_timeout_enabled: false,
-        audit_fail_closed: false,
+        approval_timeout_enabled: true,
+        audit_fail_closed: true,
         approval_mfa_required: false,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
@@ -3806,15 +3808,15 @@ lifecycle_reconciliation_enabled = false
         ..Default::default()
     };
 
-    let config = resolve_config(&args).unwrap();
-    assert!(!config.lifecycle_reconciliation_enabled);
+    let err = resolve_config(&args).unwrap_err();
+    assert!(err.to_string().contains("lifecycle_reconciliation_enabled"));
 
     let _ = fs::remove_file(path);
     clear_test_env();
 }
 
 #[test]
-fn test_validate_warns_but_allows_disabled_audit_fail_closed_in_production() {
+fn test_validate_rejects_disabled_approval_timeout_in_production() {
     let _guard = env_lock().lock().unwrap();
     clear_test_env();
 
@@ -3825,6 +3827,68 @@ auth_mode = "bearer"
 bearer_token = "valid-test-token"
 store_dsn = "sqlite:///tmp/ferrumgate/test.db"
 fs_workdir = "/tmp/ferrumgate"
+lifecycle_reconciliation_enabled = true
+audit_fail_closed = true
+approval_timeout_enabled = false
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: true,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: false,
+        audit_fail_closed: true,
+        approval_mfa_required: false,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).unwrap_err();
+    assert!(err.to_string().contains("approval_timeout_enabled"));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_validate_rejects_disabled_audit_fail_closed_in_production() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "0.0.0.0:8080"
+auth_mode = "bearer"
+bearer_token = "valid-test-token"
+store_dsn = "sqlite:///tmp/ferrumgate/test.db"
+fs_workdir = "/tmp/ferrumgate"
+lifecycle_reconciliation_enabled = true
+approval_timeout_enabled = true
 audit_fail_closed = false
 "#,
     );
@@ -3849,12 +3913,12 @@ audit_fail_closed = false
         pg_acquire_timeout_secs: None,
         pg_statement_timeout_ms: None,
         pg_idle_in_transaction_timeout_ms: None,
-        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_enabled: true,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
         approval_timeout_seconds: None,
         approval_reconciliation_interval_secs: None,
-        approval_timeout_enabled: false,
+        approval_timeout_enabled: true,
         audit_fail_closed: false,
         approval_mfa_required: false,
         mfa_secret_key: None,
@@ -3864,8 +3928,8 @@ audit_fail_closed = false
         ..Default::default()
     };
 
-    let config = resolve_config(&args).unwrap();
-    assert!(!config.audit_fail_closed);
+    let err = resolve_config(&args).unwrap_err();
+    assert!(err.to_string().contains("audit_fail_closed"));
 
     let _ = fs::remove_file(path);
     clear_test_env();
