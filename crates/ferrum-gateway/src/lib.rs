@@ -3,6 +3,7 @@
 mod admin;
 mod approval;
 mod audit;
+mod auth;
 mod auth_actor;
 mod behavioral;
 mod bridge;
