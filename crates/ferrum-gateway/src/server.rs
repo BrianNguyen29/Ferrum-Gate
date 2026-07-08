@@ -40,36 +40,8 @@ use crate::behavioral::build_profiler;
 use crate::metrics::GovernanceRoute;
 use crate::metrics::Metrics;
 use crate::rate_limit::PrincipalOrIpKeyExtractor;
+use crate::state::AppState;
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
-
-/// Shared state that includes both runtime and server config for auth.
-#[derive(Clone)]
-pub(crate) struct AppState {
-    pub(crate) runtime: GatewayRuntime,
-    pub(crate) server_config: ServerConfig,
-    pub(crate) metrics: Arc<Metrics>,
-    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
-    pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
-    /// Nonce cache for Agent auth replay protection.
-    nonce_cache: Arc<dyn ferrum_store::NonceCache>,
-}
-
-#[cfg(test)]
-impl AppState {
-    /// Test-only constructor that builds an AppState from a runtime and config.
-    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
-        Arc::new(AppState {
-            runtime,
-            server_config: server_config.clone(),
-            metrics: Arc::new(Metrics::new()),
-            profiler: build_profiler(&server_config),
-            jwks_cache: None,
-            nonce_cache: Arc::new(InMemoryNonceCache::new(
-                server_config.nonce_cache_max_entries,
-            )),
-        })
-    }
-}
 
 // ---------------------------------------------------------------------------
 // I11 Output Sanitization helpers

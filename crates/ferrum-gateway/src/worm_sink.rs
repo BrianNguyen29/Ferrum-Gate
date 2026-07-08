@@ -21,7 +21,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::server::AppState;
+use crate::state::AppState;
 
 /// Gateway-side configuration for the WORM audit sink.
 #[derive(Clone)]

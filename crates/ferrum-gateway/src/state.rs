@@ -9,11 +9,43 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Re-export the canonical `AppState` so that extracted handler modules
-/// (e.g. `capabilities`, `monitoring`, `policy_eval`) can reference it via
-/// `crate::state::AppState` instead of taking a direct dependency on
-/// `crate::server`.
-pub(crate) use crate::server::AppState;
+use crate::metrics::Metrics;
+
+#[cfg(test)]
+use crate::behavioral::build_profiler;
+#[cfg(test)]
+use ferrum_store::InMemoryNonceCache;
+
+/// Canonical shared state for gateway handlers and background tasks.
+/// Includes the runtime, server config, metrics, behavioral profiler, OIDC JWKS cache,
+/// and nonce cache for Agent auth replay protection.
+#[derive(Clone)]
+pub(crate) struct AppState {
+    pub(crate) runtime: GatewayRuntime,
+    pub(crate) server_config: ServerConfig,
+    pub(crate) metrics: Arc<Metrics>,
+    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
+    pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
+    /// Nonce cache for Agent auth replay protection.
+    pub(crate) nonce_cache: Arc<dyn ferrum_store::NonceCache>,
+}
+
+#[cfg(test)]
+impl AppState {
+    /// Test-only constructor that builds an AppState from a runtime and config.
+    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
+        Arc::new(AppState {
+            runtime,
+            server_config: server_config.clone(),
+            metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
+            jwks_cache: None,
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
+        })
+    }
+}
 
 #[cfg(feature = "worm-sink")]
 pub use crate::worm_sink::WormSinkConfig;

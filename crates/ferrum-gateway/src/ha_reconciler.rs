@@ -390,7 +390,7 @@ mod tests {
         let capability_id = capability.capability_id;
         store.capabilities().insert(&capability).await.unwrap();
 
-        let state = crate::server::AppState::test_new(runtime, config);
+        let state = AppState::test_new(runtime, config);
         (state, intent_id, proposal_id, capability_id)
     }
 
