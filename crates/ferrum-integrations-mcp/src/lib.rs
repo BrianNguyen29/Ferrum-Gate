@@ -97,6 +97,8 @@ use sha2::Digest;
 
 mod http_client;
 mod mapping_helpers;
+#[cfg(feature = "http")]
+mod mcp_session_store;
 mod rest_mapper;
 mod stage2_types;
 
@@ -117,6 +119,9 @@ pub use mapping_helpers::{
 
 // Re-export HTTP client types for use by the binary.
 pub use http_client::{ClientConfig, FerrumGatewayClient, GatewayError};
+
+#[cfg(feature = "http")]
+pub use mcp_session_store::{McpSessionStore, ReplayEvent, auth_fingerprint};
 
 // ---------------------------------------------------------------------------
 // Tool Registry (Phase A)

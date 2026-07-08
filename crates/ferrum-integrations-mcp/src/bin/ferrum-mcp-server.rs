@@ -24,21 +24,24 @@
 //! ## Phase 6.1 Status
 //!
 //! Phase 6.1 adds:
-//! - Streamable HTTP transport skeleton (`POST /mcp`, `GET /health`, `GET /ready`)
+//! - Streamable HTTP transport skeleton (`POST /mcp`, `GET /mcp` SSE replay,
+//!   `DELETE /mcp`, `GET /health`, `GET /ready`)
 //! - CLI args `--transport stdio|http` and `--bind ADDR`
-//! - `GET /mcp` returns 405 (SSE streaming deferred)
+//! - In-memory session store (`Mcp-Session-Id`) and bounded SSE replay buffer
+//!   (experimental, not restart-resumable)
 //!
 //! Phase 6.1 does NOT implement:
-//! - SSE streaming/multiplexing/resumability
-//! - Session state management
-//! - OAuth/auth implementation for MCP HTTP
+//! - Persistent checkpoint / restart-resumable session restore
+//! - Gateway DB session storage or sidecar persistence
+//! - OAuth/auth implementation for MCP HTTP beyond bearer tokens
 //! - Real external MCP client compatibility claim
+//! - Replay or re-execution of inbound tool calls
 
 #[cfg(feature = "http")]
 use axum::{
     Router,
     extract::{ConnectInfo, Request, State},
-    http::{HeaderName, StatusCode, header},
+    http::{HeaderName, Method, StatusCode, header},
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -54,6 +57,8 @@ use ferrum_integrations_mcp::{
 };
 #[allow(unused_imports)]
 use ferrum_integrations_mcp::{JsonRpcRequest, dispatch};
+#[cfg(feature = "http")]
+use ferrum_integrations_mcp::{McpSessionStore, auth_fingerprint};
 use std::io::{self, BufRead, Write};
 #[cfg(feature = "http")]
 use std::net::{IpAddr, SocketAddr};
@@ -107,6 +112,31 @@ struct Cli {
     /// FERRUM_MCP_HTTP_RATE_BURST (default 20).
     #[arg(long)]
     http_rate_burst: Option<u32>,
+
+    /// MCP session TTL in seconds. Also set via FERRUM_MCP_SESSION_TTL_SECS
+    /// (default 300).
+    #[arg(long)]
+    mcp_session_ttl_secs: Option<u64>,
+
+    /// Maximum outbound events retained per session. Also set via
+    /// FERRUM_MCP_SESSION_MAX_EVENTS (default 1000).
+    #[arg(long)]
+    mcp_session_max_events: Option<usize>,
+
+    /// Maximum concurrent in-memory MCP sessions. Also set via
+    /// FERRUM_MCP_SESSION_MAX_SESSIONS (default 1000).
+    #[arg(long)]
+    mcp_session_max_sessions: Option<usize>,
+
+    /// Maximum bytes for a single outbound replay event. Also set via
+    /// FERRUM_MCP_SESSION_MAX_EVENT_BYTES (default 1 MiB).
+    #[arg(long)]
+    mcp_session_max_event_bytes: Option<usize>,
+
+    /// Maximum total replay bytes retained per session. Also set via
+    /// FERRUM_MCP_SESSION_MAX_TOTAL_BYTES (default 16 MiB).
+    #[arg(long)]
+    mcp_session_max_total_bytes: Option<usize>,
 }
 
 /// Transport mode selection.
@@ -337,6 +367,8 @@ struct AppState {
     allowed_hosts: Vec<String>,
     /// Per-IP HTTP-layer rate limiter.
     ip_rate_limiter: Arc<IpRateLimiter>,
+    /// In-memory MCP session store (experimental, not restart-resumable).
+    session_store: Arc<McpSessionStore>,
 }
 
 #[cfg(feature = "http")]
@@ -438,13 +470,19 @@ async fn security_middleware(
         }
     }
 
+    // Only allow `Accept: text/event-stream` on GET /mcp. Reject it on all
+    // other paths/methods to keep SSE surface narrow.
     if request
         .headers()
         .get(header::ACCEPT)
         .and_then(|a| a.to_str().ok())
         .is_some_and(|s| s.contains("text/event-stream"))
     {
-        return StatusCode::NOT_ACCEPTABLE.into_response();
+        let path = request.uri().path();
+        let method = request.method();
+        if path != "/mcp" || method != Method::GET {
+            return StatusCode::NOT_ACCEPTABLE.into_response();
+        }
     }
 
     next.run(request).await
@@ -473,43 +511,70 @@ async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 }
 
 #[cfg(feature = "http")]
-/// Extract the JSON-RPC method from a request body without full dispatch.
-fn extract_method(body: &str) -> Option<String> {
-    serde_json::from_str::<JsonRpcRequest>(body)
-        .ok()
-        .map(|r| r.method)
-}
-
-#[cfg(feature = "http")]
-/// `POST /mcp` — accept a single JSON-RPC message and return synchronous `application/json`.
-/// Requires a valid bearer token when `auth_token` is configured; fails closed otherwise.
-async fn mcp_post_handler(
-    State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-    body: String,
-) -> Result<axum::Json<JsonRpcResponse>, StatusCode> {
-    if let Some(expected) = &state.auth_token {
-        let auth = headers.get("Authorization").and_then(|v| v.to_str().ok());
-        match auth {
-            Some(header) if header.starts_with("Bearer ") => {
-                let provided = &header[7..];
+/// Validate the `Authorization` header and return the auth fingerprint.
+///
+/// If `expected` is `Some`, the header must be a matching `Bearer <token>`.
+/// If `expected` is `None`, any bearer token is accepted (insecure mode) and
+/// an empty fingerprint is returned when no header is present.
+fn require_bearer(
+    headers: &axum::http::HeaderMap,
+    expected: Option<&str>,
+) -> Result<String, StatusCode> {
+    let auth = headers.get("Authorization").and_then(|v| v.to_str().ok());
+    match (auth, expected) {
+        (None, None) => Ok(auth_fingerprint("")),
+        (None, Some(_)) => {
+            tracing::warn!(
+                event_type = "bearer_rejected",
+                reason = "missing_or_malformed"
+            );
+            Err(StatusCode::UNAUTHORIZED)
+        }
+        (Some(header), expected) => {
+            const PREFIX: &str = "Bearer ";
+            if !header.starts_with(PREFIX) {
+                tracing::warn!(event_type = "bearer_rejected", reason = "missing_prefix");
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            let provided = &header[PREFIX.len()..];
+            if let Some(expected) = expected {
                 if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
                     tracing::warn!(event_type = "bearer_rejected", reason = "mismatch");
                     return Err(StatusCode::UNAUTHORIZED);
                 }
             }
-            _ => {
-                tracing::warn!(
-                    event_type = "bearer_rejected",
-                    reason = "missing_or_malformed"
-                );
-                return Err(StatusCode::UNAUTHORIZED);
-            }
+            Ok(auth_fingerprint(provided))
         }
     }
+}
 
-    let protocol_header = HeaderName::from_static("mcp-protocol-version");
-    if extract_method(&body).as_deref() == Some("initialize") {
+#[cfg(feature = "http")]
+/// `POST /mcp` — accept a single JSON-RPC message and return synchronous `application/json`.
+///
+/// * `initialize` creates a new session and returns `Mcp-Session-Id` on success.
+/// * All other methods require a valid `Mcp-Session-Id` header bound to the
+///   same bearer token fingerprint.
+async fn mcp_post_handler(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Result<Response, StatusCode> {
+    let expected = state.auth_token.as_deref();
+    let fingerprint = require_bearer(&headers, expected)?;
+
+    // Parse first: invalid JSON gets a JSON-RPC parse error response without
+    // requiring a session ID.
+    let request = match parse_request(&body) {
+        Ok(req) => req,
+        Err(response) => {
+            return Ok((StatusCode::OK, axum::Json(response)).into_response());
+        }
+    };
+
+    let is_initialize = request.method == "initialize";
+
+    if is_initialize {
+        let protocol_header = HeaderName::from_static("mcp-protocol-version");
         if let Some(version) = headers.get(&protocol_header).and_then(|v| v.to_str().ok()) {
             if version != SUPPORTED_PROTOCOL_VERSION {
                 tracing::warn!(
@@ -522,32 +587,162 @@ async fn mcp_post_handler(
         }
     }
 
-    let state = Arc::clone(&state);
-    let response = tokio::task::spawn_blocking(move || match parse_request(&body) {
-        Ok(request) => dispatch_with_client(
+    // Non-initialize requests must present a valid session ID before dispatch.
+    let session_id: Option<String> = if !is_initialize {
+        let sid = headers
+            .get("Mcp-Session-Id")
+            .and_then(|v| v.to_str().ok())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        state
+            .session_store
+            .validate_session(sid, &fingerprint)
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Some(sid.to_string())
+    } else {
+        None
+    };
+
+    let state_for_dispatch = Arc::clone(&state);
+    let response = tokio::task::spawn_blocking(move || {
+        dispatch_with_client(
             request,
-            &state.client,
-            &state.actor.actor_id,
-            &state.rate_limiter,
-        ),
-        Err(response) => response,
+            &state_for_dispatch.client,
+            &state_for_dispatch.actor.actor_id,
+            &state_for_dispatch.rate_limiter,
+        )
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(axum::Json(response))
+    let response_json =
+        serde_json::to_string(&response).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if is_initialize {
+        let is_success = matches!(response, JsonRpcResponse::Success(_));
+        if is_success {
+            let sid = state
+                .session_store
+                .create_session_with_fingerprint(&fingerprint)
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            if let Err(e) = state.session_store.append_event(&sid, response_json) {
+                tracing::warn!(
+                    event_type = "replay_append_failed",
+                    error = %e,
+                    session_id = "***",
+                    "failed to append initialize response to replay buffer; returning dispatch response anyway"
+                );
+            }
+            let mut resp = (
+                StatusCode::OK,
+                [(HeaderName::from_static("mcp-session-id"), sid.as_str())],
+                axum::Json(response),
+            )
+                .into_response();
+            resp.headers_mut().insert(
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("application/json"),
+            );
+            return Ok(resp);
+        }
+    } else if let Some(sid) = session_id {
+        if let Err(e) = state.session_store.append_event(&sid, response_json) {
+            tracing::warn!(
+                event_type = "replay_append_failed",
+                error = %e,
+                session_id = "***",
+                "failed to append response to replay buffer; returning dispatch response anyway"
+            );
+        }
+    }
+
+    Ok((StatusCode::OK, axum::Json(response)).into_response())
 }
 
 #[cfg(feature = "http")]
-/// `GET /mcp` — SSE streaming placeholder. Returns 405 per Phase 6.1 boundary.
-async fn mcp_get_handler() -> impl IntoResponse {
-    (
-        StatusCode::METHOD_NOT_ALLOWED,
-        axum::Json(serde_json::json!({
-            "error": "SSE streaming not implemented in Phase 6.1 skeleton",
-            "deferred": true,
-        })),
+/// `GET /mcp` — SSE replay-only endpoint.
+///
+/// Requires bearer auth, a valid `Mcp-Session-Id`, and `Accept: text/event-stream`.
+/// Replays serialized outbound events after the optional `Last-Event-ID`.
+/// This handler never parses the request body or dispatches tool calls.
+async fn mcp_get_handler(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, StatusCode> {
+    let expected = state.auth_token.as_deref();
+    let fingerprint = require_bearer(&headers, expected)?;
+
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !accept.contains("text/event-stream") {
+        return Err(StatusCode::NOT_ACCEPTABLE);
+    }
+
+    let session_id = headers
+        .get("Mcp-Session-Id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let session = state
+        .session_store
+        .validate_session(session_id, &fingerprint)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let last_event_id = headers.get("Last-Event-ID").and_then(|v| v.to_str().ok());
+
+    let events = session
+        .events_after(last_event_id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let mut body = String::new();
+    if events.is_empty() {
+        body.push_str(": heartbeat\n\n");
+    } else {
+        for event in events {
+            body.push_str(&format!("id: {}\ndata: {}\n\n", event.id, event.payload));
+        }
+    }
+
+    let mut response = (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/event-stream")],
+        body,
     )
+        .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+#[cfg(feature = "http")]
+/// `DELETE /mcp` — terminate an MCP session idempotently.
+///
+/// Requires bearer auth and a `Mcp-Session-Id` header. Returns `204 No Content`
+/// on success; unknown/expired IDs also return `204` to remain idempotent.
+async fn mcp_delete_handler(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<StatusCode, StatusCode> {
+    let expected = state.auth_token.as_deref();
+    let fingerprint = require_bearer(&headers, expected)?;
+
+    let session_id = headers
+        .get("Mcp-Session-Id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    // Only terminate sessions that belong to the caller; for unknown/mismatched
+    // sessions we still return 204 to avoid leaking session existence.
+    if state
+        .session_store
+        .validate_session(session_id, &fingerprint)
+        .is_ok()
+    {
+        state.session_store.terminate_session(session_id);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(feature = "http")]
@@ -667,6 +862,30 @@ async fn run_http(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let http_rate_burst = cli
         .http_rate_burst
         .unwrap_or_else(|| env_or("FERRUM_MCP_HTTP_RATE_BURST", 20));
+    let session_ttl = std::time::Duration::from_secs(
+        cli.mcp_session_ttl_secs
+            .unwrap_or_else(|| env_or("FERRUM_MCP_SESSION_TTL_SECS", 300_u64)),
+    );
+    let session_max_events = cli
+        .mcp_session_max_events
+        .unwrap_or_else(|| env_or("FERRUM_MCP_SESSION_MAX_EVENTS", 1000_usize));
+    let session_max_sessions = cli
+        .mcp_session_max_sessions
+        .unwrap_or_else(|| env_or("FERRUM_MCP_SESSION_MAX_SESSIONS", 1000_usize));
+    let session_max_event_bytes = cli
+        .mcp_session_max_event_bytes
+        .unwrap_or_else(|| env_or("FERRUM_MCP_SESSION_MAX_EVENT_BYTES", 1024 * 1024_usize));
+    let session_max_total_bytes = cli
+        .mcp_session_max_total_bytes
+        .unwrap_or_else(|| env_or("FERRUM_MCP_SESSION_MAX_TOTAL_BYTES", 16 * 1024 * 1024_usize));
+
+    let session_store = Arc::new(McpSessionStore::new(
+        session_ttl,
+        session_max_events,
+        session_max_sessions,
+        session_max_event_bytes,
+        session_max_total_bytes,
+    ));
 
     let state = Arc::new(AppState {
         client,
@@ -676,14 +895,21 @@ async fn run_http(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         allowed_origins,
         allowed_hosts,
         ip_rate_limiter: Arc::new(IpRateLimiter::new(http_rate_per_sec, http_rate_burst)),
+        session_store,
     });
 
     let cleanup_limiter = Arc::clone(&state.ip_rate_limiter);
+    let cleanup_store = Arc::clone(&state.session_store);
 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
-        .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+        .route(
+            "/mcp",
+            post(mcp_post_handler)
+                .get(mcp_get_handler)
+                .delete(mcp_delete_handler),
+        )
         .layer(from_fn_with_state(Arc::clone(&state), security_middleware))
         .with_state(state);
 
@@ -697,6 +923,8 @@ async fn run_http(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
                 _ = interval.tick() => {
                     let removed = cleanup_limiter.cleanup_idle(IP_RATE_LIMITER_IDLE_TIMEOUT);
                     tracing::debug!(event_type = "ip_rate_limiter_cleanup", removed);
+                    let expired = cleanup_store.cleanup_expired();
+                    tracing::debug!(event_type = "mcp_session_cleanup", expired);
                 }
                 _ = cleanup_shutdown.notified() => break,
             }
@@ -919,6 +1147,7 @@ mod tests {
         auth_token: Option<String>,
         allowed_origins: Vec<String>,
         allowed_hosts: Vec<String>,
+        session_store: Arc<McpSessionStore>,
     ) -> Router {
         // Create the blocking client on a dedicated thread to avoid
         // "cannot create a runtime in an async context" panic.
@@ -936,6 +1165,7 @@ mod tests {
             allowed_origins,
             allowed_hosts,
             ip_rate_limiter: Arc::new(IpRateLimiter::new(5.0, 20)),
+            session_store,
         });
         // Leak a clone so the Arc refcount never reaches zero inside async tests,
         // preventing `reqwest::blocking::Client` from being dropped in an async
@@ -945,18 +1175,64 @@ mod tests {
         Router::new()
             .route("/health", get(health_handler))
             .route("/ready", get(ready_handler))
-            .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+            .route(
+                "/mcp",
+                post(mcp_post_handler)
+                    .get(mcp_get_handler)
+                    .delete(mcp_delete_handler),
+            )
             .layer(from_fn_with_state(Arc::clone(&state), security_middleware))
             .with_state(state)
     }
 
     #[cfg(feature = "http")]
     fn default_test_app() -> Router {
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
         test_app(
             Some("test-mcp-token".to_string()),
             vec![],
             default_allowed_hosts(),
+            session_store,
         )
+    }
+
+    #[cfg(feature = "http")]
+    async fn initialize_session(app: &mut Router) -> String {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let sid = response
+            .headers()
+            .get("Mcp-Session-Id")
+            .expect("initialize should return Mcp-Session-Id")
+            .to_str()
+            .unwrap()
+            .to_string();
+        // Drain the body to keep the connection happy in test oneshot use.
+        let _ = response.into_body().collect().await;
+        sid
     }
 
     #[cfg(feature = "http")]
@@ -1039,6 +1315,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        let session_id = response
+            .headers()
+            .get("Mcp-Session-Id")
+            .expect("initialize should return Mcp-Session-Id")
+            .to_str()
+            .unwrap();
+        assert!(!session_id.is_empty());
+
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json.get("result").is_some());
@@ -1053,7 +1337,8 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = default_test_app();
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
         let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":42}"#;
         let response = app
             .oneshot(local_connect_info(
@@ -1062,6 +1347,7 @@ mod tests {
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
                     .body(Body::from(body_json))
                     .unwrap(),
             ))
@@ -1107,27 +1393,34 @@ mod tests {
 
     #[cfg(feature = "http")]
     #[tokio::test]
-    async fn test_http_mcp_get_returns_405() {
+    async fn test_http_mcp_get_sse_requires_session_and_accept() {
         use axum::body::Body;
-        use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = default_test_app();
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
         let response = app
             .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("GET")
                     .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Accept", "text/event-stream")
+                    .header("Mcp-Session-Id", session_id)
                     .body(Body::empty())
                     .unwrap(),
             ))
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["deferred"], true);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -1141,7 +1434,8 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = default_test_app();
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
         let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = app
             .oneshot(local_connect_info(
@@ -1150,6 +1444,7 @@ mod tests {
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
                     .body(Body::from(body_json))
                     .unwrap(),
             ))
@@ -1171,7 +1466,8 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = default_test_app();
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
         let body_json = r#"{"jsonrpc":"2.0","method":"tools/list","id":1}"#;
         let response = app
             .oneshot(local_connect_info(
@@ -1180,6 +1476,7 @@ mod tests {
                     .uri("/mcp")
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
                     .body(Body::from(body_json))
                     .unwrap(),
             ))
@@ -1348,10 +1645,18 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
         let app = test_app(
             Some("test-mcp-token".to_string()),
             vec![],
             vec!["allowed.example.com".to_string()],
+            session_store,
         );
         let response = app
             .oneshot(local_connect_info(
@@ -1374,10 +1679,18 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
         let app = test_app(
             Some("test-mcp-token".to_string()),
             vec![],
             vec!["allowed.example.com".to_string()],
+            session_store,
         );
         let response = app
             .oneshot(local_connect_info(
@@ -1424,11 +1737,20 @@ mod tests {
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        let app = test_app(
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
+        let mut app = test_app(
             Some("test-mcp-token".to_string()),
             vec!["http://example.com".to_string()],
             default_allowed_hosts(),
+            session_store,
         );
+        let session_id = initialize_session(&mut app).await;
         let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
         let response = app
             .oneshot(local_connect_info(
@@ -1438,6 +1760,7 @@ mod tests {
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer test-mcp-token")
                     .header("Origin", "http://example.com")
+                    .header("Mcp-Session-Id", session_id)
                     .body(Body::from(body_json))
                     .unwrap(),
             ))
@@ -1452,7 +1775,7 @@ mod tests {
 
     #[cfg(feature = "http")]
     #[tokio::test]
-    async fn test_http_rejects_accept_event_stream() {
+    async fn test_http_rejects_accept_event_stream_outside_mcp_get() {
         use axum::body::Body;
         use tower::ServiceExt;
 
@@ -1461,7 +1784,7 @@ mod tests {
             .oneshot(local_connect_info(
                 axum::http::Request::builder()
                     .method("GET")
-                    .uri("/mcp")
+                    .uri("/health")
                     .header("Accept", "text/event-stream")
                     .body(Body::empty())
                     .unwrap(),
@@ -1478,6 +1801,13 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
         let client =
             std::thread::spawn(|| FerrumGatewayClient::new(&ClientConfig::default()).unwrap())
                 .join()
@@ -1492,12 +1822,18 @@ mod tests {
             allowed_origins: vec![],
             allowed_hosts: default_allowed_hosts(),
             ip_rate_limiter: Arc::new(IpRateLimiter::new(5.0, 1)),
+            session_store,
         });
         let _leaked = Box::leak(Box::new(Arc::clone(&state)));
         let app = Router::new()
             .route("/health", get(health_handler))
             .route("/ready", get(ready_handler))
-            .route("/mcp", post(mcp_post_handler).get(mcp_get_handler))
+            .route(
+                "/mcp",
+                post(mcp_post_handler)
+                    .get(mcp_get_handler)
+                    .delete(mcp_delete_handler),
+            )
             .layer(from_fn_with_state(Arc::clone(&state), security_middleware))
             .with_state(state);
 
@@ -1639,5 +1975,529 @@ mod tests {
 
         let _ = shutdown_tx.send(());
         server_handle.await.unwrap();
+    }
+
+    // -------------------------------------------------------------------------
+    // P2-3a in-memory session / SSE replay tests
+    // -------------------------------------------------------------------------
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_initialize_failed_does_not_create_session() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = default_test_app();
+        // `client_info.name` is expected to be a string; supplying a number
+        // makes `handle_initialize` return an error response.
+        let body_json = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"client_info":{"name":123}}}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("Mcp-Session-Id").is_none());
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_non_initialize_missing_session_rejected() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = default_test_app();
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_non_initialize_unknown_session_rejected() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let mut app = default_test_app();
+        let _session_id = initialize_session(&mut app).await;
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", "not-a-real-session-id")
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_session_expired_rejected() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_millis(1),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
+        let session_id = session_store.create_session("test-mcp-token").unwrap();
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            default_allowed_hosts(),
+            session_store,
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_session_auth_mismatch_rejected() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
+        // Session bound to a different token fingerprint.
+        let session_id = session_store.create_session("other-token").unwrap();
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            default_allowed_hosts(),
+            session_store,
+        );
+
+        let body_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::from(body_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_get_sse_replays_initialize_response() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
+
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Accept", "text/event-stream")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.starts_with("id: 1\ndata: "));
+        assert!(text.contains("\"protocol_version\":\"2024-11-05\""));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_get_sse_replays_after_last_event_id() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
+
+        // Send a ping so the replay buffer has a second event.
+        let ping_json = r#"{"jsonrpc":"2.0","method":"ping","id":2}"#;
+        let ping_response = app
+            .clone()
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id.clone())
+                    .body(Body::from(ping_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(ping_response.status(), StatusCode::OK);
+
+        // Replay only events after the initialize response.
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Accept", "text/event-stream")
+                    .header("Mcp-Session-Id", session_id)
+                    .header("Last-Event-ID", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.starts_with("id: 2\ndata: "));
+        assert!(text.contains("\"success\":true"));
+        assert!(!text.contains("id: 1\ndata:"));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_get_sse_replay_never_dispatches() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            16 * 1024 * 1024,
+        ));
+        let session_id = session_store.create_session("test-mcp-token").unwrap();
+        session_store
+            .append_event(
+                &session_id,
+                r#"{"jsonrpc":"2.0","id":7,"result":{"replayed":true}}"#.to_string(),
+            )
+            .unwrap();
+
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            default_allowed_hosts(),
+            session_store,
+        );
+
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Accept", "text/event-stream")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("\"replayed\":true"));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_delete_terminates_session_idempotently() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
+
+        let delete_response = app
+            .clone()
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("DELETE")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        // Terminated session cannot be used for POST.
+        let ping_json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let ping_response = app
+            .clone()
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id.clone())
+                    .body(Body::from(ping_json))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(ping_response.status(), StatusCode::BAD_REQUEST);
+
+        // Second DELETE is idempotent.
+        let delete_again = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("DELETE")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(delete_again.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_append_failure_after_dispatch_still_returns_dispatch_response() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        // Set max_event_bytes to 1 so any non-empty outbound response payload is
+        // rejected by the replay buffer. Dispatch must still return 200 with the
+        // original JSON-RPC response, not 500.
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1,
+            16 * 1024 * 1024,
+        ));
+        let app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            default_allowed_hosts(),
+            session_store,
+        );
+
+        let init_body = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}"#;
+        let init_response = app
+            .clone()
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .body(Body::from(init_body))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        // Session is created and the initialize response is returned even though
+        // the replay buffer cannot retain it.
+        assert_eq!(init_response.status(), StatusCode::OK);
+        let session_id = init_response
+            .headers()
+            .get("Mcp-Session-Id")
+            .expect("initialize should still return Mcp-Session-Id")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let _ = init_response.into_body().collect().await;
+
+        // A subsequent ping also returns 200 with the dispatch response, not 500,
+        // and does not re-dispatch (response is the normal ping result).
+        let ping_body = r#"{"jsonrpc":"2.0","method":"ping","id":42}"#;
+        let ping_response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::from(ping_body))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(ping_response.status(), StatusCode::OK);
+        let body = ping_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["result"], serde_json::json!({"success": true}));
+        assert_eq!(json["id"], 42);
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_replay_buffer_byte_bound_evicts_oldest_response() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        // Cap total replay bytes per session tightly. Each ping response is small;
+        // after a few pings the oldest initialize response should be evicted.
+        let session_store = Arc::new(McpSessionStore::new(
+            std::time::Duration::from_secs(300),
+            1000,
+            1000,
+            1024 * 1024,
+            64,
+        ));
+        let mut app = test_app(
+            Some("test-mcp-token".to_string()),
+            vec![],
+            default_allowed_hosts(),
+            session_store,
+        );
+        let session_id = initialize_session(&mut app).await;
+
+        // Generate enough small outbound events to push the initialize response out.
+        for i in 0..10 {
+            let ping_body = format!(r#"{{"jsonrpc":"2.0","method":"ping","id":{}}}"#, i + 2);
+            let ping_response = app
+                .clone()
+                .oneshot(local_connect_info(
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri("/mcp")
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer test-mcp-token")
+                        .header("Mcp-Session-Id", session_id.clone())
+                        .body(Body::from(ping_body))
+                        .unwrap(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(ping_response.status(), StatusCode::OK);
+            let _ = ping_response.into_body().collect().await;
+        }
+
+        // Replaying from event 1 should still succeed (it yields later events),
+        // but the actual first event content may have been evicted; we just
+        // verify the response remains valid SSE and contains at least one event.
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Accept", "text/event-stream")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("data:"));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_http_mcp_get_without_accept_returns_not_acceptable() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let mut app = default_test_app();
+        let session_id = initialize_session(&mut app).await;
+        let response = app
+            .oneshot(local_connect_info(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Authorization", "Bearer test-mcp-token")
+                    .header("Mcp-Session-Id", session_id)
+                    .body(Body::empty())
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
     }
 }

@@ -51,15 +51,15 @@ The server uses **line-delimited JSON** over stdio. Each line is a single JSON-R
 | Transport | Status | Validation | Production-ready |
 |-----------|--------|------------|------------------|
 | **stdio** | Stable (default) | Local lifecycle and query_lineage validated | ✅ Yes (for local/self-hosted deployments) |
-| **Streamable HTTP** | Skeleton | Not tested | ❌ No — experimental |
-| **SSE** | Skeleton | Not tested | ❌ No — experimental |
-| **Resumability** | Not implemented | — | ❌ No — future / not committed |
+| **Streamable HTTP** | Skeleton | Session/replay tests added | ❌ No — experimental |
+| **SSE** | Skeleton | Redelivery-only replay; not restart-resumable | ❌ No — experimental |
+| **Resumability** | In-memory skeleton | Replay buffer bounded; not restart-resumable | ❌ No — not production-ready |
 
 > **MCP transport maturity**: stdio is the default and stable transport. Streamable HTTP / SSE transport and resumability are experimental or not yet implemented and are not production-ready.
 >
 > **HTTP auth requirement**: When using the experimental HTTP transport (`--transport http`), `POST /mcp` requires a bearer token configured via the `FERRUM_MCP_HTTP_BEARER_TOKEN` environment variable (or falls back to `FERRUM_GATEWAY_BEARER_TOKEN`). Requests without a valid `Authorization: Bearer <token>` header are rejected with HTTP 401. Use `--allow-insecure-no-auth` only for local development.
 >
-> **HTTP hardening**: The experimental HTTP transport enforces Host validation (localhost/loopback by default), rejects any `Origin` header unless explicitly allowlisted, applies per-IP rate limiting (default 5 req/s, burst 20), rejects `Accept: text/event-stream` with 406, validates `MCP-Protocol-Version` on `initialize`, and blocks non-loopback binds unless `--allow-insecure-nonlocal-bind` is set.
+> **HTTP hardening**: The experimental HTTP transport enforces Host validation (localhost/loopback by default), rejects any `Origin` header unless explicitly allowlisted, applies per-IP rate limiting (default 5 req/s, burst 20), allows `Accept: text/event-stream` only on `GET /mcp`, validates `MCP-Protocol-Version` on `initialize`, issues `Mcp-Session-Id` for session-bound replay, and blocks non-loopback binds unless `--allow-insecure-nonlocal-bind` is set. Replay buffers are byte-bounded (per-event and per-session total limits); replay append failures after a completed dispatch are logged and the dispatch response is still returned. HTTP sessions are in-memory and are lost on restart; they are not production-ready.
 
 ## Tools list
 

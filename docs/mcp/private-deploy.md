@@ -219,11 +219,11 @@ The following are explicitly **not** covered by this guide:
 
 | Item | Reason |
 |------|--------|
-| SSE streaming (`GET /mcp`) | Returns 405 today; full SSE/multiplexing not provided |
-| Session management / `Mcp-Session-Id` | No session store |
-| Resumability with event ID tracking | No replay buffer |
+| SSE streaming (`GET /mcp`) | Redelivery-only replay over in-memory session; not restart-resumable |
+| Session management / `Mcp-Session-Id` | In-memory skeleton with TTL, event count, and byte bounds; no persistent store |
+| Resumability with event ID tracking | Replay buffer is in-memory and bounded; not restart-resumable |
 | `MCP-Protocol-Version` header enforcement | Enforced on `initialize` when present; must match `2024-11-05` |
-| DELETE `/mcp` session termination | No session concept yet |
+| DELETE `/mcp` session termination | Implemented idempotently; sessions are not persisted |
 | OAuth / auth middleware specifically for MCP HTTP transport | Not implemented; Bearer header validation is used instead |
 | mTLS service-to-service | Transport hardening; tunnel integration covers baseline |
 
@@ -234,7 +234,7 @@ The following are explicitly **not** covered by this guide:
 | Note | Value |
 |------|-------|
 | Certified compatible with any external MCP client | **NO** |
-| SSE / session / resumability support | **Not provided** |
+| SSE / session / resumability support | In-memory skeleton only; **not restart-resumable** |
 | OAuth / mTLS for MCP transport | **Not provided** |
 | `MCP-Protocol-Version` header enforcement | Enforced on `initialize` when present |
 

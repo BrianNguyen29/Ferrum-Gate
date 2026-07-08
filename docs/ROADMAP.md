@@ -12,7 +12,7 @@ Current direction and near-term priorities for FerrumGate.
 | SQLite performance | Write queue + PRAGMA tuning validated; operator tuning guide available | Stable |
 | PostgreSQL support | Runtime and CI live tests passing; HA topology remains operator-owned | Beta |
 | MCP stdio server | Default, stable; tools validated locally | Stable |
-| MCP HTTP/SSE transport | Streamable HTTP / SSE transport; not yet validated | Experimental |
+| MCP HTTP/SSE transport | Streamable HTTP / SSE transport; P2-3a in-memory session/replay skeleton implemented | Experimental |
 | AWS S3 adapter | Live execution (put/delete/get/copy) with versioning-based rollback; MinIO-gated integration tests; gateway/MCP wired | Implemented (experimental) |
 | Operator experience | ferrumctl, ferrum-tui, Helm chart, monitoring rules, backup/restore drills | Implemented |
 | Multi-tenancy | Not on current roadmap | Not implemented |
@@ -49,7 +49,7 @@ Functional but may require operator tuning or have known caveats:
 
 Skeleton or partial implementation; not ready for production use:
 
-- **MCP Streamable HTTP / SSE transport.**
+- **MCP Streamable HTTP / SSE transport.** P2-3a in-memory session/replay skeleton is implemented; sessions are auth-bound and replay is redelivery-only. Not restart-resumable and not production-ready.
 
 ## Next (separate-PR proposals)
 

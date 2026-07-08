@@ -28,8 +28,8 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Managed SaaS / hosted service | Not implemented | No roadmap commitment |
 | Email sending | Not implemented | Mail draft adapter manages drafts only |
 | Compliance certification (SOC 2, ISO 27001, etc.) | Out of scope | Open-source project; operator must certify their own deployment |
-| MCP Streamable HTTP / SSE transport | Experimental | Not production-ready; requires `--features http` |
-| MCP resumability | Not implemented | Future priority; no committed timeline |
+| MCP Streamable HTTP / SSE transport | Experimental | Session/replay skeleton implemented; not production-ready |
+| MCP resumability | In-memory skeleton | Replay buffer implemented; not restart-resumable |
 | Turnkey HA product | Not implemented | Operator must design HA topology |
 | Store-backed CapabilityService | Not implemented | Deferred to separate PR |
 | PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
