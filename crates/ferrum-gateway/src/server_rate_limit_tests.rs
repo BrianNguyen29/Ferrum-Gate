@@ -1,5 +1,6 @@
 use super::*;
-use axum::{body::Body, http::Request};
+use axum::{body::Body, extract::connect_info::ConnectInfo, http::Request};
+use std::net::SocketAddr;
 use tower::ServiceExt;
 
 // ---------------------------------------------------------------------------
@@ -380,5 +381,59 @@ async fn test_distinct_agent_ids_get_separate_buckets_same_ip() {
         response.status(),
         StatusCode::OK,
         "agent B should have separate bucket from agent A"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// P0-3: Direct-IP fallback when proxy headers are absent
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_rate_limit_falls_back_to_ip_when_no_x_real_ip() {
+    let runtime = test_runtime().await;
+    // Very restrictive rate limit: 1 req/sec, burst 1
+    let router = build_router_with_governor(runtime, 1, 1);
+
+    let direct_ip = SocketAddr::from(([192, 168, 1, 1], 12345));
+
+    // First request without any proxy headers should succeed, falling back to
+    // the direct connection IP provided by `ConnectInfo`.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/approvals")
+                .extension(ConnectInfo(direct_ip))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Subsequent requests without x-real-ip should share the same direct-IP
+    // bucket and be rate limited, because `SmartIpKeyExtractor` falls back to
+    // the connection address when proxy headers are absent.
+    let mut got_429 = false;
+    for _ in 0..10 {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .extension(ConnectInfo(direct_ip))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            got_429 = true;
+            break;
+        }
+    }
+    assert!(
+        got_429,
+        "requests without x-real-ip should share the direct-IP bucket and be rate-limited"
     );
 }

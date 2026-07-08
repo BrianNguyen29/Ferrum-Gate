@@ -100,6 +100,13 @@ store_synchronous = "NORMAL"
 # protect a single-node pilot from accidental overload but will reject
 # a large share of requests under the canonical SLO workload.
 #
+# TRUST MODEL: The IP key is extracted from `X-Real-IP` or
+# `X-Forwarded-For` when present. In production, deploy `ferrumd` behind a
+# reverse proxy or load balancer that overwrites these headers to the real
+# client address; otherwise a client can spoof its own rate-limit bucket.
+# The principal component of the key depends on the auth middleware running
+# before the rate limiter, which is the default middleware order.
+#
 # Three supported profiles:
 #   1. Default safety — 2 req/s, burst 50 (built-in default)
 #   2. SLO certification — 1000 req/s, burst 10000 (required to pass

@@ -259,8 +259,14 @@ enabling autoscaling or multiple replicas.
 
 ## Rate Limiting
 - Built-in via `tower_governor`: 2 req/s sustained, burst of 50
-- Applied per-IP using `GovernorLayer`
+- Applied per-IP using `GovernorLayer` with `PrincipalOrIpKeyExtractor`
 - Periodic cleanup of rate limiter entries (every 60s)
+
+### Trust model
+- Authenticated requests are bucketed by a principal identifier (agent id or a hash of the `Authorization` header) combined with IP; anonymous requests are bucketed by IP alone.
+- The principal component depends on the auth middleware running *before* the rate limiter so that credentials have already been validated. The current middleware order applies the `GovernorLayer` to the workload router and then wraps the merged app with the auth layer, so auth runs first.
+- The IP component uses `SmartIpKeyExtractor`, which trusts `X-Real-IP` and `X-Forwarded-For` when present. Production deployments must place `ferrumd` behind a reverse proxy or load balancer that overwrites these headers to the real client address; otherwise a client can pick its own rate-limit bucket by sending an arbitrary header.
+- See `configs/examples/nginx-ferrumgate.conf` for an example nginx configuration that sets `X-Real-IP` and `X-Forwarded-For`.
 
 ## Capability TTL
 - Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)

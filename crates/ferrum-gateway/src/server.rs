@@ -55,6 +55,23 @@ pub enum RateLimitKey {
 /// the client IP address.  This isolates authenticated traffic from anonymous
 /// traffic on the same IP (noisy-neighbor mitigation) while preserving the
 /// existing IP-based behavior for unauthenticated requests.
+///
+/// # Trust model
+///
+/// - The principal component depends on the auth middleware running *before*
+///   the rate-limit layer so that `Authorization` / `X-Ferrum-Agent-Id` headers
+///   have already been validated.  In `run_http_server` the `GovernorLayer` is
+///   applied to the workload router and the auth layer is wrapped around the
+///   merged app afterwards, so auth runs first.
+/// - The IP component is delegated to `SmartIpKeyExtractor`, which trusts
+///   `X-Real-IP` and `X-Forwarded-For` headers when they are present.  This
+///   makes the rate limiter only as trustworthy as the proxy/LB in front of
+///   `ferrumd`.
+/// - Production deployments must place `ferrumd` behind a reverse proxy or
+///   load balancer that sets/overwrites `X-Real-IP` (and optionally
+///   `X-Forwarded-For`) to the real client address.  See
+///   `configs/examples/nginx-ferrumgate.conf` and the rate-limiting section of
+///   `docs/PRODUCTION_NOTES.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrincipalOrIpKeyExtractor;
 
