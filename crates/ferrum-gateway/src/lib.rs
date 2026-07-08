@@ -20,6 +20,7 @@ mod problem;
 mod proposals;
 mod provenance;
 mod quarantine;
+mod rate_limit;
 mod response;
 mod server;
 mod state;
