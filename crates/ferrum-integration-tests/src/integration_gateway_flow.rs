@@ -12845,3 +12845,115 @@ async fn test_policy_bundle_active_switch_emits_provenance() {
         "metadata should contain active=false"
     );
 }
+
+// ---------------------------------------------------------------------------
+// TTL-1: Gateway rejects capability TTL greater than 300 seconds
+// ---------------------------------------------------------------------------
+
+/// Verify that the HTTP capability mint endpoint rejects a requested TTL above
+/// the 300-second safety limit with a 400 Bad Request / ValidationError.
+#[tokio::test]
+async fn test_gateway_rejects_capability_ttl_over_300() {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert should succeed");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let proposal = make_test_proposal(intent_id, ferrum_proto::ProposalId::new());
+    let proposal_id = proposal.proposal_id;
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert should succeed");
+    seed_policy_evaluated(&store, &proposal).await;
+
+    let mint_request = ferrum_proto::CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ferrum_proto::ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "test-tool".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 301,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&mint_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint request should succeed (network level)");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::BAD_REQUEST,
+        "gateway should reject TTL > 300 with 400 Bad Request, got: {:?}",
+        response.status()
+    );
+
+    let error_body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read error body");
+    let error_response: ferrum_proto::ApiError =
+        serde_json::from_slice(&error_body).expect("error body should be valid ApiError JSON");
+    assert!(
+        matches!(
+            error_response.code,
+            ferrum_proto::ApiErrorCode::ValidationError
+        ),
+        "error code should be ValidationError for TTL too long, got: {:?}",
+        error_response.code
+    );
+    assert!(
+        !error_response.message.is_empty(),
+        "error message should be non-empty, got: {:?}",
+        error_response.message
+    );
+}

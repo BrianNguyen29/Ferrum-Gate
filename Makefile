@@ -1,10 +1,11 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard invariant-smoke
 
 help:
 	@echo "make check     - cargo check workspace"
 	@echo "make fmt       - cargo fmt --all"
 	@echo "make lint      - cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "make test      - cargo test --workspace"
+	@echo "make invariant-smoke - run blocking safety-kernel smoke suite (fails on zero-test matches)"
 	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
 	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools)"
@@ -54,6 +55,10 @@ lint:
 
 test:
 	cargo test --workspace
+
+invariant-smoke:
+	@echo "Running invariant smoke suite..."
+	@bash scripts/run_invariant_smoke.sh
 
 docs:
 	@echo "Running docs validation..."
