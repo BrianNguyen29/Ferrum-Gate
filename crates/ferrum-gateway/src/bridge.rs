@@ -17,8 +17,8 @@ use axum::{
 use chrono::Utc;
 use ferrum_proto::{
     ActorRef, ActorType, ApiErrorCode, EventId, HashChainRef, ObjectRef, ObjectType,
-    ProvenanceEvent, ProvenanceIngestRequest, ProvenanceIngestResponse, ProvenanceQueryRequest,
-    ProvenanceQueryResponse,
+    ProvenanceEvent, ProvenanceEventKind, ProvenanceIngestRequest, ProvenanceIngestResponse,
+    ProvenanceQueryRequest, ProvenanceQueryResponse,
 };
 use ferrum_sync::BridgeToolInfo;
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,22 @@ pub(crate) async fn ingest_provenance(
         ));
     }
 
+    // Internal governance/lineage event kinds are runtime-only and cannot be
+    // forged via external ingest. Only explicitly allowlisted kinds are accepted.
+    if !is_externally_ingestible_kind(&request.kind) {
+        state
+            .metrics
+            .increment_governance_error(GovernanceRoute::ProvenanceIngest);
+        return Err(ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::ValidationError,
+            format!(
+                "provenance event kind is not externally ingestible: {:?}",
+                request.kind
+            ),
+        ));
+    }
+
     // Build ProvenanceEvent from request
     let event_id = EventId::new();
     let event = ProvenanceEvent {
@@ -146,6 +162,15 @@ pub(crate) async fn ingest_provenance(
         event_id,
         linked: true,
     }))
+}
+
+/// Kinds that may be submitted by external runtimes via `POST /v1/provenance/ingest`.
+/// Internal governance/lineage kinds are runtime-only and cannot be forged.
+fn is_externally_ingestible_kind(kind: &ProvenanceEventKind) -> bool {
+    matches!(
+        kind,
+        ProvenanceEventKind::ExternalEventReceived | ProvenanceEventKind::UserGoalReceived
+    )
 }
 
 pub(crate) async fn list_bridges(State(state): State<Arc<AppState>>) -> Json<BridgeListResponse> {

@@ -3750,6 +3750,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_ingest_provenance_rejects_internal_kind() {
+        use ferrum_proto::ProvenanceEventKind;
+
+        let bridge = Arc::new(McpBridge::new("test-runtime"));
+        let runtime = test_runtime_with_bridges(vec![bridge.clone()]).await;
+        let router = build_router(runtime);
+
+        let request = ProvenanceIngestRequest {
+            source_runtime_id: "test-runtime".to_string(),
+            kind: ProvenanceEventKind::CapabilityMinted,
+            description: "forged internal event".to_string(),
+            execution_id: None,
+            intent_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/provenance/ingest")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_provenance_rejects_policy_evaluated_kind() {
+        use ferrum_proto::ProvenanceEventKind;
+
+        let bridge = Arc::new(McpBridge::new("test-runtime"));
+        let runtime = test_runtime_with_bridges(vec![bridge.clone()]).await;
+        let router = build_router(runtime);
+
+        let request = ProvenanceIngestRequest {
+            source_runtime_id: "test-runtime".to_string(),
+            kind: ProvenanceEventKind::PolicyEvaluated,
+            description: "forged policy evaluation".to_string(),
+            execution_id: None,
+            intent_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/provenance/ingest")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn test_list_bridges_empty() {
         let runtime = test_runtime().await;
         let router = build_router(runtime);
