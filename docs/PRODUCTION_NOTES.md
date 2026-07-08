@@ -1,5 +1,26 @@
 # Runtime Configuration Notes — FerrumGate Governance Gateway
 
+## Production-Required Controls
+
+P0-1 introduced runtime fail-closed behavior for the production-required controls below. The static validation gate (`scripts/validate_toml_configs.py`) enforces that `configs/ferrumgate.prod.toml` explicitly enables all three. Dev and nonprod configs should keep them absent or disabled unless they are intentionally testing production-like behavior.
+
+| Control | Config key (under `[server]`) | Environment variable | Purpose |
+|---------|--------------------------------|---------------------|---------|
+| Lifecycle reconciliation | `lifecycle_reconciliation_enabled` | `FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED` | Reconcile lifecycle outbox work so orphaned side effects do not accumulate. |
+| Approval timeout | `approval_timeout_enabled` | `FERRUMD_APPROVAL_TIMEOUT_ENABLED` | Time out stale approval requests rather than leaving them pending indefinitely. |
+| Audit fail-closed | `audit_fail_closed` | `FERRUMD_AUDIT_FAIL_CLOSED` | Block operations when audit logging cannot be persisted, preventing silent loss of lineage. |
+
+All three values are TOML booleans and map to `FERRUMD_<UPPER_SNAKE_KEY>` environment variables. Config precedence is CLI > env > config file > defaults.
+
+Example `ferrumd.env.example` stanzas:
+
+```bash
+# Required in production; may be left unset or false in dev/nonprod for testing.
+# FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED=true
+# FERRUMD_APPROVAL_TIMEOUT_ENABLED=true
+# FERRUMD_AUDIT_FAIL_CLOSED=true
+```
+
 ## SQLite Configuration
 
 ### Connection Pool

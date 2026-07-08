@@ -15,6 +15,13 @@ CONFIG_DIRS = [ROOT / "configs", ROOT / "configs" / "examples"]
 # Files that should never have insecure defaults
 PROD_LIKE_PATTERNS = ["*.prod.toml", "*nonprod*.toml", "*production*.toml"]
 
+# Production-required controls introduced by P0-1; must be enabled in prod.
+PROD_REQUIRED_CONTROLS = [
+    "lifecycle_reconciliation_enabled",
+    "approval_timeout_enabled",
+    "audit_fail_closed",
+]
+
 
 def find_toml_files() -> list[Path]:
     files: list[Path] = []
@@ -41,13 +48,14 @@ def check_parsable(path: Path) -> list[str]:
     return errors
 
 
-def check_safety(path: Path) -> list[str]:
+def check_safety(path: Path) -> tuple[list[str], list[str]]:
     errors: list[str] = []
+    warnings: list[str] = []
     try:
         with path.open("rb") as f:
             data = tomllib.load(f)
     except Exception:
-        return errors  # parse errors handled elsewhere
+        return errors, warnings  # parse errors handled elsewhere
 
     server = data.get("server", {})
     filename = path.name.lower()
@@ -77,7 +85,40 @@ def check_safety(path: Path) -> list[str]:
                         f"{_rel(path)}: {field} entries must be absolute paths"
                     )
 
-    return errors
+    # P0-7: production-required controls
+    if filename == "ferrumgate.prod.toml":
+        for control in PROD_REQUIRED_CONTROLS:
+            if control not in server:
+                errors.append(
+                    f"{_rel(path)}: production-required control '{control}' must be explicitly set to true"
+                )
+            elif server[control] is not True:
+                errors.append(
+                    f"{_rel(path)}: production-required control '{control}' must be set to true"
+                )
+    elif filename == "ferrumgate.dev.toml":
+        if server.get("auth_mode", "").lower() != "disabled":
+            errors.append(
+                f"{_rel(path)}: dev config must keep auth_mode=disabled"
+            )
+        if server.get("store_dsn") != "sqlite::memory:":
+            errors.append(
+                f"{_rel(path)}: dev config must keep store_dsn='sqlite::memory:'"
+            )
+        for control in PROD_REQUIRED_CONTROLS:
+            if server.get(control) is True:
+                errors.append(
+                    f"{_rel(path)}: dev config must not enable production-required control '{control}'"
+                )
+    elif "nonprod" in filename:
+        # Nonprod may legitimately test prod-like controls; warn, don't fail.
+        for control in PROD_REQUIRED_CONTROLS:
+            if server.get(control) is True:
+                warnings.append(
+                    f"{_rel(path)}: nonprod config enables production-required control '{control}' (allowed for testing, but verify intent)"
+                )
+
+    return errors, warnings
 
 
 def main() -> int:
@@ -87,9 +128,17 @@ def main() -> int:
         return 1
 
     all_errors: list[str] = []
+    all_warnings: list[str] = []
     for path in files:
         all_errors.extend(check_parsable(path))
-        all_errors.extend(check_safety(path))
+        safety_errors, safety_warnings = check_safety(path)
+        all_errors.extend(safety_errors)
+        all_warnings.extend(safety_warnings)
+
+    if all_warnings:
+        print("TOML VALIDATION WARNINGS")
+        for warning in all_warnings:
+            print(f" - {warning}")
 
     if all_errors:
         print("TOML VALIDATION FAILED")
