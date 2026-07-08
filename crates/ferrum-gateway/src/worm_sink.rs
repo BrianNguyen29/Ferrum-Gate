@@ -681,14 +681,15 @@ mod tests {
         run_one_export_pass(&state, &cfg, &uploader_dyn, &last_id)
             .await
             .expect("first export pass should succeed");
-        let uploads = uploader.uploads.lock().unwrap();
-        let first_manifest: ferrum_audit_bundle::AuditBundleManifest = uploads
-            .iter()
-            .find(|(k, _)| k.ends_with("manifest.json"))
-            .map(|(_, body)| serde_json::from_slice(body).unwrap())
-            .expect("manifest uploaded");
+        let first_manifest: ferrum_audit_bundle::AuditBundleManifest = {
+            let uploads = uploader.uploads.lock().unwrap();
+            uploads
+                .iter()
+                .find(|(k, _)| k.ends_with("manifest.json"))
+                .map(|(_, body)| serde_json::from_slice(body).unwrap())
+                .expect("manifest uploaded")
+        };
         assert!(first_manifest.previous_boundary_hash.is_none());
-        drop(uploads);
 
         // Second pass: export entry 2 as a windowed bundle.
         let uploader2 = Arc::new(RecordingUploader {

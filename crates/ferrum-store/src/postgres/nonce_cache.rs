@@ -35,7 +35,7 @@ impl NonceCache for PostgresNonceCache {
              ON CONFLICT (nonce) DO UPDATE
                  SET expires_at = EXCLUDED.expires_at
                  WHERE nonce_cache.expires_at <= NOW()
-             RETURNING 1",
+             RETURNING 1::BIGINT",
         )
         .bind(nonce)
         .bind(ttl_secs)
