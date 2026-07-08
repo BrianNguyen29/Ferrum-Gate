@@ -7036,12 +7036,235 @@ rules:
             })
             .await
             .unwrap();
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e.kind, ProvenanceEventKind::PolicyBundleRolledBack)),
-            "rollback should emit PolicyBundleRolledBack provenance event"
-        );
+        let rollback_event = events
+            .iter()
+            .find(|e| matches!(e.kind, ProvenanceEventKind::PolicyBundleRolledBack))
+            .expect("rollback should emit PolicyBundleRolledBack provenance event");
+        assert_eq!(rollback_event.actor.actor_id, "test-operator");
+        assert!(matches!(
+            rollback_event.actor.actor_type,
+            ActorType::Operator
+        ));
+
+        // Backward compatibility: when no AuthActor is present, request.actor is used.
+        let (audit_entries, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::PolicyBundleRollback),
+                Some(AuditResourceType::PolicyBundle),
+                Some("rollback-test-bundle"),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].actor_id, "test-operator");
+    }
+
+    #[tokio::test]
+    async fn test_policy_bundle_actor_identity_prefer_auth_actor() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Insert a scoped token with a known actor identity.
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_policy_actor_test".to_string(),
+            actor_id: "auth-operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["policy:write".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // Create a policy bundle
+        let yaml = r#"version: "0.1.0"
+bundle_id: "actor-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule"
+    decision: "Allow"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let create_req = ferrum_proto::CreatePolicyBundleRequest {
+            yaml_content: yaml.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Activate the bundle
+        let activate_req = ferrum_proto::SetPolicyBundleActiveRequest { active: true };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/actor-test-bundle/active")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&activate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Audit log for create should record the authenticated actor
+        let (audit_entries, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::PolicyBundleCreate),
+                Some(AuditResourceType::PolicyBundle),
+                Some("actor-test-bundle"),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].actor_id, "auth-operator");
+
+        // Provenance event for activation should record the authenticated operator
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ProvenanceQueryRequest {
+                intent_id: None,
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::PolicyBundleActivated),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor.actor_id, "auth-operator");
+        assert!(matches!(events[0].actor.actor_type, ActorType::Operator));
+
+        // Update the bundle to create version 2
+        let yaml2 = r#"version: "0.1.0"
+bundle_id: "actor-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule updated"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let update_req = ferrum_proto::UpdatePolicyBundleRequest {
+            yaml_content: yaml2.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/actor-test-bundle")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rollback with a client-forged actor; AuthActor should win
+        let rollback_req = RollbackPolicyBundleRequest {
+            target_version: 1,
+            actor: Some("client-forged".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles/actor-test-bundle/rollback")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rollback_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Audit log for rollback should prefer authenticated actor
+        let (audit_entries, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::PolicyBundleRollback),
+                Some(AuditResourceType::PolicyBundle),
+                Some("actor-test-bundle"),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].actor_id, "auth-operator");
+
+        // Provenance event for rollback should prefer authenticated actor
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ProvenanceQueryRequest {
+                intent_id: None,
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::PolicyBundleRolledBack),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor.actor_id, "auth-operator");
+        assert!(matches!(events[0].actor.actor_type, ActorType::Operator));
     }
 
     // ── Scoped Token Tests ──
