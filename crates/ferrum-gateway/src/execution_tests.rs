@@ -1,5 +1,7 @@
 use super::*;
-use ferrum_proto::{ArgumentConstraint, ResourceBinding, ResourceMode};
+use ferrum_proto::{
+    ActionProposal, ArgumentConstraint, ResourceBinding, ResourceMode, ResourceSelector,
+};
 
 #[test]
 fn cancel_only_allows_pre_side_effect_states() {
