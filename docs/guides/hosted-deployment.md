@@ -317,7 +317,7 @@ See [`docs/PRODUCTION_NOTES.md`](../PRODUCTION_NOTES.md) for runtime configurati
 | **TLS termination / domain** | ❌ None (loopback only) | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy required | ⚠️ Operator-owned reverse proxy + Ingress required |
 | **Persistent storage** | ❌ In-memory only | ✅ SQLite on filesystem | ✅ PostgreSQL (local or managed) | ✅ PostgreSQL external / managed |
 | **Backup / restore** | ❌ Not applicable | ⚠️ `ferrumctl backup`; operator-owned scheduler | ⚠️ `pg_dump` / `pg_restore`; operator-owned scheduler | ⚠️ Operator-owned |
-| **Health / readiness endpoints** | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ Service health probes |
+| **Health / readiness endpoints** | ✅ `/healthz`, `/readyz` | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ✅ `/healthz`, `/readyz`; `/readyz/deep` requires auth | ⚠️ Default `/readyz` is shallow (always 200); `/readyz/deep` requires auth and is not the Helm default |
 | **Metrics / observability** | ⚠️ Prometheus metrics endpoint | ⚠️ Metrics require auth when auth is enabled | ✅ Authenticated metrics + PG-specific alerts | ✅ ServiceMonitor |
 | **Grafana dashboards** | ❌ Not included | ⚠️ Operator-owned | ⚠️ Operator-owned | ⚠️ Operator-owned |
 | **PostgreSQL support** | ❌ Not applicable | ❌ SQLite only | ✅ Native | ✅ External / managed |

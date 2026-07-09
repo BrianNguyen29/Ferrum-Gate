@@ -207,9 +207,19 @@ The `write_queue` component provides bounded backpressure detection only; it doe
 The `pool` component is emitted for all stores; SQLite/non-pool stores report `not applicable`.
 
 **Load balancer / Kubernetes guidance**:
-- Use **`/v1/readyz/deep`** for authenticated load balancer health checks and Kubernetes readiness probes.
-  This endpoint returns HTTP 503 when the SQLite store is unreachable, unhealthy, or when the write queue depth exceeds 100,
-  allowing load balancers to route traffic away from degraded instances.
+- **Ideal**: Use **`/v1/readyz/deep`** for authenticated load balancer health checks and
+  Kubernetes readiness probes. This endpoint returns HTTP 503 when the SQLite store is
+  unreachable, unhealthy, or when the write queue depth exceeds 100, allowing load
+  balancers to route traffic away from degraded instances. `/v1/readyz/deep` requires a
+  bearer token when authentication is enabled.
+- **Helm chart default (caveat)**: The bundled Helm chart (`deploy/helm/ferrumgate/`)
+  defaults its `readinessProbe` to the **shallow `/v1/readyz`** because the default
+  `authMode` is `"bearer"` and standard Kubernetes probes cannot present a bearer token.
+  The shallow probe always returns HTTP 200 and does **not** gate store or write-queue
+  health, so a pod may report `Ready` while the database or queue is unhealthy. Where your
+  auth model allows, override `readinessProbe.httpGet.path` to `/v1/readyz/deep`; otherwise
+  treat Helm default readiness as liveness-only and rely on a separate authenticated
+  deep-readiness check (e.g. load-balancer health check or `ferrumctl`) for store health.
 - **`/v1/healthz`** and **`/v1/readyz`** always return HTTP 200 — do NOT use these
   for load balancer or Kubernetes readiness probes. They do not check store health.
 - **`/v1/metrics`** (`GET /v1/metrics`) returns Prometheus text format with request counters,

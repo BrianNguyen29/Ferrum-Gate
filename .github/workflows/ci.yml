@@ -49,6 +49,15 @@ jobs:
             --set secrets.bearerToken=ci-placeholder-token-not-for-production
           helm template ferrumgate deploy/helm/ferrumgate \
             --set secrets.bearerToken=ci-placeholder-token-not-for-production >/tmp/ferrumgate-rendered.yaml
+      - name: Warn on shallow default readiness (advisory)
+        continue-on-error: true
+        run: |
+          # Advisory only — does not fail CI. The chart intentionally defaults the
+          # readinessProbe to the shallow /v1/readyz (always 200) because standard
+          # Kubernetes probes cannot present a bearer token required by /v1/readyz/deep.
+          if grep -qE 'path:[[:space:]]*/v1/readyz([[:space:]]|$)' /tmp/ferrumgate-rendered.yaml; then
+            echo "::warning::Helm readinessProbe defaults to shallow /v1/readyz (always 200); it does NOT gate store/queue health. Override to /v1/readyz/deep where auth constraints allow."
+          fi
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cargo fmt check

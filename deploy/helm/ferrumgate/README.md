@@ -90,6 +90,13 @@ kind delete cluster --name ferrumgate-test
 
 ### Readiness probe tradeoff
 
+> **WARNING — shallow default readiness.** With the chart defaults, a pod can
+> report `Ready` even when the database/store is unhealthy or the write queue is
+> saturated. The default `/v1/readyz` probe always returns 200 and does **not**
+> gate store or queue health. Where your auth model allows, override the probe
+> path to `/v1/readyz/deep` (requires a bearer token when auth is enabled) so
+> traffic can be routed away from degraded instances.
+
 The chart defaults to the **shallow** `/v1/readyz` probe because the default `authMode` is `"bearer"` and Kubernetes probes cannot authenticate. The shallow probe always returns 200 and does **not** verify store health or write-queue backpressure.
 
 For load-balancer or ingress health checks that can supply a bearer token, use **`/v1/readyz/deep`** instead. This endpoint returns 503 when the store is unhealthy or the write queue depth exceeds 100, allowing traffic to be routed away from degraded instances.
