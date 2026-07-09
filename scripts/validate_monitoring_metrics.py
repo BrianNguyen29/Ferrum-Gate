@@ -83,6 +83,48 @@ def referenced_metrics(expressions: list[str]) -> set[str]:
     }
 
 
+def runbook_warnings(rules_path: Path) -> list[str]:
+    """Return non-failing warnings for missing or placeholder runbook URLs.
+
+    Each alert rule is expected to carry an ``annotations.runbook_url``. Rules
+    missing the annotation, leaving it empty, or still pointing at the
+    ``docs.example.com`` placeholder host are reported as warnings so that
+    placeholder runbooks do not go unnoticed. These checks never fail the
+    validator; callers should print them to stderr without affecting the exit
+    code.
+    """
+
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        return ["PyYAML unavailable; skipped runbook_url checks"]
+
+    try:
+        document = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # pragma: no cover - defensive
+        return [f"could not parse alert rules for runbook_url checks: {exc}"]
+
+    warnings: list[str] = []
+    for group in document.get("groups", []) or []:
+        group_name = group.get("name", "<unnamed>")
+        for rule in group.get("rules", []) or []:
+            alert_name = rule.get("alert", "<unnamed>")
+            annotations = rule.get("annotations") or {}
+            runbook_url = annotations.get("runbook_url")
+            if not runbook_url or not str(runbook_url).strip():
+                warnings.append(
+                    f"alert '{alert_name}' (group '{group_name}') is missing "
+                    "annotations.runbook_url"
+                )
+                continue
+            if "docs.example.com" in str(runbook_url):
+                warnings.append(
+                    f"alert '{alert_name}' (group '{group_name}') uses "
+                    f"placeholder runbook_url: {runbook_url}"
+                )
+    return warnings
+
+
 def validate(runtime_path: Path, rules_path: Path, dashboard_path: Path) -> list[str]:
     emitted = runtime_metrics(runtime_path.read_text(encoding="utf-8"))
     rule_refs = referenced_metrics(
@@ -132,6 +174,8 @@ def main() -> int:
     args = parser.parse_args()
 
     errors = validate(args.runtime, args.rules, args.dashboard)
+    for warning in runbook_warnings(args.rules):
+        print(f"WARNING: {warning}", file=sys.stderr)
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)

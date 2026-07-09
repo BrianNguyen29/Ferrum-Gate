@@ -69,6 +69,16 @@ Or use `prometheus --config.file` to load directly.
    ```
 3. Reload Prometheus
 
+> **Runbook URLs are repo-relative defaults.** Each alert's `runbook_url`
+> annotation points to `../../docs/operations/runbook.md#<alert-id>` so the link
+> resolves when the rules file is viewed inside the FerrumGate repository. For
+> standalone Prometheus deployments without a repo checkout next to the rules,
+> replace these with an absolute URL to your hosted runbook, or copy
+> `docs/operations/runbook.md` alongside the rules file.
+> `scripts/validate_monitoring_metrics.py` emits non-failing warnings for any
+> alert missing a `runbook_url` or still using the `docs.example.com`
+> placeholder.
+
 ### Grafana Dashboard
 
 1. Copy `ferrumgate-grafana-dashboard.json` to your Grafana provisioning directory or import via the UI:

@@ -12,6 +12,13 @@
 #   - These are example rules based on FerrumGate metrics
 #   - Adjust thresholds for your environment
 #   - For production, add more specific alert conditions
+#   - `runbook_url` annotations use repo-relative links to
+#     `docs/operations/runbook.md#<alert-id>` so they resolve when this file is
+#     viewed inside the FerrumGate repository. For standalone Prometheus
+#     deployments (no repo checkout alongside the rules), replace these with an
+#     absolute URL to your hosted runbook, or copy `docs/operations/runbook.md`
+#     next to the rules file. `scripts/validate_monitoring_metrics.py` warns on
+#     missing runbook URLs and on any leftover example-domain placeholder.
 
 groups:
   # FerrumGate service alerts
@@ -31,7 +38,7 @@ groups:
         annotations:
           summary: "FerrumGate instance is down"
           description: "FerrumGate has been unreachable for more than 1 minute."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-down"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-down"
 
       # Service health
       - alert: FerrumGateStoreUnhealthy
@@ -44,7 +51,7 @@ groups:
         annotations:
           summary: "FerrumGate store is unhealthy"
           description: "FerrumGate SQLite store health check is failing. Database may be corrupted or inaccessible."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-store-unhealthy"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-store-unhealthy"
 
       # Write queue depth
       - alert: FerrumGateWriteQueueHigh
@@ -57,7 +64,7 @@ groups:
         annotations:
           summary: "FerrumGate write queue is high"
           description: "Write queue depth is {{ $value }}, expected < 100. System may be experiencing write contention."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-queue-high"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-queue-high"
 
       # Write queue full (blocked)
       - alert: FerrumGateWriteQueueFull
@@ -70,7 +77,7 @@ groups:
         annotations:
           summary: "FerrumGate write queue is full"
           description: "Write queue depth is {{ $value }}. System is blocking writes. Immediate action required."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-queue-full"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-queue-full"
 
       # High error rate (5xx responses)
       - alert: FerrumGateHighErrorRate
@@ -84,7 +91,7 @@ groups:
         annotations:
           summary: "FerrumGate high error rate"
           description: "Error rate is {{ $value | printf \"%.3f\" }} errors/sec (threshold: 0.05)."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-high-error-rate"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-high-error-rate"
 
       # High latency
       - alert: FerrumGateHighLatency
@@ -100,7 +107,7 @@ groups:
         annotations:
           summary: "FerrumGate high latency"
           description: "99th percentile latency is {{ $value | printf \"%.2f\" }}s for route {{ $labels.route }}."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-high-latency"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-high-latency"
 
       # Capability minting failures
       - alert: FerrumGateCapabilityMintFailures
@@ -117,7 +124,7 @@ groups:
         annotations:
           summary: "FerrumGate capability minting failures"
           description: "Capability minting failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-cap-mint-failures"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-cap-mint-failures"
 
       # Policy evaluation failures
       - alert: FerrumGatePolicyEvalFailures
@@ -134,7 +141,7 @@ groups:
         annotations:
           summary: "FerrumGate policy evaluation failures"
           description: "Policy evaluation failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-policy-eval-failures"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-policy-eval-failures"
 
       # Execution failures
       - alert: FerrumGateExecutionFailures
@@ -151,7 +158,7 @@ groups:
         annotations:
           summary: "FerrumGate execution failures"
           description: "Execution failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-execution-failures"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-execution-failures"
 
       # Rollback failures
       - alert: FerrumGateRollbackFailures
@@ -168,7 +175,7 @@ groups:
         annotations:
           summary: "FerrumGate rollback failures"
           description: "Rollback failure rate is {{ $value | printf \"%.4f\" }} failures/sec. Compensations may not complete."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-rollback-failures"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-rollback-failures"
 
       # Provenance chain gaps
       - alert: FerrumGateProvenanceGaps
@@ -182,7 +189,7 @@ groups:
         annotations:
           summary: "FerrumGate provenance chain gaps detected"
           description: "{{ $value }} lifecycle records require operator review because automatic provenance reconciliation could not complete."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-provenance-gaps"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-provenance-gaps"
 
   # Instance-level alerts
   - name: ferrumgate_instance
@@ -202,6 +209,7 @@ groups:
         annotations:
           summary: "FerrumGate instance high CPU usage"
           description: "CPU usage is {{ $value | printf \"%.1f\" }}% on instance {{ $labels.instance }}."
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-high-cpu"
 
       # High memory usage
       - alert: FerrumGateHighMemory
@@ -216,6 +224,7 @@ groups:
         annotations:
           summary: "FerrumGate instance high memory usage"
           description: "Memory usage is {{ $value | printf \"%.1f\" }}% on instance {{ $labels.instance }}."
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-high-memory"
 
       # Disk space low
       - alert: FerrumGateDiskSpaceLow
@@ -231,7 +240,7 @@ groups:
         annotations:
           summary: "FerrumGate instance low disk space"
           description: "Disk space available is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-disk-space-low"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-disk-space-low"
 
   # PostgreSQL-specific alerts
   # NOTE: These alerts use metrics emitted only when ferrumd is configured with
@@ -255,7 +264,7 @@ groups:
         annotations:
           summary: "FerrumGate PostgreSQL metrics are absent"
           description: "ferrumd is not emitting PostgreSQL pool metrics. Either the store backend is not PostgreSQL, or the PG connection is lost and the service has stopped reporting."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-down"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-down"
 
       # Pool saturation — all connections in use.
       - alert: FerrumGatePostgresPoolSaturation
@@ -273,7 +282,7 @@ groups:
         annotations:
           summary: "FerrumGate PostgreSQL connection pool is saturated"
           description: "PG pool has 0 idle connections out of max. New requests may block or timeout."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-pool-saturation"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-pool-saturation"
 
       # Slow acquire — connection acquisition timeouts.
       - alert: FerrumGatePostgresSlowAcquire
@@ -287,7 +296,7 @@ groups:
         annotations:
           summary: "FerrumGate PostgreSQL connection acquire timeouts"
           description: "PG pool acquire timeout rate is {{ $value | printf \"%.3f\" }} timeouts/sec. Pool may be undersized or PG may be slow/unreachable."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-slow-acquire"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-slow-acquire"
 
       # Replication lag — PLACEHOLDER / DEFERRED.
       # Requires postgres_exporter or equivalent for pg_stat_replication metrics.
@@ -303,4 +312,4 @@ groups:
         annotations:
           summary: "FerrumGate PostgreSQL replication lag high (TEMPLATE)"
           description: "Replication lag is {{ $value | printf \"%.2f\" }} GB. Threshold and metric are TEMPLATE — requires postgres_exporter or equivalent. HA/replication not deployed."
-          runbook_url: "https://docs.example.com/runbooks/ferrumgate-pg-replication-lag"
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-replication-lag"
