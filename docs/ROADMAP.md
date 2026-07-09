@@ -37,6 +37,9 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 | GCS adapter | P2 | Experimental | Shape-only put/delete/get; generation-based rollback modeled; shape-only unit tests in CI (`make adapter-smoke`); live SDK path is a declared seam. |
 | Azure Blob adapter | P0 | Not implemented | Deferred until GCS semantics are stable. |
 | WORM sink | P2 | Experimental | `worm-sink` feature-gated; operator provisions bucket and Object Lock; not a compliance claim. |
+
+> Adapter maturity levels and promotion criteria are defined in [`guides/adapter-maturity-lifecycle.md`](./guides/adapter-maturity-lifecycle.md). Promoting an adapter requires evidence, not just implementation; current labels remain conservative.
+
 | Behavioral anomaly detection | P2 | Experimental | Phase 1 V1; in-memory advisory high-risk/R3 burst detection; opt-in; does not change PDP decisions. |
 | PolicyBundle PDP engine | P3 | Beta | Phase 1; `QuarantineHold` enforced; bundle identity propagation and obligations deferred. |
 | MFA TOTP | P4 | Stable | Enrollment/verification + per-factor lockout; WebAuthn and backup codes deferred. |

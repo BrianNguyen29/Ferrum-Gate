@@ -73,13 +73,14 @@ test-python-validators:
 	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links + CI badges + python-validator-tests)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links + CI badges + adapter-maturity + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
 	@python3 scripts/validate_evidence_templates.py
 	@python3 scripts/validate_toml_configs.py
 	@python3 scripts/validate_openapi_yaml.py
+	@python3 scripts/validate_adapter_maturity.py
 	@python3 scripts/validate_docs_links.py
 	@python3 scripts/validate_ci_badges.py
 	@$(MAKE) test-python-validators
