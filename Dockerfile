@@ -24,7 +24,7 @@ LABEL org.opencontainers.image.title="ferrumd" \
       org.opencontainers.image.description="FerrumGate gateway daemon (local demo image)" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
-      org.opencontainers.image.source="https://github.com/FerrumGate/Ferrum-Gate" \
+      org.opencontainers.image.source="https://github.com/BrianNguyen29/Ferrum-Gate" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
