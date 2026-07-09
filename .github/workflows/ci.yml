@@ -119,6 +119,11 @@ jobs:
           assert root.tag == "testsuite"
           assert root.attrib["name"] == "ferrum-stress"
           PY
+      - name: WAL crash-recovery drill
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/run_wal_crash_recovery_drill.sh
       - name: Advisory perf regression gate (ADR 011)
         continue-on-error: true
         shell: bash

@@ -171,6 +171,11 @@ check_release_smoke() {
   bash "$REPO_ROOT/scripts/validate_release_feature_profile.sh"
 }
 
+# --- local backup/restore DR drill ---
+check_restore_drill() {
+  bash "$REPO_ROOT/scripts/run_local_restore_drill.sh"
+}
+
 # --- roadmap status ---
 validate_roadmap() {
   if [[ ! -f "$REPO_ROOT/docs/ROADMAP.md" ]]; then
@@ -198,6 +203,7 @@ main() {
   run_check "make audit" check_audit
   run_check "make pretarget" check_pretarget
   run_check "release profile smoke" check_release_smoke
+  run_check "local backup/restore DR drill" check_restore_drill
   run_check "roadmap presence" validate_roadmap
   if [[ "$DRY_RUN" == true ]]; then
     run_check "SBOM generation (dry-run)" generate_sbom

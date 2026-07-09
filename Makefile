@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard invariant-smoke
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill dr-smoke stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard invariant-smoke
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -30,6 +30,7 @@ help:
 	@echo "make domainless-tier1-fast  - lightweight Tier 1 gate (docs/validate + syntax/dry-run/light checks, no heavy Docker drills)"
 	@echo "make domainless-tier1-gate  - full domainless Tier 1 gate (docs/validate + pg-local-batch + HA setup/failover/reconnect/teardown)"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
+	@echo "make dr-smoke     - bounded local DR smoke (WAL crash-recovery + temp SQLite restore drill; non-Docker)"
 	@echo "make s3-test   - run S3 adapter MinIO integration tests (requires local MinIO at localhost:9000)"
 	@echo "make stress    - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
@@ -160,6 +161,12 @@ ha-local-teardown:
 restore-drill:
 	@echo "Running local temp SQLite backup/restore drill..."
 	@bash scripts/run_local_restore_drill.sh
+
+dr-smoke:
+	@echo "Running bounded local DR smoke (WAL crash-recovery + restore drill)..."
+	@$(MAKE) wal-drill && \
+	$(MAKE) restore-drill
+	@echo "DR SMOKE: ALL TARGETS PASSED"
 
 s3-test:
 	@echo "Running S3 adapter MinIO integration tests..."
