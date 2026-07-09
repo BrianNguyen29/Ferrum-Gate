@@ -46,7 +46,7 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 | Operator tooling (`ferrumctl`, `ferrum-tui`, `ferrum-stress`, `ferrum-migrate`) | P4 | Stable | CLI, dashboard, smoke tests, and SQLite→PostgreSQL migration. |
 | Helm chart | P2 | Experimental | Local-safe scaffold with monitoring rules; SQLite defaults are single-replica and allowlists are empty. Operators must configure PostgreSQL, secrets, topology, TLS, and HA for production. |
 | Perf regression gate | P1 | Design / spike | ADR 011; advisory CI gate until baselines are authoritative. |
-| Coverage gate | P1 | Design / spike | Coverage and SBOM artifacts produced; no threshold enforcement yet. |
+| Coverage gate | P2 | Experimental / advisory | Config-driven thresholds (`coverage-thresholds.toml`) with 7 critical crates and 18 monitor-only workspace members; CI advisory only (`coverage-threshold-soft`); local hard gate available (`make coverage-threshold-hard`). |
 | Release automation | P4 | Stable | CI release workflow, cargo-deny, release-profile smoke. Does not imply managed service. |
 | External opencode verifier parity | P0 | Out of scope | Remains out-of-product unless tracked separately. |
 

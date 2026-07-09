@@ -342,9 +342,10 @@ jobs:
           else:
               print("::warning::Could not parse coverage percentage from coverage.txt")
           PY
-      - name: Critical-crate coverage threshold (soft, non-blocking)
+      - name: Critical-crate coverage threshold (advisory, non-blocking)
+        continue-on-error: true
         run: |
-          python3 scripts/check_coverage_threshold.py coverage.txt || true
+          python3 scripts/check_coverage_threshold.py coverage.txt --config coverage-thresholds.toml
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --all
       - name: Upload coverage artifact
