@@ -25,7 +25,7 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 | SQLite store | P4 | Stable | Write queue + PRAGMA tuning; operator tuning guide available. |
 | PostgreSQL store | P3 | Beta | Local and CI live-tested; HA topology is operator-owned. |
 | Auth (bearer / scoped / OIDC / agent) | P4 | Stable | CI-tested across modes. |
-| MCP stdio server | P4 | Stable | Default; tools validated locally. |
+| MCP stdio server | P4 | Stable | Default; tool-contract + stdio lifecycle smoke run in CI (`make adapter-smoke` + advisory lifecycle step). |
 | MCP HTTP / SSE transport | P2 | Experimental | Streamable HTTP / SSE; in-memory session/replay skeleton; auth-bound; not restart-resumable. |
 | MCP resumability | P0 | Not implemented | Replay buffer exists; persistent resume checkpoint is not implemented. |
 | Filesystem adapter | P4 | Stable | Sandbox + snapshot rollback. |
@@ -33,8 +33,8 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 | HTTP adapter | P4 | Stable | rustls client, SSRF guard, bounded timeout, no redirects. |
 | SQLite adapter | P4 | Stable | File-backed mutation with database-root allowlist. |
 | Mail draft adapter | P4 | Stable | Drafts only; does not send email. |
-| S3 adapter | P2 | Experimental | Live put/delete/get/copy; versioning-based rollback; MinIO-gated integration tests. |
-| GCS adapter | P2 | Experimental | Shape-only put/delete/get; generation-based rollback modeled; live SDK path is a declared seam. |
+| S3 adapter | P2 | Experimental | Live put/delete/get/copy; versioning-based rollback; shape-only unit tests in CI (`make adapter-smoke`); live MinIO integration tests gated. |
+| GCS adapter | P2 | Experimental | Shape-only put/delete/get; generation-based rollback modeled; shape-only unit tests in CI (`make adapter-smoke`); live SDK path is a declared seam. |
 | Azure Blob adapter | P0 | Not implemented | Deferred until GCS semantics are stable. |
 | WORM sink | P2 | Experimental | `worm-sink` feature-gated; operator provisions bucket and Object Lock; not a compliance claim. |
 | Behavioral anomaly detection | P2 | Experimental | Phase 1 V1; in-memory advisory high-risk/R3 burst detection; opt-in; does not change PDP decisions. |

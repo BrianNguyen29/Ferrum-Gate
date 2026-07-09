@@ -79,6 +79,11 @@ jobs:
           FERRUMD="$PWD/target/debug/ferrumd" \
             FERRUM_MCP="$PWD/target/debug/ferrum-mcp-server" \
             bash scripts/run_mcp_lifecycle_smoke.sh
+      - name: Adapter smoke (S3/GCS shape-only + MCP tool contract)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/adapter_smoke.sh
       - name: Cargo check (all features)
         run: cargo check --workspace --all-features
       - name: Cargo clippy (all features)

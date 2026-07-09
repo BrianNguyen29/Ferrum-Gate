@@ -50,8 +50,8 @@ The server uses **line-delimited JSON** over stdio. Each line is a single JSON-R
 
 | Transport | Status | Validation | Production-ready |
 |-----------|--------|------------|------------------|
-| **stdio** | Stable (default) | Local lifecycle and query_lineage validated | ✅ Yes (for local/self-hosted deployments) |
-| **Streamable HTTP** | Skeleton | Session/replay tests added | ❌ No — experimental |
+| **stdio** | Stable (default) | CI tool-contract (`make adapter-smoke`) + advisory stdio lifecycle smoke; local lifecycle and query_lineage validated | ✅ Yes (for local/self-hosted deployments) |
+| **Streamable HTTP** | Skeleton | Session/replay tests added; no automated HTTP smoke coverage | ❌ No — experimental |
 | **SSE** | Skeleton | Redelivery-only replay; not restart-resumable | ❌ No — experimental |
 | **Resumability** | In-memory skeleton | Replay buffer bounded; not restart-resumable | ❌ No — not production-ready |
 
