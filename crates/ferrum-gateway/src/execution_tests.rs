@@ -1,4 +1,5 @@
 use super::*;
+use ferrum_cap::CapabilityService;
 use ferrum_proto::{
     ActionProposal, ArgumentConstraint, ResourceBinding, ResourceMode, ResourceSelector,
 };

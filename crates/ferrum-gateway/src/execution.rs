@@ -85,17 +85,15 @@ use axum::{
     http::StatusCode,
 };
 use chrono::Utc;
-use ferrum_cap::{CapabilityError, CapabilityService};
+use ferrum_cap::CapabilityError;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, ApprovalBinding, ApprovalMode, ApprovalState, AuditAction,
-    AuditResourceType, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
-    CancelExecutionResponse, CapabilityId, CapabilityLease, CapabilityStatus,
+    ActorRef, ActorType, ApiErrorCode, ApprovalMode, AuditAction, AuditResourceType,
+    AuthorizeExecutionRequest, AuthorizeExecutionResponse, CancelExecutionResponse,
     CommitExecutionResponse, CompensateExecutionResponse, Decision, EvaluateOutcomeResponse,
     EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, LifecycleOutboxRecord,
-    ObjectRef, ObjectType, OutcomeReport, PrepareExecutionResponse, ProposalId, ProvenanceEvent,
+    ObjectRef, ObjectType, OutcomeReport, PrepareExecutionResponse, ProvenanceEvent,
     ProvenanceEventKind, ProvenanceQueryRequest, RollbackClass, RollbackState,
 };
-use ferrum_store::StoreFacade;
 use std::sync::Arc;
 
 use crate::audit;
@@ -105,13 +103,26 @@ use crate::problem::ApiProblem;
 use crate::provenance::{append_governance_event, validate_minimum_lineage_chain};
 use crate::state::AppState;
 
+mod approval_binding;
+mod durable_capability;
 mod inference;
+mod lifecycle_outbox;
 mod resource_scope;
 mod validation;
 
+pub(crate) use approval_binding::validate_approval_binding_digest;
+pub(crate) use durable_capability::get_capability_for_authorize;
+#[allow(unused_imports)]
+pub(crate) use durable_capability::mark_capability_used_durable;
 pub(crate) use inference::{
     build_prepare_request_for_proposal, enrich_http_compensation_if_needed, infer_rollback_class,
     parse_execution_id,
+};
+pub(crate) use lifecycle_outbox::{
+    execution_is_cancelable_pre_side_effect, execution_is_terminal_for_commit,
+    lifecycle_event_metadata, mark_lifecycle_obligation_written,
+    mark_lifecycle_transition_reconciled, record_lifecycle_transition_outbox,
+    record_lifecycle_transition_outbox_with_obligations,
 };
 pub(crate) use resource_scope::validate_resource_bindings_subset_of_scope;
 pub(crate) use validation::{validate_argument_constraints, validate_capability_proposal_binding};
@@ -121,399 +132,6 @@ pub(crate) use inference::infer_action_type_and_adapter;
 
 #[cfg(test)]
 pub(crate) use validation::effective_arguments;
-
-async fn record_lifecycle_transition_outbox(
-    store: &Arc<dyn StoreFacade>,
-    transition_name: &str,
-    previous_execution: &ExecutionRecord,
-    updated_execution: &ExecutionRecord,
-    previous_contract: Option<&ferrum_proto::RollbackContract>,
-    updated_contract: Option<&ferrum_proto::RollbackContract>,
-    intended_provenance_kind: ProvenanceEventKind,
-) -> ferrum_store::Result<LifecycleOutboxRecord> {
-    record_lifecycle_transition_outbox_with_obligations(
-        store,
-        transition_name,
-        previous_execution,
-        updated_execution,
-        previous_contract,
-        updated_contract,
-        vec![intended_provenance_kind],
-    )
-    .await
-}
-
-async fn record_lifecycle_transition_outbox_with_obligations(
-    store: &Arc<dyn StoreFacade>,
-    transition_name: &str,
-    previous_execution: &ExecutionRecord,
-    updated_execution: &ExecutionRecord,
-    previous_contract: Option<&ferrum_proto::RollbackContract>,
-    updated_contract: Option<&ferrum_proto::RollbackContract>,
-    intended_provenance_kinds: Vec<ProvenanceEventKind>,
-) -> ferrum_store::Result<LifecycleOutboxRecord> {
-    let mut outbox = LifecycleOutboxRecord::pending_with_obligations(
-        updated_execution.execution_id,
-        updated_contract
-            .map(|contract| contract.contract_id)
-            .or(updated_execution.rollback_contract_id),
-        Some(previous_execution.state.clone()),
-        updated_execution.state.clone(),
-        previous_contract.map(|contract| contract.state.clone()),
-        updated_contract.map(|contract| contract.state.clone()),
-        intended_provenance_kinds,
-        format!(
-            "{}:{}:{:?}:{}",
-            transition_name,
-            updated_execution.execution_id,
-            updated_execution.state,
-            updated_contract
-                .map(|contract| format!("{:?}", contract.state))
-                .unwrap_or_else(|| "none".to_string())
-        ),
-    );
-    outbox
-        .metadata
-        .insert("transition".to_string(), serde_json::json!(transition_name));
-    store
-        .lifecycle_outbox()
-        .record_lifecycle_transition(updated_execution, updated_contract, &outbox)
-        .await?;
-    Ok(outbox)
-}
-
-fn lifecycle_event_metadata(
-    outbox: &LifecycleOutboxRecord,
-    mut metadata: ferrum_proto::JsonMap,
-) -> ferrum_proto::JsonMap {
-    metadata.insert(
-        "lifecycle_outbox_id".to_string(),
-        serde_json::json!(outbox.outbox_id.to_string()),
-    );
-    metadata.insert(
-        "idempotency_key".to_string(),
-        serde_json::json!(outbox.idempotency_key.clone()),
-    );
-    metadata
-}
-
-fn execution_is_cancelable_pre_side_effect(state: &ExecutionState) -> bool {
-    matches!(
-        state,
-        ExecutionState::Proposed
-            | ExecutionState::Authorized
-            | ExecutionState::Prepared
-            | ExecutionState::AwaitingApproval
-    )
-}
-
-fn execution_is_terminal_for_commit(state: &ExecutionState) -> bool {
-    matches!(
-        state,
-        ExecutionState::Committed
-            | ExecutionState::Compensated
-            | ExecutionState::RolledBack
-            | ExecutionState::Denied
-            | ExecutionState::Quarantined
-            | ExecutionState::Failed
-            | ExecutionState::Canceled
-    )
-}
-
-async fn mark_lifecycle_obligation_written(
-    store: &Arc<dyn StoreFacade>,
-    outbox: &LifecycleOutboxRecord,
-    event_kind: ProvenanceEventKind,
-    event_id: EventId,
-) -> ferrum_store::Result<()> {
-    let updated = store
-        .lifecycle_outbox()
-        .mark_provenance_obligation_written(outbox.outbox_id, event_kind, event_id)
-        .await?;
-    if updated {
-        Ok(())
-    } else {
-        Err(ferrum_store::StoreError::Other(
-            "lifecycle outbox obligation update did not affect any row".to_string(),
-        ))
-    }
-}
-
-async fn mark_lifecycle_transition_reconciled(
-    store: &Arc<dyn StoreFacade>,
-    outbox: &LifecycleOutboxRecord,
-    event_id: EventId,
-) -> ferrum_store::Result<()> {
-    let outbox_repo = store.lifecycle_outbox();
-    mark_lifecycle_obligation_written(
-        store,
-        outbox,
-        outbox.intended_provenance_kind.clone(),
-        event_id,
-    )
-    .await?;
-    let mut result = ferrum_proto::JsonMap::new();
-    result.insert("normal_path".to_string(), serde_json::json!(true));
-    outbox_repo.mark_reconciled(outbox.outbox_id, result).await
-}
-
-// ---------------------------------------------------------------------------
-// Durable capability helpers (Stage 3)
-// ---------------------------------------------------------------------------
-
-/// Load capability from in-memory service, falling back to persisted store.
-/// Returns NotFound if not found in either.
-pub(crate) async fn get_capability_for_authorize(
-    cap: &Arc<dyn CapabilityService>,
-    store: &Arc<dyn StoreFacade>,
-    capability_id: CapabilityId,
-) -> Result<CapabilityLease, CapabilityError> {
-    // Try in-memory first
-    match cap.get(capability_id).await {
-        Ok(lease) => return Ok(lease),
-        Err(CapabilityError::NotFound) => {}
-        Err(e) => return Err(e),
-    }
-
-    // Fall back to persisted store
-    let Some(lease) = store
-        .capabilities()
-        .get(capability_id)
-        .await
-        .map_err(|_e| CapabilityError::NotFound)?
-    // Treat store errors as NotFound for authorize
-    else {
-        return Err(CapabilityError::NotFound);
-    };
-
-    // Validate persisted capability status
-    if matches!(lease.status, CapabilityStatus::Used) {
-        return Err(CapabilityError::AlreadyUsed);
-    }
-    if matches!(lease.status, CapabilityStatus::Revoked) {
-        return Err(CapabilityError::Revoked);
-    }
-    if lease.expires_at < Utc::now() {
-        return Err(CapabilityError::Expired);
-    }
-
-    Ok(lease)
-}
-
-/// Mark capability as used by winning an atomic durable transition first.
-/// In-memory state is a cache and is synchronized only after the store accepts
-/// the single-use Active -> Used transition.
-#[allow(dead_code)]
-pub(crate) async fn mark_capability_used_durable(
-    cap: &Arc<dyn CapabilityService>,
-    store: &Arc<dyn StoreFacade>,
-    capability_id: CapabilityId,
-) -> Result<CapabilityLease, CapabilityError> {
-    let Some(mut lease) = store.capabilities().get(capability_id).await.map_err(|e| {
-        tracing::error!(error = %e, "failed to load capability from store for mark_used");
-        CapabilityError::NotFound
-    })?
-    else {
-        return Err(CapabilityError::NotFound);
-    };
-
-    if matches!(lease.status, CapabilityStatus::Used) {
-        return Err(CapabilityError::AlreadyUsed);
-    }
-    if matches!(lease.status, CapabilityStatus::Revoked) {
-        return Err(CapabilityError::Revoked);
-    }
-    if lease.expires_at < Utc::now() {
-        return Err(CapabilityError::Expired);
-    }
-
-    let updated = store
-        .capabilities()
-        .update_status_if_active(capability_id, CapabilityStatus::Used)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "failed to atomically update capability status");
-            CapabilityError::NotFound
-        })?;
-
-    if !updated {
-        let status = store
-            .capabilities()
-            .get(capability_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "failed to reload capability after lost active update");
-                CapabilityError::NotFound
-            })?
-            .map(|lease| lease.status);
-        return match status {
-            Some(CapabilityStatus::Used) => Err(CapabilityError::AlreadyUsed),
-            Some(CapabilityStatus::Revoked) => Err(CapabilityError::Revoked),
-            Some(_) | None => Err(CapabilityError::NotFound),
-        };
-    }
-
-    if let Err(error) = cap.mark_used(capability_id).await {
-        match error {
-            CapabilityError::NotFound | CapabilityError::AlreadyUsed => {
-                tracing::debug!(
-                    ?error,
-                    "capability store transition won; in-memory cache was absent or already used"
-                );
-            }
-            other => {
-                tracing::warn!(
-                    error = ?other,
-                    "capability store transition won but in-memory cache sync failed"
-                );
-            }
-        }
-    }
-
-    lease.status = CapabilityStatus::Used;
-    Ok(lease)
-}
-
-// ---------------------------------------------------------------------------
-// I6 Approval Binding Digest Validation (Stage 3)
-// ---------------------------------------------------------------------------
-
-/// Validates the approval binding digest per I6 invariant.
-///
-/// Checks when `approval_binding=Some`:
-/// 1. Approval exists (404 -> 403 IntegrityMismatch)
-/// 2. Approval state is Granted (403 PolicyDenied)
-/// 3. Binding not expired (403 PolicyDenied)
-/// 4. Approval not expired (403 PolicyDenied)
-/// 5. Binding digest matches approval digest (403 IntegrityMismatch)
-/// 6. Computed proposal digest matches binding digest (403 IntegrityMismatch)
-///
-/// Skips all checks when `approval_binding=None` (backward compatible).
-pub(crate) async fn validate_approval_binding_digest(
-    store: &Arc<dyn StoreFacade>,
-    binding: &ApprovalBinding,
-    proposal_id: ProposalId,
-) -> Result<(), ApiProblem> {
-    // Step 1: Fetch the approval by ID
-    let approval = store
-        .approvals()
-        .get(binding.approval_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::IntegrityMismatch,
-                "approval not found for binding",
-            )
-        })?;
-
-    // Step 2: Check approval state is Granted
-    if !matches!(approval.state, ApprovalState::Granted) {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::PolicyDenied,
-            format!("approval state is {:?}, expected Granted", approval.state),
-        ));
-    }
-
-    // Step 3: Check binding not expired
-    if binding.expires_at < Utc::now() {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::PolicyDenied,
-            "approval binding has expired",
-        ));
-    }
-
-    // Step 4: Check approval not expired
-    if approval.expires_at < Utc::now() {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::PolicyDenied,
-            "approval has expired",
-        ));
-    }
-
-    // Step 5: Check binding digest matches approval digest
-    if binding.approved_action_digest != approval.action_digest {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::IntegrityMismatch,
-            "binding digest does not match approval digest",
-        ));
-    }
-
-    // Step 6: Fetch proposal and verify computed digest matches binding digest
-    let proposal = store
-        .proposals()
-        .get(proposal_id)
-        .await
-        .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?
-        .ok_or_else(|| {
-            ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::IntegrityMismatch,
-                "proposal not found",
-            )
-        })?;
-
-    let computed_digest = proposal.canonical_action_digest();
-    if computed_digest != binding.approved_action_digest {
-        return Err(ApiProblem::new(
-            StatusCode::FORBIDDEN,
-            ApiErrorCode::IntegrityMismatch,
-            "computed proposal digest does not match binding digest",
-        ));
-    }
-
-    if !binding.approver_roles.is_empty() {
-        let grant_events = store
-            .provenance()
-            .query(&ProvenanceQueryRequest {
-                intent_id: Some(approval.intent_id),
-                execution_id: approval.execution_id,
-                capability_id: None,
-                event_kind: Some(ProvenanceEventKind::ApprovalGranted),
-                since: None,
-                until: None,
-                edge_types: Vec::new(),
-            })
-            .await
-            .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
-        let approved_by_allowed_role = grant_events.iter().any(|event| {
-            event.proposal_id == Some(approval.proposal_id)
-                && event
-                    .metadata
-                    .get("approval_id")
-                    .and_then(|value| value.as_str())
-                    == Some(binding.approval_id.to_string().as_str())
-                && event
-                    .metadata
-                    .get("actor_role")
-                    .and_then(|value| value.as_str())
-                    .is_some_and(|role| {
-                        binding.approver_roles.iter().any(|allowed| allowed == role)
-                    })
-        }) || {
-            let requested_by_role =
-                format!("{:?}", approval.requested_by.actor_type).to_ascii_lowercase();
-            binding
-                .approver_roles
-                .iter()
-                .any(|allowed| allowed == &requested_by_role)
-        };
-        if !approved_by_allowed_role {
-            return Err(ApiProblem::new(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::PolicyDenied,
-                "approval was not granted by an allowed approver role",
-            ));
-        }
-    }
-
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // Stage 4 — Low-risk HTTP handlers
