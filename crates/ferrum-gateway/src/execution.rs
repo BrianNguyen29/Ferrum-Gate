@@ -87,16 +87,14 @@ use axum::{
 use chrono::Utc;
 use ferrum_cap::CapabilityError;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, ApprovalMode, AuditAction, AuditResourceType,
-    AuthorizeExecutionRequest, AuthorizeExecutionResponse, CancelExecutionResponse,
-    CommitExecutionResponse, CompensateExecutionResponse, Decision, EvaluateOutcomeResponse,
+    ActorRef, ActorType, ApiErrorCode, ApprovalMode, AuthorizeExecutionRequest,
+    AuthorizeExecutionResponse, CommitExecutionResponse, CompensateExecutionResponse, Decision,
     EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef, LifecycleOutboxRecord,
-    ObjectRef, ObjectType, OutcomeReport, PrepareExecutionResponse, ProvenanceEvent,
-    ProvenanceEventKind, ProvenanceQueryRequest, RollbackClass, RollbackState,
+    ObjectRef, ObjectType, PrepareExecutionResponse, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceQueryRequest, RollbackClass, RollbackState,
 };
 use std::sync::Arc;
 
-use crate::audit;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
@@ -104,16 +102,20 @@ use crate::provenance::{append_governance_event, validate_minimum_lineage_chain}
 use crate::state::AppState;
 
 mod approval_binding;
+mod cancel;
 mod durable_capability;
+mod evaluate_outcome;
 mod inference;
 mod lifecycle_outbox;
 mod resource_scope;
 mod validation;
 
 pub(crate) use approval_binding::validate_approval_binding_digest;
+pub(crate) use cancel::cancel_execution;
 pub(crate) use durable_capability::get_capability_for_authorize;
 #[allow(unused_imports)]
 pub(crate) use durable_capability::mark_capability_used_durable;
+pub(crate) use evaluate_outcome::evaluate_outcome;
 pub(crate) use inference::{
     build_prepare_request_for_proposal, enrich_http_compensation_if_needed, infer_rollback_class,
     parse_execution_id,
@@ -137,275 +139,9 @@ pub(crate) use validation::effective_arguments;
 // Stage 4 — Low-risk HTTP handlers
 // ---------------------------------------------------------------------------
 
-/// `POST /v1/executions/{execution_id}/cancel`
-///
-/// Cancels a pre-side-effect execution by transitioning it to `Canceled`,
-/// recording an audit entry, and emitting a `SideEffectRolledBack`
-/// provenance event so the lineage reflects the cancel as a rollback-like
-/// terminal effect.
-pub(crate) async fn cancel_execution(
-    State(state): State<Arc<AppState>>,
-    Path(execution_id): Path<String>,
-) -> Result<Json<CancelExecutionResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id).map_err(|e| {
-        state
-            .metrics
-            .record_governance_error(GovernanceRoute::ExecutionsCancel, e)
-    })?;
-
-    // Look up the execution record
-    let execution = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsCancel,
-                ApiProblem::internal(anyhow::Error::from(e)),
-            )
-        })?
-        .ok_or_else(|| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsCancel,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                ),
-            )
-        })?;
-
-    let previous_state = execution.state.clone();
-
-    // ------------------------------------------------------------------
-    // Cancel guard: only pre-side-effect states can be canceled. Once the
-    // adapter call has started or awaits verification, callers must use the
-    // compensate/rollback path so recovery semantics are explicit.
-    // ------------------------------------------------------------------
-    if !execution_is_cancelable_pre_side_effect(&previous_state) {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsCancel,
-            ApiProblem::new(
-                StatusCode::CONFLICT,
-                ApiErrorCode::Conflict,
-                "cancel not allowed: execution is not in a cancelable pre-side-effect state",
-            )
-        );
-    }
-
-    // Update execution state to Canceled
-    let previous_execution = execution.clone();
-    let mut updated_execution = execution;
-    updated_execution.state = ExecutionState::Canceled;
-    updated_execution.finished_at = Some(Utc::now());
-    let outbox = record_lifecycle_transition_outbox(
-        &state.runtime.store,
-        "cancel",
-        &previous_execution,
-        &updated_execution,
-        None,
-        None,
-        ProvenanceEventKind::SideEffectRolledBack,
-    )
-    .await
-    .map_err(|e| {
-        state.metrics.record_governance_error(
-            GovernanceRoute::ExecutionsCancel,
-            ApiProblem::internal(anyhow::Error::from(e)),
-        )
-    })?;
-
-    // Audit log: execution canceled
-    if let Err(problem) = audit::append_audit_checked(
-        &state,
-        "gateway",
-        AuditAction::ExecutionCancel,
-        AuditResourceType::Execution,
-        &execution_id.to_string(),
-        "success",
-        Some(serde_json::json!({
-            "previous_state": format!("{:?}", previous_state),
-        })),
-        Some(GovernanceRoute::ExecutionsCancel),
-    )
-    .await
-    {
-        return governance_err!(state, GovernanceRoute::ExecutionsCancel, problem);
-    }
-
-    // Emit SideEffectRolledBack provenance event for cancel operation.
-    // Cancel triggers a rollback-like effect even if no contract exists.
-    let cancel_event = ProvenanceEvent {
-        event_id: EventId::new(),
-        kind: ProvenanceEventKind::SideEffectRolledBack,
-        occurred_at: Utc::now(),
-        actor: ActorRef {
-            actor_type: ActorType::Gateway,
-            actor_id: "ferrum-gateway".to_string(),
-            display_name: Some("FerrumGate Gateway".to_string()),
-        },
-        object: ObjectRef {
-            object_type: ObjectType::SideEffect,
-            object_id: execution_id.to_string(),
-            summary: Some("Execution canceled".to_string()),
-        },
-        intent_id: Some(updated_execution.intent_id),
-        proposal_id: Some(updated_execution.proposal_id),
-        execution_id: Some(execution_id),
-        capability_id: Some(updated_execution.capability_id),
-        rollback_contract_id: updated_execution.rollback_contract_id,
-        policy_bundle_id: None,
-        trust_labels: Vec::new(),
-        sensitivity_labels: Vec::new(),
-        parent_edges: Vec::new(),
-        hash_chain: HashChainRef {
-            content_hash: None,
-            manifest_hash: None,
-            policy_bundle_hash: None,
-            previous_ledger_hash: None,
-        },
-        metadata: {
-            let mut m = ferrum_proto::JsonMap::new();
-            m.insert(
-                "previous_state".to_string(),
-                serde_json::json!(format!("{:?}", previous_state)),
-            );
-            m.insert(
-                "lineage_parent_optional".to_string(),
-                serde_json::json!(true),
-            );
-            m
-        },
-        source_runtime_id: None,
-    };
-    let cancel_event_id = cancel_event.event_id;
-    append_governance_event(&state.runtime.store, cancel_event)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsCancel,
-                ApiProblem::internal(anyhow::Error::from(e)),
-            )
-        })?;
-    mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, cancel_event_id)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsCancel,
-                ApiProblem::internal(anyhow::Error::from(e)),
-            )
-        })?;
-
-    governance_ok!(
-        state,
-        GovernanceRoute::ExecutionsCancel,
-        Ok(Json(CancelExecutionResponse {
-            execution_id,
-            previous_state,
-            current_state: ExecutionState::Canceled,
-            canceled_at: Utc::now(),
-        }))
-    )
-}
-
-/// `POST /v1/executions/{execution_id}/evaluate-outcome`
-///
-/// Validates that the path `execution_id` matches the report, loads the
-/// execution and its intent, and delegates the alignment check to the PDP
-/// `evaluate_outcome` engine.
-pub(crate) async fn evaluate_outcome(
-    State(state): State<Arc<AppState>>,
-    Path(execution_id): Path<String>,
-    Json(report): Json<OutcomeReport>,
-) -> Result<Json<EvaluateOutcomeResponse>, ApiProblem> {
-    let execution_id = parse_execution_id(&execution_id).map_err(|e| {
-        state
-            .metrics
-            .record_governance_error(GovernanceRoute::ExecutionsEvaluateOutcome, e)
-    })?;
-
-    // Validate execution_id matches report
-    if report.execution_id != execution_id {
-        return governance_err!(
-            state,
-            GovernanceRoute::ExecutionsEvaluateOutcome,
-            ApiProblem::new(
-                StatusCode::BAD_REQUEST,
-                ApiErrorCode::ValidationError,
-                "execution_id in path does not match report",
-            )
-        );
-    }
-
-    // Look up execution to get intent_id
-    let execution = state
-        .runtime
-        .store
-        .executions()
-        .get(execution_id)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsEvaluateOutcome,
-                ApiProblem::internal(anyhow::Error::from(e)),
-            )
-        })?
-        .ok_or_else(|| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsEvaluateOutcome,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                ),
-            )
-        })?;
-
-    // Look up intent
-    let intent = state
-        .runtime
-        .store
-        .intents()
-        .get(execution.intent_id)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsEvaluateOutcome,
-                ApiProblem::internal(anyhow::Error::from(e)),
-            )
-        })?
-        .ok_or_else(|| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsEvaluateOutcome,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "intent not found for execution",
-                ),
-            )
-        })?;
-
-    let response = state
-        .runtime
-        .pdp
-        .evaluate_outcome(&intent, &report)
-        .await
-        .map_err(|e| {
-            state.metrics.record_governance_error(
-                GovernanceRoute::ExecutionsEvaluateOutcome,
-                ApiProblem::internal(e),
-            )
-        })?;
-
-    governance_ok!(
-        state,
-        GovernanceRoute::ExecutionsEvaluateOutcome,
-        Ok(Json(response))
-    )
-}
+// ---------------------------------------------------------------------------
+// Stage 4 — Low-risk HTTP handlers
+// ---------------------------------------------------------------------------
 
 /// `POST /v1/executions/{execution_id}/commit`
 ///
