@@ -21,6 +21,17 @@ Example `ferrumd.env.example` stanzas:
 # FERRUMD_AUDIT_FAIL_CLOSED=true
 ```
 
+## Container Image & Compose (Local Demo Only)
+
+The repository `Dockerfile` and `docker-compose*.yml` files are **local-demo
+packaging only**. Recent hardening (OCI image labels, `STOPSIGNAL SIGTERM`, an
+image-level `HEALTHCHECK` against `/v1/healthz`, `.dockerignore` secret and
+context-noise patterns, and `no-new-privileges` / `cap_drop: [ALL]` on the
+`ferrumd` demo services) reduces local risk but **does not constitute
+production-ready container hardening or signoff**. Production deployments remain
+operator-owned and must supply their own image build, scanning, signing,
+secrets, and orchestration policy.
+
 ## SQLite Configuration
 
 ### Connection Pool
