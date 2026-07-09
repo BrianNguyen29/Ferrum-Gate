@@ -73,3 +73,30 @@ Adopt a lightweight, opt-in behavioral anomaly detection layer that operates on 
 - Cross-actor correlation or graph analysis (single-actor baselines only; cross-actor would require multi-tenancy design).
 - Predictive modeling of future behavior (only retrospective anomaly detection).
 - Persistence, migrations, or outbox escalation.
+
+## Future directions (not committed)
+
+The following are potential evolution paths, not a roadmap commitment. V1
+remains **P2 Experimental / advisory / in-memory** until a future shipped slice
+changes this ADR and the ROADMAP status.
+
+### V2 — Persistence and operator escalation (potential)
+- Persist per-principal anomaly counters to the store with configurable TTL,
+  enabling survival across restarts and multi-instance deployments.
+- Emit anomaly events to the lifecycle outbox so operators can subscribe to
+  `BehavioralAnomalyDetected` provenance events and route them to a SIEM or
+  pager workflow.
+- Add optional policy-mediated hooks: a detected critical anomaly could raise a
+  `RequireApproval` or `QuarantineHold` decision only when a policy rule binds
+  the anomaly signal to that outcome. V2 still does not auto-block by default.
+
+### V3 — Cross-actor and multi-signal enrichment (potential)
+- Add time-of-day, action-sequence, and tool-diversity baselines.
+- Support lightweight cross-actor correlation (e.g., many principals targeting
+  the same resource within a short window) behind a multi-tenancy design.
+- Allow an external scoring adapter seam so operators can plug in an ML or
+  threat-intelligence model while keeping the default detector local-only.
+
+**No timeline or owner is committed for V2 or V3.** They are documented only to
+make the boundary of the current V1 evidence explicit and to help reviewers avoid
+assuming that V1 already implies persistence, enforcement, or ML.

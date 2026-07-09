@@ -25,7 +25,7 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 | SQLite store | P4 | Stable | Write queue + PRAGMA tuning; operator tuning guide available. |
 | PostgreSQL store | P3 | Beta | Local and CI live-tested; HA topology is operator-owned. |
 | Auth (bearer / scoped / OIDC / agent) | P4 | Stable | CI-tested across modes. |
-| MCP stdio server | P4 | Stable | Default; tool-contract + stdio lifecycle smoke run in CI (`make adapter-smoke` + advisory lifecycle step). |
+| MCP stdio server | P4 | Stable | Default; tool-contract + stdio lifecycle smoke run in CI (`make adapter-smoke` + non-blocking lifecycle step). |
 | MCP HTTP / SSE transport | P2 | Experimental | Streamable HTTP / SSE; in-memory session/replay skeleton; auth-bound; not restart-resumable. |
 | MCP resumability | P0 | Not implemented | Replay buffer exists; persistent resume checkpoint is not implemented. |
 | Filesystem adapter | P4 | Stable | Sandbox + snapshot rollback. |
@@ -40,7 +40,7 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 
 > Adapter maturity levels and promotion criteria are defined in [`guides/adapter-maturity-lifecycle.md`](./guides/adapter-maturity-lifecycle.md). Promoting an adapter requires evidence, not just implementation; current labels remain conservative.
 
-| Behavioral anomaly detection | P2 | Experimental | Phase 1 V1; in-memory advisory high-risk/R3 burst detection; opt-in; does not change PDP decisions. |
+| Behavioral anomaly detection | P2 | Experimental | Phase 1 V1; in-memory advisory high-risk/R3 burst detection; opt-in; does not change PDP decisions. V2/V3 persistence/enforcement/ML are future options only — see ADR 010. |
 | PolicyBundle PDP engine | P3 | Beta | Phase 1; `QuarantineHold` enforced; bundle identity propagation and obligations deferred. |
 | MFA TOTP | P4 | Stable | Enrollment/verification + per-factor lockout; WebAuthn and backup codes deferred. |
 | HA reconciler | P2 | Experimental | Opt-in; startup + periodic scan reconciles stale in-flight executions via CAS to Canceled/Failed with provenance/metrics. Does not provide leader election, rollback execution, capability revocation, or turnkey HA. |
