@@ -3876,6 +3876,629 @@ mod tests {
         assert_eq!(lockout.failed_attempts, 1);
     }
 
+    // ---------------------------------------------------------------------
+    // p0-actor-binding: authenticated AuthActor is authoritative for resolves
+    // ---------------------------------------------------------------------
+
+    async fn seed_intent_proposal(
+        runtime: &GatewayRuntime,
+    ) -> (ferrum_proto::IntentId, ferrum_proto::ProposalId) {
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        runtime
+            .store
+            .intents()
+            .insert(&ferrum_proto::IntentEnvelope {
+                intent_id,
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: "t".to_string(),
+                goal: "g".to_string(),
+                normalized_goal: "g".to_string(),
+                allowed_outcomes: Vec::new(),
+                forbidden_outcomes: Vec::new(),
+                resource_scope: Vec::new(),
+                risk_tier: ferrum_proto::RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+                time_budget: ferrum_proto::TimeBudget {
+                    max_duration_ms: 30_000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: ferrum_proto::TrustContextSummary {
+                    input_labels: Vec::new(),
+                    sensitivity_labels: Vec::new(),
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: Vec::new(),
+                tags: Vec::new(),
+                metadata: ferrum_proto::JsonMap::new(),
+                status: ferrum_proto::IntentStatus::Active,
+                created_at: now,
+                expires_at: now + chrono::Duration::hours(1),
+            })
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&ferrum_proto::ActionProposal {
+                proposal_id,
+                intent_id,
+                step_index: 0,
+                title: "p".to_string(),
+                tool_name: "tool".to_string(),
+                server_name: "server".to_string(),
+                raw_arguments: serde_json::json!({}),
+                expected_effect: "e".to_string(),
+                estimated_risk: ferrum_proto::RiskTier::Low,
+                requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+                taint_inputs: Vec::new(),
+                metadata: ferrum_proto::JsonMap::new(),
+                created_at: now,
+            })
+            .await
+            .unwrap();
+        (intent_id, proposal_id)
+    }
+
+    async fn insert_scoped_token(
+        runtime: &GatewayRuntime,
+        actor_id: &str,
+        scopes: Vec<String>,
+    ) -> String {
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        runtime
+            .store
+            .tokens()
+            .insert(&ferrum_proto::ScopedToken {
+                token_id: format!("tok_{}", actor_id),
+                actor_id: actor_id.to_string(),
+                role: ferrum_proto::TokenRole::Operator,
+                scopes,
+                description: None,
+                expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+                created_at: chrono::Utc::now(),
+                last_used_at: None,
+                revoked_at: None,
+                revoked_reason: None,
+                rotated_from: None,
+                token_lookup_hash,
+                token_hash,
+                token_salt,
+            })
+            .await
+            .unwrap();
+        token_value
+    }
+
+    // Quarantine resolve enforces a lineage parent (`QuarantineHoldCreated`) via
+    // `append_governance_event`; seed one so the success path can resolve.
+    async fn seed_quarantine_created_event(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) {
+        runtime
+            .store
+            .provenance()
+            .append_event(&ferrum_proto::ProvenanceEvent {
+                event_id: ferrum_proto::EventId::new(),
+                kind: ferrum_proto::ProvenanceEventKind::QuarantineHoldCreated,
+                occurred_at: chrono::Utc::now() - chrono::Duration::seconds(1),
+                actor: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Gateway,
+                    actor_id: "ferrum-gateway".to_string(),
+                    display_name: None,
+                },
+                object: ferrum_proto::ObjectRef {
+                    object_type: ferrum_proto::ObjectType::QuarantineHold,
+                    object_id: "seed".to_string(),
+                    summary: None,
+                },
+                intent_id: Some(intent_id),
+                proposal_id: Some(proposal_id),
+                execution_id: None,
+                capability_id: None,
+                rollback_contract_id: None,
+                policy_bundle_id: None,
+                trust_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                parent_edges: Vec::new(),
+                hash_chain: ferrum_proto::HashChainRef {
+                    content_hash: None,
+                    manifest_hash: None,
+                    policy_bundle_hash: None,
+                    previous_ledger_hash: None,
+                },
+                metadata: ferrum_proto::JsonMap::new(),
+                source_runtime_id: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn seed_pending_quarantine_hold(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) -> ferrum_proto::QuarantineHoldId {
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap();
+        hold_id
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_authenticated_actor_mismatch_rejected() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        runtime
+            .store
+            .approvals()
+            .insert(&ferrum_proto::ApprovalRequest {
+                approval_id,
+                intent_id,
+                proposal_id,
+                execution_id: None,
+                requested_by: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Operator,
+                    actor_id: "requester".to_string(),
+                    display_name: None,
+                },
+                reason: "r".to_string(),
+                action_digest: "d".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                state: ferrum_proto::ApprovalState::Pending,
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        // Body asserts a forged actor that does not match the authenticated token.
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "forged-attacker".to_string(),
+                display_name: None,
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // Fail closed: no state mutation; approval must remain pending.
+        let after = runtime
+            .store
+            .approvals()
+            .get(approval_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(after.state, ferrum_proto::ApprovalState::Pending));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_authenticated_actor_binds_provenance() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        runtime
+            .store
+            .approvals()
+            .insert(&ferrum_proto::ApprovalRequest {
+                approval_id,
+                intent_id,
+                proposal_id,
+                execution_id: None,
+                requested_by: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Operator,
+                    actor_id: "requester".to_string(),
+                    display_name: None,
+                },
+                reason: "r".to_string(),
+                action_digest: "d".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                state: ferrum_proto::ApprovalState::Pending,
+                created_at: chrono::Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        // Body actor matches the authenticated actor.
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "real-operator".to_string(),
+                display_name: None,
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Provenance metadata must carry the authenticated actor, proving it is authoritative.
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ferrum_proto::ProvenanceEventKind::ApprovalGranted),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("real-operator")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_actor_mismatch_rejected() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap();
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "forged-attacker".to_string(),
+                display_name: None,
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // Fail closed: hold remains pending and unresolved.
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            after.state,
+            ferrum_proto::QuarantineHoldState::Pending
+        ));
+        assert!(after.resolved_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_actor_binds_resolved_by() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap();
+
+        seed_quarantine_created_event(&runtime, intent_id, proposal_id).await;
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "real-operator".to_string(),
+                display_name: None,
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Persisted resolver must be the authenticated actor, not a body-supplied value.
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.resolved_by.unwrap().actor_id,
+            "real-operator".to_string()
+        );
+    }
+
+    async fn resolve_quarantine_with_forged_actor(body_actor_id: &str) {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let hold_id = seed_pending_quarantine_hold(&runtime, intent_id, proposal_id).await;
+        seed_quarantine_created_event(&runtime, intent_id, proposal_id).await;
+
+        // Body forges actor_type and display_name; actor_id is either matching (compat)
+        // or empty (omitted). Both must be ignored in favor of the authenticated identity.
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Agent,
+                actor_id: body_actor_id.to_string(),
+                display_name: Some("Forged Name".to_string()),
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Persisted resolver is fully trusted: actor_type derives from the auth source
+        // (scoped -> Operator) and display_name is cleared; forged body fields are dropped.
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let resolved_by = after.resolved_by.unwrap();
+        assert_eq!(resolved_by.actor_id, "real-operator".to_string());
+        assert!(matches!(
+            resolved_by.actor_type,
+            ferrum_proto::ActorType::Operator
+        ));
+        assert!(resolved_by.display_name.is_none());
+
+        // Provenance actor is equally trusted.
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ferrum_proto::ProvenanceEventKind::QuarantineResolved),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor.actor_id, "real-operator".to_string());
+        assert!(matches!(
+            events[0].actor.actor_type,
+            ferrum_proto::ActorType::Operator
+        ));
+        assert!(events[0].actor.display_name.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_matching_id_overrides_forged_actor_fields() {
+        resolve_quarantine_with_forged_actor("real-operator").await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_empty_id_overrides_forged_actor_fields() {
+        resolve_quarantine_with_forged_actor("").await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_bearer_fallback_uses_body_actor() {
+        // Bearer mode inserts no AuthActor, so the request-body actor must remain authoritative.
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            bearer_token: Some("secret-token".to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap();
+
+        seed_quarantine_created_event(&runtime, intent_id, proposal_id).await;
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "legacy-body-operator".to_string(),
+                display_name: None,
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", "Bearer secret-token")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.resolved_by.unwrap().actor_id,
+            "legacy-body-operator".to_string()
+        );
+    }
+
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and
     // provenance event emission require foreign key constraints (approval references intent/proposal).
     // These scenarios are covered by integration tests in integration_gateway_flow.rs

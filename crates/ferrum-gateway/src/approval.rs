@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -27,6 +27,7 @@ use ferrum_proto::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::AuthActor;
 use crate::macros::{governance_err, governance_ok};
 use crate::mfa::{TotpVerifyResult, check_agent_mfa_lockout, reset_mfa_lockout_after_success};
 use crate::monitoring::GovernanceRoute;
@@ -328,6 +329,7 @@ pub(crate) async fn get_approval(
 
 pub(crate) async fn resolve_approval(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Path(approval_id): Path<String>,
     Json(request): Json<ApprovalResolveRequest>,
 ) -> Result<Json<ferrum_proto::ApprovalRequest>, ApiProblem> {
@@ -336,6 +338,28 @@ pub(crate) async fn resolve_approval(
             .metrics
             .record_governance_error(GovernanceRoute::ApprovalsResolve, e)
     })?;
+
+    // Authenticated actor binding: when an AuthActor is present (Scoped/OIDC/Agent),
+    // it is authoritative. Reject any request-body actor asserting a different
+    // identity before MFA or state mutation (fail closed). When no AuthActor is
+    // present (Bearer/Disabled), retain the request-body actor for compatibility.
+    let effective_actor_id = match &auth_actor {
+        Some(Extension(actor)) => {
+            if !request.actor.actor_id.is_empty() && request.actor.actor_id != actor.actor_id {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::Forbidden,
+                        "request actor does not match authenticated actor",
+                    )
+                );
+            }
+            actor.actor_id.clone()
+        }
+        None => request.actor.actor_id.clone(),
+    };
 
     // ADR008 Phase 2: MFA verification for approval resolve.
     // When enabled, require a valid active TOTP factor from the resolver.
@@ -383,11 +407,8 @@ pub(crate) async fn resolve_approval(
 
         // Check agent-level lockout before fetching the factor to avoid leaking
         // factor existence while the agent is locked.
-        match check_agent_mfa_lockout(
-            state.runtime.store.mfa_credentials(),
-            &request.actor.actor_id,
-        )
-        .await
+        match check_agent_mfa_lockout(state.runtime.store.mfa_credentials(), &effective_actor_id)
+            .await
         {
             Ok(Some(retry_after_secs)) => {
                 return governance_err!(
@@ -434,7 +455,7 @@ pub(crate) async fn resolve_approval(
             }
         };
 
-        if record.agent_id != request.actor.actor_id {
+        if record.agent_id != effective_actor_id {
             return governance_err!(
                 state,
                 GovernanceRoute::ApprovalsResolve,
@@ -622,7 +643,7 @@ pub(crate) async fn resolve_approval(
     // Audit log: approval resolved
     if let Err(problem) = crate::audit::append_audit_checked(
         &state,
-        &request.actor.actor_id,
+        &effective_actor_id,
         AuditAction::ApprovalResolve,
         AuditResourceType::Approval,
         &approval_id.to_string(),
@@ -673,7 +694,7 @@ pub(crate) async fn resolve_approval(
     let mut metadata = ferrum_proto::JsonMap::new();
     metadata.insert(
         "actor_id".to_string(),
-        serde_json::json!(request.actor.actor_id),
+        serde_json::json!(&effective_actor_id),
     );
     if let Some(reason) = &request.reason {
         metadata.insert("reason".to_string(), serde_json::json!(reason));
