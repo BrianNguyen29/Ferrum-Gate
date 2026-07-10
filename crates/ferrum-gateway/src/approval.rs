@@ -606,8 +606,12 @@ pub(crate) async fn resolve_approval(
         );
     }
 
+    // Single timestamp used for the expiry fast-path and the atomic CAS write so
+    // the store's compare-and-swap predicate evaluates a consistent `now`.
+    let now = Utc::now();
+
     // Check if approval has expired
-    if approval.expires_at < Utc::now() {
+    if approval.expires_at < now {
         return governance_err!(
             state,
             GovernanceRoute::ApprovalsResolve,
@@ -626,12 +630,15 @@ pub(crate) async fn resolve_approval(
         ApprovalState::Denied
     };
 
-    // Call store to resolve the approval (validates transition)
-    state
+    // Atomically resolve the approval. The store's compare-and-swap predicate
+    // requires the row to still be `Pending` and unexpired at write time, so
+    // only one concurrent resolver can win. A lost race (already terminal or
+    // expired at write time) is a client conflict, never a server error.
+    let won = state
         .runtime
         .store
         .approvals()
-        .resolve(approval_id, target_state.clone())
+        .resolve(approval_id, target_state.clone(), now)
         .await
         .map_err(|e| {
             state.metrics.record_governance_error(
@@ -639,6 +646,18 @@ pub(crate) async fn resolve_approval(
                 ApiProblem::internal(anyhow::Error::from(e)),
             )
         })?;
+
+    if !won {
+        return governance_err!(
+            state,
+            GovernanceRoute::ApprovalsResolve,
+            ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "approval could not be resolved: it is no longer pending or has expired",
+            )
+        );
+    }
 
     // Audit log: approval resolved
     if let Err(problem) = crate::audit::append_audit_checked(

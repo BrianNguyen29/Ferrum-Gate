@@ -322,22 +322,25 @@ async fn expire_stale_pending_does_not_clobber_terminal_approval() {
 
     let approval_id = ApprovalId::new();
     let now = chrono::Utc::now();
+    // Old by created_at (so the reconciler considers it a candidate) but not yet
+    // expired by expires_at, so an operator can still resolve it under the CAS.
     let approval = make_approval(
         approval_id,
         intent_id,
         proposal_id,
         ApprovalState::Pending,
         now - chrono::Duration::hours(2),
-        now - chrono::Duration::minutes(1),
+        now + chrono::Duration::hours(1),
     );
     store.approvals().insert(&approval).await.unwrap();
 
     // Simulate an operator resolving the approval before the reconciler runs.
-    store
+    let won = store
         .approvals()
-        .resolve(approval_id, ApprovalState::Granted)
+        .resolve(approval_id, ApprovalState::Granted, now)
         .await
         .unwrap();
+    assert!(won, "operator resolve should win the CAS");
 
     let expired = store
         .approvals()
@@ -416,13 +419,15 @@ async fn expire_stale_pending_via_write_queue_skips_resolved() {
 
     let approval_id = ApprovalId::new();
     let now = chrono::Utc::now();
+    // Old by created_at (reconciler candidate) but not yet expired by expires_at
+    // so the queued resolve can still win the CAS.
     let approval = make_approval(
         approval_id,
         intent_id,
         proposal_id,
         ApprovalState::Pending,
         now - chrono::Duration::hours(2),
-        now - chrono::Duration::minutes(1),
+        now + chrono::Duration::hours(1),
     );
 
     // Use the StoreFacade trait object so the approval repo routes writes
@@ -430,11 +435,12 @@ async fn expire_stale_pending_via_write_queue_skips_resolved() {
     let facade: std::sync::Arc<dyn StoreFacade> = std::sync::Arc::new(store.clone());
     facade.approvals().insert(&approval).await.unwrap();
 
-    facade
+    let won = facade
         .approvals()
-        .resolve(approval_id, ApprovalState::Granted)
+        .resolve(approval_id, ApprovalState::Granted, now)
         .await
         .unwrap();
+    assert!(won, "queued resolve should win the CAS");
 
     let expired = facade
         .approvals()

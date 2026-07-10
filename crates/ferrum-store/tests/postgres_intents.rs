@@ -2316,9 +2316,11 @@ async fn postgres_approval_resolve_valid_transition() {
     let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
 
     repo.insert(&approval).await.unwrap();
-    repo.resolve(approval_id, ApprovalState::Granted)
+    let won = repo
+        .resolve(approval_id, ApprovalState::Granted, Utc::now())
         .await
         .unwrap();
+    assert!(won, "Pending->Granted resolve should win the CAS");
 
     let fetched = repo
         .get(approval_id)
@@ -2348,13 +2350,54 @@ async fn postgres_approval_resolve_invalid_transition() {
 
     repo.insert(&approval).await.unwrap();
     let err = repo
-        .resolve(approval_id, ApprovalState::Pending)
+        .resolve(approval_id, ApprovalState::Pending, Utc::now())
         .await
         .unwrap_err();
     assert!(
         matches!(err, ferrum_store::StoreError::InvalidState(_)),
         "expected InvalidState error for transition out of terminal state, got: {}",
         err
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_terminal_loser_returns_false() {
+    // An opposing resolver against an already-terminal approval must lose the
+    // CAS with Ok(false) (never Err) and must not overwrite the winning
+    // decision. This is what lets the gateway map a lost race to 409 on Postgres.
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Granted);
+
+    repo.insert(&approval).await.unwrap();
+
+    let lost = repo
+        .resolve(approval_id, ApprovalState::Denied, Utc::now())
+        .await;
+    assert!(
+        matches!(lost, Ok(false)),
+        "opposing resolve against a terminal approval must lose with Ok(false), got: {:?}",
+        lost
+    );
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    assert!(
+        matches!(fetched.state, ApprovalState::Granted),
+        "terminal Granted decision must not be overwritten, got: {:?}",
+        fetched.state
     );
 }
 

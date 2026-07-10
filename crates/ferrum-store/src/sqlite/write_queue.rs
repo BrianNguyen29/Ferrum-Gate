@@ -121,7 +121,8 @@ pub enum WriteOp {
     ResolveApproval {
         approval_id: ApprovalId,
         state: ApprovalState,
-        reply: oneshot::Sender<Result<()>>,
+        now: Timestamp,
+        reply: oneshot::Sender<Result<bool>>,
     },
     ExpireStalePending {
         now: Timestamp,
@@ -222,6 +223,35 @@ impl WriteQueue {
             now,
             max_age_seconds,
             batch_size,
+            reply,
+        };
+
+        self.pending_ops.fetch_add(1, Ordering::Relaxed);
+        let send_result = self.sender.send(op).await;
+        if send_result.is_err() {
+            self.pending_ops.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::Other("write queue closed".to_string()));
+        }
+
+        recv.await
+            .map_err(|_| StoreError::Other("write operation cancelled".to_string()))?
+    }
+
+    /// Send an approval resolve operation and wait for the CAS result.
+    /// Returns `Ok(true)` when this resolver transitioned the row (won) and
+    /// `Ok(false)` when the row was not in a resolvable state (lost the race,
+    /// already terminal, or expired).
+    pub async fn resolve_approval(
+        &self,
+        approval_id: ApprovalId,
+        state: ApprovalState,
+        now: Timestamp,
+    ) -> crate::Result<bool> {
+        let (reply, recv) = oneshot::channel();
+        let op = WriteOp::ResolveApproval {
+            approval_id,
+            state,
+            now,
             reply,
         };
 
@@ -388,13 +418,11 @@ impl WriteQueue {
             },
             WriteOp::InsertApproval { data, .. } => WriteOp::InsertApproval { data, reply },
             WriteOp::UpdateApproval { data, .. } => WriteOp::UpdateApproval { data, reply },
-            WriteOp::ResolveApproval {
-                approval_id, state, ..
-            } => WriteOp::ResolveApproval {
-                approval_id,
-                state,
-                reply,
-            },
+            WriteOp::ResolveApproval { .. } => {
+                // This op carries its own typed reply (Result<bool>) and is not
+                // routed through the generic Result<()> send path; leave it intact.
+                op
+            }
             WriteOp::ExpireStalePending {
                 now,
                 max_age_seconds,
@@ -562,10 +590,11 @@ async fn execute_write_op(pool: &SqlitePool, op: WriteOp) -> Result<()> {
         WriteOp::ResolveApproval {
             approval_id,
             state,
+            now,
             reply,
         } => {
             let repo = SqliteApprovalRepo::new(pool.clone());
-            let result = repo.resolve(approval_id, state).await;
+            let result = repo.resolve(approval_id, state, now).await;
             let _ = reply.send(result);
         }
         WriteOp::ExpireStalePending {

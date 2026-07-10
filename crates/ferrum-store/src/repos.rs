@@ -273,7 +273,21 @@ pub trait ApprovalRepo: Send + Sync {
     async fn insert(&self, approval: &ApprovalRequest) -> Result<()>;
     async fn get(&self, approval_id: ApprovalId) -> Result<Option<ApprovalRequest>>;
     async fn update(&self, approval: &ApprovalRequest) -> Result<()>;
-    async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()>;
+    /// Atomically resolve a pending approval to `state`.
+    ///
+    /// The transition is applied with a compare-and-swap predicate that requires
+    /// the row to still be `Pending` and not yet expired (`expires_at > now`) at
+    /// write time. Returns `Ok(true)` when the row was transitioned (this caller
+    /// won) and `Ok(false)` when the row was not in a resolvable state (already
+    /// terminal, expired, or missing) so callers can surface a client conflict.
+    /// Only one concurrent resolver can observe `Ok(true)`; the loser observes
+    /// `Ok(false)`. Real storage errors still surface as `Err`.
+    async fn resolve(
+        &self,
+        approval_id: ApprovalId,
+        state: ApprovalState,
+        now: Timestamp,
+    ) -> Result<bool>;
     async fn list_pending(&self) -> Result<Vec<ApprovalRequest>>;
     async fn list_pending_paginated(&self, limit: u32, offset: u32)
     -> Result<Vec<ApprovalRequest>>;

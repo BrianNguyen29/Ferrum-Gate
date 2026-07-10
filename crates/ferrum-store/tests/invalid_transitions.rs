@@ -314,7 +314,9 @@ async fn approval_resolve_granted_to_pending_returns_invalid_state() {
     repo.insert(&approval).await.unwrap();
 
     // Attempt invalid transition: Granted -> Pending
-    let result = repo.resolve(approval_id, ApprovalState::Pending).await;
+    let result = repo
+        .resolve(approval_id, ApprovalState::Pending, Utc::now())
+        .await;
     assert!(matches!(result, Err(StoreError::InvalidState(_))));
     let err = result.unwrap_err();
     let msg = err.to_string();
@@ -344,7 +346,9 @@ async fn approval_resolve_denied_to_pending_returns_invalid_state() {
     let approval = make_approval(approval_id, intent_id, proposal_id, ApprovalState::Denied);
     repo.insert(&approval).await.unwrap();
 
-    let result = repo.resolve(approval_id, ApprovalState::Pending).await;
+    let result = repo
+        .resolve(approval_id, ApprovalState::Pending, Utc::now())
+        .await;
     assert!(matches!(result, Err(StoreError::InvalidState(_))));
 }
 
@@ -362,13 +366,18 @@ async fn approval_resolve_expired_to_pending_returns_invalid_state() {
     let approval = make_approval(approval_id, intent_id, proposal_id, ApprovalState::Expired);
     repo.insert(&approval).await.unwrap();
 
-    let result = repo.resolve(approval_id, ApprovalState::Pending).await;
+    let result = repo
+        .resolve(approval_id, ApprovalState::Pending, Utc::now())
+        .await;
     assert!(matches!(result, Err(StoreError::InvalidState(_))));
 }
 
 #[tokio::test]
-async fn approval_resolve_granted_to_denied_returns_invalid_state() {
-    // Cannot transition between terminal states
+async fn approval_resolve_granted_to_denied_returns_false_preserves_winner() {
+    // A terminal approval (Granted) is a lost race for an opposing resolver
+    // (Denied): resolve must return Ok(false), not Err, and must not overwrite
+    // the winning decision. This is what lets the gateway map a lost CAS to 409
+    // rather than 500.
     let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
     store.apply_embedded_migrations().await.unwrap();
 
@@ -381,8 +390,22 @@ async fn approval_resolve_granted_to_denied_returns_invalid_state() {
     let approval = make_approval(approval_id, intent_id, proposal_id, ApprovalState::Granted);
     repo.insert(&approval).await.unwrap();
 
-    let result = repo.resolve(approval_id, ApprovalState::Denied).await;
-    assert!(matches!(result, Err(StoreError::InvalidState(_))));
+    let result = repo
+        .resolve(approval_id, ApprovalState::Denied, Utc::now())
+        .await;
+    assert!(
+        matches!(result, Ok(false)),
+        "opposing resolve against a terminal approval must lose with Ok(false), got: {:?}",
+        result
+    );
+
+    // The winning (Granted) decision must be preserved.
+    let fetched = repo.get(approval_id).await.unwrap().unwrap();
+    assert!(
+        matches!(fetched.state, ApprovalState::Granted),
+        "terminal Granted decision must not be overwritten, got: {:?}",
+        fetched.state
+    );
 }
 
 #[tokio::test]
@@ -400,10 +423,12 @@ async fn approval_resolve_pending_to_granted_is_valid() {
     let approval = make_approval(approval_id, intent_id, proposal_id, ApprovalState::Pending);
     repo.insert(&approval).await.unwrap();
 
-    let result = repo.resolve(approval_id, ApprovalState::Granted).await;
+    let result = repo
+        .resolve(approval_id, ApprovalState::Granted, Utc::now())
+        .await;
     assert!(
-        result.is_ok(),
-        "Pending->Granted should succeed, got: {:?}",
+        matches!(result, Ok(true)),
+        "Pending->Granted should win the CAS, got: {:?}",
         result
     );
 }
@@ -750,13 +775,19 @@ async fn approval_resolve_nonexistent_returns_ok() {
     store.apply_embedded_migrations().await.unwrap();
     let repo = store.approvals();
 
-    // No intent/proposal/approval needed; repo.resolve returns Ok if not found
+    // No intent/proposal/approval needed; repo.resolve returns Ok(false) when the
+    // row is not resolvable (missing), i.e. a no-op rather than an error.
     let result = repo
-        .resolve(ferrum_proto::ApprovalId::new(), ApprovalState::Granted)
+        .resolve(
+            ferrum_proto::ApprovalId::new(),
+            ApprovalState::Granted,
+            Utc::now(),
+        )
         .await;
     assert!(
-        result.is_ok(),
-        "resolving nonexistent approval should be a no-op"
+        matches!(result, Ok(false)),
+        "resolving nonexistent approval should be a no-op (Ok(false)), got: {:?}",
+        result
     );
 }
 

@@ -5,7 +5,7 @@ use ferrum_proto::{ApprovalId, ApprovalRequest, ApprovalState, ProposalId, Times
 use sqlx::{PgPool, Row};
 
 use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, from_json, to_json};
-use crate::{ApprovalRepo, Result, transitions};
+use crate::{ApprovalRepo, Result};
 
 #[derive(Clone)]
 pub struct PostgresApprovalRepo {
@@ -74,18 +74,51 @@ impl ApprovalRepo for PostgresApprovalRepo {
         Ok(())
     }
 
-    async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()> {
+    async fn resolve(
+        &self,
+        approval_id: ApprovalId,
+        state: ApprovalState,
+        now: Timestamp,
+    ) -> Result<bool> {
         let Some(mut approval) = self.get(approval_id).await? else {
-            return Ok(());
+            return Ok(false);
         };
-        if !transitions::is_valid_approval_transition(&approval.state, &state) {
+        // Validate the requested resolve target: resolve only accepts a terminal
+        // decision (Granted/Denied). Any other target is a malformed request and
+        // is rejected regardless of the current row state.
+        if !matches!(state, ApprovalState::Granted | ApprovalState::Denied) {
             return Err(crate::StoreError::InvalidState(format!(
-                "invalid approval transition from {:?} to {:?}",
-                approval.state, state
+                "invalid approval resolve target {:?}: must be Granted or Denied",
+                state
             )));
         }
+        // A terminal/expired snapshot means this resolver lost the race. Return
+        // Ok(false) so the caller maps it to a conflict rather than a server
+        // error. The conditional UPDATE below remains the atomic guard for
+        // concurrent changes after this snapshot.
+        if !matches!(approval.state, ApprovalState::Pending) {
+            return Ok(false);
+        }
         approval.state = state;
-        self.update(&approval).await
+        let raw_json = to_json(&approval)?;
+
+        let result = sqlx::query(
+            "UPDATE approvals
+             SET state = $2,
+                 raw_json = $3
+             WHERE approval_id = $1
+               AND state = $4
+               AND expires_at > $5",
+        )
+        .bind(approval_id.to_string())
+        .bind(enum_text(&approval.state)?)
+        .bind(&raw_json)
+        .bind("Pending")
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     async fn list_pending(&self) -> Result<Vec<ApprovalRequest>> {

@@ -4,7 +4,7 @@ use sqlx::{Row, SqlitePool};
 use tokio::sync::oneshot;
 
 use crate::sqlite::write_queue::WriteQueue;
-use crate::{ApprovalRepo, Result, transitions};
+use crate::{ApprovalRepo, Result};
 
 use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, from_json, to_json};
 
@@ -100,28 +100,16 @@ impl ApprovalRepo for SqliteApprovalRepo {
         Ok(())
     }
 
-    async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()> {
+    async fn resolve(
+        &self,
+        approval_id: ApprovalId,
+        state: ApprovalState,
+        now: Timestamp,
+    ) -> Result<bool> {
         if let Some(ref queue) = self.write_queue {
-            let (reply_tx, _) = oneshot::channel();
-            let op = crate::sqlite::write_queue::WriteOp::ResolveApproval {
-                approval_id,
-                state,
-                reply: reply_tx,
-            };
-            return queue.send(op).await;
+            return queue.resolve_approval(approval_id, state, now).await;
         }
-        let Some(mut approval) = self.get(approval_id).await? else {
-            return Ok(());
-        };
-        // Validate state transition
-        if !transitions::is_valid_approval_transition(&approval.state, &state) {
-            return Err(crate::StoreError::InvalidState(format!(
-                "invalid approval transition from {:?} to {:?}",
-                approval.state, state
-            )));
-        }
-        approval.state = state;
-        self.update(&approval).await
+        resolve_approval_sqlite(&self.pool, approval_id, state, now).await
     }
 
     async fn list_pending(&self) -> Result<Vec<ApprovalRequest>> {
@@ -232,6 +220,63 @@ impl ApprovalRepo for SqliteApprovalRepo {
         }
         expire_stale_pending_sqlite(&self.pool, now, max_age_seconds, batch_size).await
     }
+}
+
+/// Atomically resolve a pending approval to `state` using a conditional UPDATE
+/// so only one concurrent resolver can win.
+///
+/// The predicate requires the row to still be `Pending` and not yet expired
+/// (`expires_at > now`) at write time. Returns `Ok(true)` when this resolver
+/// transitioned the row, `Ok(false)` when the row was not in a resolvable state
+/// (missing, already terminal, or expired), and `Err` only for real storage
+/// errors or an invalid resolve target (anything other than Granted/Denied).
+pub(crate) async fn resolve_approval_sqlite(
+    pool: &SqlitePool,
+    approval_id: ApprovalId,
+    state: ApprovalState,
+    now: Timestamp,
+) -> Result<bool> {
+    let approval: Option<ApprovalRequest> =
+        fetch_entity_by_id(pool, "approvals", "approval_id", &approval_id.to_string()).await?;
+    let Some(mut approval) = approval else {
+        return Ok(false);
+    };
+    // Validate the requested resolve target: resolve only accepts a terminal
+    // decision (Granted/Denied). Any other target is a malformed request and is
+    // rejected regardless of the current row state.
+    if !matches!(state, ApprovalState::Granted | ApprovalState::Denied) {
+        return Err(crate::StoreError::InvalidState(format!(
+            "invalid approval resolve target {:?}: must be Granted or Denied",
+            state
+        )));
+    }
+    // A terminal/expired snapshot means this resolver lost the race (or the
+    // approval was already decided). Return Ok(false) so the caller maps it to a
+    // conflict rather than a server error. The conditional UPDATE below remains
+    // the atomic guard for concurrent changes after this snapshot.
+    if !matches!(approval.state, ApprovalState::Pending) {
+        return Ok(false);
+    }
+    approval.state = state;
+    let raw_json = to_json(&approval)?;
+
+    let result = sqlx::query(
+        "UPDATE approvals
+         SET state = ?2,
+             raw_json = ?3
+         WHERE approval_id = ?1
+           AND state = ?4
+           AND expires_at > ?5",
+    )
+    .bind(approval_id.to_string())
+    .bind(enum_text(&approval.state)?)
+    .bind(&raw_json)
+    .bind("Pending")
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
 }
 
 /// Atomically transition stale pending approvals to `Expired` using a
