@@ -69,8 +69,8 @@ The following controls are proposed but not yet implemented. See the referenced 
 | Control | ADR | Status |
 |---------|-----|--------|
 | Audit fail-closed mode | [ADR 007](../adr/007-audit-fail-closed.md) | Accepted |
-| R3 approval timeout / second factor | [ADR 008](../adr/008-r3-approval-timeout-mfa.md) | Proposed |
-| WORM export and portable audit bundle | [ADR 009](../adr/009-worm-export-audit-bundle.md) | Proposed |
+| R3 approval timeout / second factor | [ADR 008](../adr/008-r3-approval-timeout-mfa.md) | Accepted |
+| WORM export and portable audit bundle | [ADR 009](../adr/009-worm-export-audit-bundle.md) | Accepted (P2-1) |
 | Behavioral anomaly detection | [ADR 010](../adr/010-behavioral-anomaly-detection.md) | Accepted (Phase 1 V1) |
 | Performance regression gate | [ADR 011](../adr/011-performance-regression-gate.md) | Accepted |
 
@@ -129,6 +129,15 @@ The following controls are proposed but not yet implemented. See the referenced 
 
 <a id="ferrumgate-pg-replication-lag"></a>
 - **FerrumGatePostgresReplicationLag** — TEMPLATE; HA/replication not deployed by default. Enable only with postgres_exporter metrics; see ADR/HA docs before relying on this alert.
+
+<a id="worm-sink-failure"></a>
+- **FerrumGateWormSinkFailures / FerrumGateWormSinkStale** — WORM-compatible audit bundle sink export failure or stale last-success timestamp. This is a **best-effort archival replica**; the audit bundle remains durable locally and the request path is unaffected. Procedure:
+  1. Check WORM sink metrics (`ferrumgate_audit_worm_sink_exports_total`, `ferrumgate_audit_worm_sink_failures_total`, `ferrumgate_audit_worm_sink_last_success_timestamp_seconds`) and the ferrumd log for export errors.
+  2. Verify the WORM sink config: confirm `worm-sink` is enabled, `live: true`, and `audit_bundle_worm_interval_secs` matches the alert's staleness threshold (default 300s interval ⇒ 900s threshold).
+  3. Validate the operator-provisioned S3 Object Lock bucket, retention mode, and credentials out-of-band; do not mutate the bucket.
+  4. Use the portable fallback: `ferrumctl audit export` to write the bundle locally, then `ferrumctl audit verify` to confirm integrity without the sink.
+  5. Restart ferrumd only after correcting the config or credentials.
+  - **This does not prove compliance immutability.** Immutability evidence requires external/provider verification (Object Lock policy, retention mode, legal hold) outside this repo.
 
 <a id="ferrumgate-high-cpu"></a>
 - **FerrumGateHighCPU** — instance CPU above 80% for 10m. Profile hot routes and store load; see [§2 Metrics checks](#2-metrics-checks).

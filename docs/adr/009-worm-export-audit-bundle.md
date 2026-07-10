@@ -76,3 +76,30 @@ The WORM sink is implemented as a background worker in `ferrum-gateway` and is o
 - Blockchain or timestamp-authority anchoring as a built-in feature (the Merkle root format is designed to allow external anchoring, but the anchoring itself is operator-owned).
 - Replacing the database audit log with WORM storage (WORM is a replica, not a primary store).
 - Creating buckets, enabling Object Lock, managing IAM, or performing deletes/retention bypasses in the adapter.
+
+## Future directions (not committed)
+
+The following are potential follow-up work, not a roadmap commitment. There is no
+timeline or owner. The current WORM sink remains **P2 Experimental / best-effort**
+and is **not a compliance or immutability claim** until external provider evidence
+is produced.
+
+- **Operator runbook**: Document the incident procedure for
+  `FerrumGateWormSinkFailures` and `FerrumGateWormSinkStale` (metrics/log check,
+  config verification, bucket/Object Lock/credential validation, portable
+  `ferrumctl audit export` + `verify` fallback, restart only after correction).
+  Added in `docs/operations/runbook.md#worm-sink-failure`.
+- **Live Object Lock validation**: Add an opt-in live validation path (MinIO or a
+  provider-sandboxed S3 bucket) that proves Object Lock retention and legal hold
+  behavior under `live: true`. This would remain operator-driven and gated.
+- **Optional immediate-export CLI trigger**: Add `ferrumctl audit export --live`
+  or similar to force a synchronous bundle export for incident response without
+  waiting for the interval. Requires design review before implementation.
+- **External anchoring**: The Merkle root format already allows external
+  anchoring (timestamp authority, blockchain, organizational notary). Implementing
+  a built-in anchoring mechanism remains operator-owned and out of scope for this
+  repo.
+- **Compliance evidence**: Any claim of compliance immutability requires external
+  evidence (Object Lock policy, retention mode, legal hold, provider attestations)
+  outside this repository. The ADR will be updated only when such evidence is
+  available and reviewed.

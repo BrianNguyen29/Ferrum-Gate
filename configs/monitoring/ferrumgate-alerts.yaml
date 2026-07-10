@@ -313,3 +313,44 @@ groups:
           summary: "FerrumGate PostgreSQL replication lag high (TEMPLATE)"
           description: "Replication lag is {{ $value | printf \"%.2f\" }} GB. Threshold and metric are TEMPLATE — requires postgres_exporter or equivalent. HA/replication not deployed."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-replication-lag"
+
+  # WORM-compatible audit bundle sink alerts.
+  # NOTE: These alerts use metrics emitted only when the WORM sink feature is
+  # enabled (`worm-sink` feature + operator-provisioned S3 Object Lock config
+  # with `live: true`). When the sink is disabled, the metrics are absent and
+  # these rules will not fire. They reflect best-effort archival export, not a
+  # compliance or immutability guarantee. See ADR 009.
+  - name: ferrumgate_worm_sink
+    interval: 30s
+
+    rules:
+      # WORM sink export failures in the last 5 minutes.
+      - alert: FerrumGateWormSinkFailures
+        expr: |
+          rate(ferrumgate_audit_worm_sink_failures_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate WORM sink export failures detected"
+          description: "WORM sink export failure rate is {{ $value | printf \"%.3f\" }} failures/sec on instance {{ $labels.instance }}. The audit bundle is still durable locally; the WORM archive replica is best-effort. This does not prove compliance immutability."
+          runbook_url: "../../docs/operations/runbook.md#worm-sink-failure"
+
+      # WORM sink last-success timestamp stale.
+      # NOTE: The 900s threshold assumes the default 300s export interval
+      # (3 consecutive missed intervals). Tune `> 900` if the operator uses a
+      # longer `audit_bundle_worm_interval_secs` value.
+      - alert: FerrumGateWormSinkStale
+        expr: |
+          time() - ferrumgate_audit_worm_sink_last_success_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate WORM sink last successful export is stale"
+          description: "WORM sink last successful export is {{ $value | printf \"%.0f\" }} seconds old on instance {{ $labels.instance }} (threshold 900s, assumes default 300s interval). The audit bundle is still durable locally; the WORM archive replica is best-effort. This does not prove compliance immutability."
+          runbook_url: "../../docs/operations/runbook.md#worm-sink-failure"
