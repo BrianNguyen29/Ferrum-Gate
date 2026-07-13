@@ -176,15 +176,20 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         let mut tx = self.pool.begin().await?;
         let active = enum_text(&CapabilityStatus::Active)?;
         let used = enum_text(&CapabilityStatus::Used)?;
+        // Obtain the comparison timestamp at the DB boundary so an
+        // expired-but-still-Active capability cannot be consumed even if the
+        // handler preloaded a stale lease. Mirrors `update_status_if_active`.
+        let now = chrono::Utc::now();
         let updated = sqlx::query(
             "UPDATE capabilities
              SET status = ?2,
                  raw_json = json_set(raw_json, '$.status', ?2)
-             WHERE capability_id = ?1 AND status = ?3",
+             WHERE capability_id = ?1 AND status = ?3 AND expires_at > ?4",
         )
         .bind(capability.capability_id.to_string())
         .bind(&used)
         .bind(active)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
         if updated.rows_affected() != 1 {
@@ -1865,5 +1870,119 @@ mod tests {
             .unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].from_event_id, verified_event.event_id);
+    }
+
+    /// Seed an intent/proposal/capability (without a pre-inserted execution)
+    /// and build the execution + authorize outbox that `record_authorization`
+    /// would persist. `expires_at` is pinned by the caller to exercise the
+    /// expiry predicate.
+    async fn seed_authorizable(
+        store: &SqliteStore,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> (CapabilityLease, ExecutionRecord, LifecycleOutboxRecord) {
+        let intent = test_intent();
+        store.intents().insert(&intent).await.unwrap();
+        let proposal = test_proposal(intent.intent_id);
+        store.proposals().insert(&proposal).await.unwrap();
+        let mut capability = test_capability(intent.intent_id, proposal.proposal_id);
+        capability.expires_at = expires_at;
+        store.capabilities().insert(&capability).await.unwrap();
+        let execution = test_execution(
+            intent.intent_id,
+            proposal.proposal_id,
+            capability.capability_id,
+        );
+        let outbox = LifecycleOutboxRecord::pending(
+            execution.execution_id,
+            None,
+            None,
+            execution.state.clone(),
+            None,
+            None,
+            ProvenanceEventKind::ActionProposalSubmitted,
+            format!("authorize:{}", execution.execution_id),
+        );
+        (capability, execution, outbox)
+    }
+
+    #[tokio::test]
+    async fn record_authorization_rejects_expired_active_capability_without_mutation() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let repo = store.lifecycle_outbox();
+        let expired = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let (capability, execution, outbox) = seed_authorizable(&store, expired).await;
+
+        let authorized = repo
+            .record_authorization(&capability, &execution, &outbox)
+            .await
+            .unwrap();
+        assert!(
+            !authorized,
+            "expired-but-active capability must not transition to Used"
+        );
+
+        let stored = store
+            .capabilities()
+            .get(capability.capability_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(stored.status, CapabilityStatus::Active),
+            "capability must remain Active after a lost expiry CAS"
+        );
+        assert!(
+            store
+                .executions()
+                .get(execution.execution_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "no execution row must be inserted after expiry CAS loss"
+        );
+        assert!(
+            repo.get(outbox.outbox_id).await.unwrap().is_none(),
+            "no lifecycle outbox row must be inserted after expiry CAS loss"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_authorization_consumes_active_unexpired_capability() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let repo = store.lifecycle_outbox();
+        let future = chrono::Utc::now() + chrono::Duration::minutes(5);
+        let (capability, execution, outbox) = seed_authorizable(&store, future).await;
+
+        let authorized = repo
+            .record_authorization(&capability, &execution, &outbox)
+            .await
+            .unwrap();
+        assert!(
+            authorized,
+            "active unexpired capability must transition to Used"
+        );
+
+        let stored = store
+            .capabilities()
+            .get(capability.capability_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(stored.status, CapabilityStatus::Used));
+        assert!(
+            store
+                .executions()
+                .get(execution.execution_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "execution row must be inserted on a successful CAS"
+        );
+        assert!(
+            repo.get(outbox.outbox_id).await.unwrap().is_some(),
+            "lifecycle outbox row must be inserted on a successful CAS"
+        );
     }
 }

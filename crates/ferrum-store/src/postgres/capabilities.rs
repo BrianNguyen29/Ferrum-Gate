@@ -105,7 +105,10 @@ impl CapabilityRepo for PostgresCapabilityRepo {
             "UPDATE capabilities
              SET status = $2,
                  raw_json = (jsonb_set(raw_json::jsonb, '{status}', to_jsonb($2::text)))::text
-             WHERE capability_id = $1 AND status = $3 AND expires_at > $4",
+             -- expires_at is TEXT; cast to timestamptz for a true timestamp
+             -- comparison against the timestamptz bind (avoids a
+             -- text > timestamptz operator error and lexicographic fallback).
+             WHERE capability_id = $1 AND status = $3 AND expires_at::timestamptz > $4",
         )
         .bind(capability_id.to_string())
         .bind(status_text)
@@ -132,7 +135,10 @@ impl CapabilityRepo for PostgresCapabilityRepo {
                      '{revoked_at}',
                      to_jsonb($4::text)
                  ))::text
-             WHERE capability_id = $1 AND status = $5 AND expires_at > $3",
+             -- expires_at is TEXT; cast to timestamptz for a true timestamp
+             -- comparison against the timestamptz bind (avoids a
+             -- text > timestamptz operator error and lexicographic fallback).
+             WHERE capability_id = $1 AND status = $5 AND expires_at::timestamptz > $3",
         )
         .bind(capability_id.to_string())
         .bind(revoked_text)

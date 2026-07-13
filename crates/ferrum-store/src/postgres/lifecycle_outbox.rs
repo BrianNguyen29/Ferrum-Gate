@@ -151,15 +151,24 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
         let mut tx = self.pool.begin().await?;
         let active = enum_text(&CapabilityStatus::Active)?;
         let used = enum_text(&CapabilityStatus::Used)?;
+        // Obtain the comparison timestamp at the DB boundary so an
+        // expired-but-still-Active capability cannot be consumed even if the
+        // handler preloaded a stale lease. Mirrors `update_status_if_active`.
+        let now = chrono::Utc::now();
         let updated = sqlx::query(
             "UPDATE capabilities
              SET status = $2,
                  raw_json = (jsonb_set(raw_json::jsonb, '{status}', to_jsonb($2::text)))::text
-             WHERE capability_id = $1 AND status = $3",
+             -- expires_at is stored as TEXT; cast to timestamptz so the
+             -- comparison is a true timestamp ordering (not lexicographic
+             -- text) and so Postgres can resolve the operator against the
+             -- timestamptz bind parameter.
+             WHERE capability_id = $1 AND status = $3 AND expires_at::timestamptz > $4",
         )
         .bind(capability.capability_id.to_string())
         .bind(&used)
         .bind(active)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
         if updated.rows_affected() != 1 {

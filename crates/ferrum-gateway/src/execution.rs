@@ -100,6 +100,7 @@ pub(crate) use authorize::authorize_execution;
 pub(crate) use cancel::cancel_execution;
 pub(crate) use commit::commit_execution;
 pub(crate) use compensate::compensate_execution;
+pub(crate) use durable_capability::classify_authorization_cas_failure;
 pub(crate) use durable_capability::get_capability_for_authorize;
 #[allow(unused_imports)]
 pub(crate) use durable_capability::mark_capability_used_durable;

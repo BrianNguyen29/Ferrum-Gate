@@ -2051,6 +2051,160 @@ async fn postgres_lifecycle_authorization_stores_rfc3339_and_is_stale_visible() 
 }
 
 #[tokio::test]
+async fn postgres_record_authorization_rejects_expired_active_capability() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    // Active in status but already past its expires_at: the CAS must refuse it.
+    let mut capability = make_test_capability(
+        capability_id,
+        intent_id,
+        proposal_id,
+        CapabilityStatus::Active,
+    );
+    capability.expires_at = ts_offset(-60);
+    store.capabilities().insert(&capability).await.unwrap();
+
+    let execution_id = ExecutionId::new();
+    let execution = ExecutionRecord {
+        execution_id,
+        proposal_id,
+        intent_id,
+        capability_id,
+        rollback_contract_id: None,
+        decision: Decision::Allow,
+        state: ExecutionState::Prepared,
+        started_at: ts_offset(0),
+        finished_at: None,
+        result_digest: None,
+        metadata: JsonMap::new(),
+    };
+    let outbox = LifecycleOutboxRecord::pending(
+        execution_id,
+        None,
+        None,
+        ExecutionState::Prepared,
+        None,
+        None,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        format!("authorize:{}", execution_id),
+    );
+
+    let repo = store.lifecycle_outbox();
+    let authorized = repo
+        .record_authorization(&capability, &execution, &outbox)
+        .await
+        .unwrap();
+    assert!(
+        !authorized,
+        "expired-but-active capability must not transition to Used"
+    );
+
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should still exist");
+    assert!(
+        matches!(stored.status, CapabilityStatus::Active),
+        "capability must remain Active after a lost expiry CAS"
+    );
+    assert!(
+        store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "no execution row must be inserted after expiry CAS loss"
+    );
+    assert!(
+        repo.get(outbox.outbox_id).await.unwrap().is_none(),
+        "no lifecycle outbox row must be inserted after expiry CAS loss"
+    );
+}
+
+/// Guards the same TEXT->timestamptz expiry predicate used by
+/// `update_status_if_active` (and shared by `revoke_if_active`). A non-macro
+/// `sqlx::query` cannot catch a `text > timestamptz` operator mismatch at
+/// compile time, so this live test proves the cast resolves to a true
+/// timestamp comparison and refuses an expired-but-Active capability.
+#[tokio::test]
+async fn postgres_update_status_if_active_rejects_expired_capability() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    // Active status but already past expires_at: the CAS predicate must compare
+    // instants (via the TEXT::timestamptz cast), not text, and refuse the row.
+    let mut capability = make_test_capability(
+        capability_id,
+        intent_id,
+        proposal_id,
+        CapabilityStatus::Active,
+    );
+    capability.expires_at = ts_offset(-60);
+    store.capabilities().insert(&capability).await.unwrap();
+
+    let updated = store
+        .capabilities()
+        .update_status_if_active(capability_id, CapabilityStatus::Used)
+        .await
+        .unwrap();
+    assert!(
+        !updated,
+        "expired-but-active capability must not transition via update_status_if_active"
+    );
+
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should still exist");
+    assert!(
+        matches!(stored.status, CapabilityStatus::Active),
+        "capability must remain Active after the expiry CAS refuses"
+    );
+}
+
+#[tokio::test]
 async fn postgres_rollback_insert_and_get_roundtrip() {
     let (store, _guard) = match setup().await {
         Some(s) => s,

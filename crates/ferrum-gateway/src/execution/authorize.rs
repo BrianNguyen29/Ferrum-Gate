@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::Utc;
-use ferrum_cap::CapabilityError;
 use ferrum_proto::{
     ActorRef, ActorType, ApiErrorCode, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
     Decision, EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
@@ -10,9 +9,9 @@ use ferrum_proto::{
 };
 
 use crate::execution::{
-    get_capability_for_authorize, lifecycle_event_metadata, mark_lifecycle_transition_reconciled,
-    validate_approval_binding_digest, validate_capability_proposal_binding,
-    validate_resource_bindings_subset_of_scope,
+    classify_authorization_cas_failure, get_capability_for_authorize, lifecycle_event_metadata,
+    mark_lifecycle_transition_reconciled, validate_approval_binding_digest,
+    validate_capability_proposal_binding, validate_resource_bindings_subset_of_scope,
 };
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
@@ -35,9 +34,11 @@ use crate::state::AppState;
 /// 4. I6 invariant — if the capability has an `approval_binding`, validate the
 ///    approval binding digest (and the proposal's canonical action digest)
 ///    against the binding. Skipped when `approval_binding=None`.
-/// 5. Mark the capability as used in memory and persist the updated status
-///    via `mark_capability_used_durable`. Returns `AlreadyUsed` if the
-///    capability has already been consumed (single-use enforcement).
+/// 5. Persist the single-use Active -> Used transition atomically via
+///    `record_authorization` (which also requires `expires_at > now`). On a
+///    lost CAS the capability is reloaded and mapped to the accurate error
+///    (`AlreadyUsed` / `Revoked` / `Expired` / `NotFound`); the in-memory
+///    cache is synced only after the durable transition commits.
 /// 6. Insert an `ExecutionRecord` (state `Authorized` for dry-run, `Prepared`
 ///    otherwise) and emit an `ActionProposalSubmitted` provenance event.
 ///
@@ -214,10 +215,17 @@ pub(crate) async fn authorize_execution(
     {
         Ok(true) => {}
         Ok(false) => {
+            // The durable single-use CAS did not win. Reload the capability and
+            // map the true cause (Used / Revoked / Expired / Missing) instead
+            // of assuming AlreadyUsed, so an expired-but-Active capability is
+            // reported accurately.
+            let err =
+                classify_authorization_cas_failure(&state.runtime.store, request.capability_id)
+                    .await;
             return governance_err!(
                 state,
                 GovernanceRoute::ExecutionsAuthorize,
-                ApiProblem::from_capability(CapabilityError::AlreadyUsed)
+                ApiProblem::from_capability(err)
             );
         }
         Err(e) => {
