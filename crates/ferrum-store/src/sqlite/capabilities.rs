@@ -378,4 +378,50 @@ mod tests {
             "should return false when capability does not exist"
         );
     }
+
+    /// P0 regression: an `Active` capability whose `expires_at` is already in
+    /// the past must NOT be transitioned by `update_status_if_active`. The
+    /// atomic UPDATE predicate includes `expires_at > now`, so an expired
+    /// lease loses the CAS and its state is preserved unchanged. This is the
+    /// durable guard that lets the gateway surface `Expired` (not `AlreadyUsed`)
+    /// for an expired-but-Active capability.
+    #[tokio::test]
+    async fn test_update_status_if_active_rejects_expired_active() {
+        let store = crate::SqliteStore::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let intent = make_intent();
+        let proposal = make_proposal(intent.intent_id);
+        let mut lease = make_lease(
+            intent.intent_id,
+            proposal.proposal_id,
+            CapabilityStatus::Active,
+        );
+        // Force the lease to be expired while still Active.
+        lease.expires_at = Utc::now() - chrono::Duration::seconds(60);
+        let cap_id = lease.capability_id;
+
+        store.intents().insert(&intent).await.unwrap();
+        store.proposals().insert(&proposal).await.unwrap();
+        store.capabilities().insert(&lease).await.unwrap();
+
+        let updated = store
+            .capabilities()
+            .update_status_if_active(cap_id, CapabilityStatus::Used)
+            .await
+            .unwrap();
+        assert!(
+            !updated,
+            "expired Active capability must lose the CAS (return false)"
+        );
+
+        let fetched = store.capabilities().get(cap_id).await.unwrap().unwrap();
+        assert!(
+            matches!(fetched.status, CapabilityStatus::Active),
+            "expired capability state must remain Active (unchanged), got: {:?}",
+            fetched.status
+        );
+    }
 }

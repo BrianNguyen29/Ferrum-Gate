@@ -24,8 +24,8 @@ use ferrum_proto::{
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{
-    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, PolicyBundleRepo, ProposalRepo,
-    ProvenanceRepo, RollbackRepo, SqliteStore, StoreFacade,
+    ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LifecycleOutboxRepo, PolicyBundleRepo,
+    ProposalRepo, ProvenanceRepo, RollbackRepo, SqliteStore, StoreFacade,
 };
 use ferrum_sync::{McpBridge, RuntimeBridge};
 use std::sync::Arc;
@@ -588,6 +588,180 @@ async fn test_capability_durable_after_in_memory_state_loss() {
         matches!(error_response.code, ferrum_proto::ApiErrorCode::Conflict),
         "error code should be Conflict, got: {:?}",
         error_response.code
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Durable expired-Active capability authorize test (P0 regression)
+// ---------------------------------------------------------------------------
+
+/// Verify that a durable (persisted) capability that is still `Active` but
+/// already expired surfaces `Expired` (HTTP 400 / `CapabilityExpired`), NOT
+/// `AlreadyUsed` (409 Conflict), when authorized after in-memory state loss.
+///
+/// The expired check in `get_capability_for_authorize` short-circuits before
+/// the durable single-use CAS, so no execution record and no lifecycle outbox
+/// entry may be created, and the capability must remain Active (not consumed).
+#[tokio::test]
+async fn test_authorize_durable_expired_active_capability_returns_expired() {
+    let pdp: Arc<dyn PdpEngine> = Arc::new(StaticPdpEngine);
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    // Seed intent + proposal (foreign keys for the capability row).
+    let intent_id = ferrum_proto::IntentId::new();
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("intent insert should succeed");
+    let proposal_id = ferrum_proto::ProposalId::new();
+    let proposal = make_test_proposal(intent_id, proposal_id);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("proposal insert should succeed");
+
+    // Insert a capability that is Active but already expired, directly into the
+    // durable store. This is the state a lease is in after surviving in-memory
+    // state loss past its TTL.
+    let capability_id = ferrum_proto::CapabilityId::new();
+    let now = chrono::Utc::now();
+    let lease = ferrum_proto::CapabilityLease {
+        capability_id,
+        intent_id,
+        proposal_id,
+        tool_binding: ferrum_proto::ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "test-tool".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        issued_by: "test".to_string(),
+        policy_bundle_id: ferrum_proto::PolicyBundleId::new(),
+        tool_manifest_id: None,
+        manifest_hash: None,
+        status: ferrum_proto::CapabilityStatus::Active,
+        issued_at: now - chrono::Duration::seconds(120),
+        expires_at: now - chrono::Duration::seconds(60), // already expired
+        revoked_at: None,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    store
+        .capabilities()
+        .insert(&lease)
+        .await
+        .expect("capability insert should succeed");
+
+    // Fresh in-memory capability service (simulates state loss): authorize must
+    // fall back to the durable store and observe the expired Active lease.
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap,
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let auth_request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request).unwrap(),
+        ))
+        .unwrap();
+
+    let response = tower::ServiceExt::oneshot(router, request)
+        .await
+        .expect("authorize request should succeed (network level)");
+
+    // Expired maps to 400 Bad Request, not 409 Conflict (AlreadyUsed).
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::BAD_REQUEST,
+        "expired durable capability should return 400 Bad Request (Expired), got: {:?}",
+        response.status()
+    );
+
+    let error_body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read error body");
+    let error_response: ferrum_proto::ApiError =
+        serde_json::from_slice(&error_body).expect("error body should be valid ApiError JSON");
+    assert!(
+        matches!(
+            error_response.code,
+            ferrum_proto::ApiErrorCode::CapabilityExpired
+        ),
+        "error code should be CapabilityExpired (not Conflict/AlreadyUsed), got: {:?}",
+        error_response.code
+    );
+
+    // The expired check short-circuits before the durable CAS: no execution and
+    // no lifecycle outbox entry may be created.
+    let executions = store
+        .executions()
+        .list_by_capability(capability_id)
+        .await
+        .expect("list executions by capability should succeed");
+    assert!(
+        executions.is_empty(),
+        "no execution record may be created for an expired capability, got: {}",
+        executions.len()
+    );
+
+    let pending_outbox = store
+        .lifecycle_outbox()
+        .list_by_status(ferrum_proto::LifecycleOutboxStatus::PendingProvenance, 100)
+        .await
+        .expect("list pending outbox should succeed");
+    assert!(
+        pending_outbox.is_empty(),
+        "no lifecycle outbox entry may be created for an expired capability, got: {}",
+        pending_outbox.len()
+    );
+
+    // The capability itself must remain Active+expired (not flipped to Used).
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .expect("capability lookup should succeed")
+        .expect("capability should exist");
+    assert!(
+        matches!(stored.status, ferrum_proto::CapabilityStatus::Active),
+        "expired capability must remain Active (not consumed), got: {:?}",
+        stored.status
     );
 }
 
