@@ -2989,6 +2989,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -3156,6 +3157,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -3209,6 +3211,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
         };
         runtime.store.approvals().insert(&approval2).await.unwrap();
 
@@ -3672,6 +3675,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -3953,6 +3957,16 @@ mod tests {
         actor_id: &str,
         scopes: Vec<String>,
     ) -> String {
+        insert_scoped_token_with_role(runtime, actor_id, ferrum_proto::TokenRole::Operator, scopes)
+            .await
+    }
+
+    async fn insert_scoped_token_with_role(
+        runtime: &GatewayRuntime,
+        actor_id: &str,
+        role: ferrum_proto::TokenRole,
+        scopes: Vec<String>,
+    ) -> String {
         let token_value = generate_token_value();
         let token_salt = generate_token_salt();
         let token_lookup_hash = hash_token_value(&token_value);
@@ -3963,7 +3977,7 @@ mod tests {
             .insert(&ferrum_proto::ScopedToken {
                 token_id: format!("tok_{}", actor_id),
                 actor_id: actor_id.to_string(),
-                role: ferrum_proto::TokenRole::Operator,
+                role,
                 scopes,
                 description: None,
                 expires_at: chrono::Utc::now() + chrono::Duration::days(1),
@@ -4083,6 +4097,7 @@ mod tests {
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 state: ferrum_proto::ApprovalState::Pending,
                 created_at: chrono::Utc::now(),
+                resolver_evidence_version: None,
             })
             .await
             .unwrap();
@@ -4150,6 +4165,7 @@ mod tests {
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 state: ferrum_proto::ApprovalState::Pending,
                 created_at: chrono::Utc::now(),
+                resolver_evidence_version: None,
             })
             .await
             .unwrap();
@@ -4198,6 +4214,323 @@ mod tests {
         assert_eq!(
             events[0].metadata.get("actor_id").and_then(|v| v.as_str()),
             Some("real-operator")
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // p0-resolver-role-binding: resolver evidence metadata on approval resolve
+    // ---------------------------------------------------------------------
+
+    async fn seed_pending_approval(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) -> ferrum_proto::ApprovalId {
+        let approval_id = ferrum_proto::ApprovalId::new();
+        runtime
+            .store
+            .approvals()
+            .insert(&ferrum_proto::ApprovalRequest {
+                approval_id,
+                intent_id,
+                proposal_id,
+                execution_id: None,
+                requested_by: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Operator,
+                    actor_id: "requester".to_string(),
+                    display_name: None,
+                },
+                reason: "r".to_string(),
+                action_digest: "d".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                state: ferrum_proto::ApprovalState::Pending,
+                created_at: chrono::Utc::now(),
+                resolver_evidence_version: None,
+            })
+            .await
+            .unwrap();
+        approval_id
+    }
+
+    async fn query_approval_event_metadata(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        kind: ferrum_proto::ProvenanceEventKind,
+    ) -> ferrum_proto::JsonMap {
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(kind),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        events[0].metadata.clone()
+    }
+
+    fn approval_resolve_request(
+        actor_id: &str,
+        approve: bool,
+    ) -> ferrum_proto::ApprovalResolveRequest {
+        ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: actor_id.to_string(),
+                display_name: None,
+            },
+            approve,
+            reason: None,
+            mfa_factor: None,
+        }
+    }
+
+    /// Resolve an approval in Scoped mode with the given token role and return
+    /// the emitted provenance metadata plus the approval id.
+    async fn resolve_approval_scoped_metadata(
+        role: ferrum_proto::TokenRole,
+        approve: bool,
+    ) -> (ferrum_proto::JsonMap, ferrum_proto::ApprovalId) {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token = insert_scoped_token_with_role(
+            &runtime,
+            "resolver-1",
+            role,
+            vec!["approval:resolve".into()],
+        )
+        .await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let approval_id = seed_pending_approval(&runtime, intent_id, proposal_id).await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&approval_resolve_request("resolver-1", approve))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let kind = if approve {
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted
+        } else {
+            ferrum_proto::ProvenanceEventKind::ApprovalDenied
+        };
+        let metadata = query_approval_event_metadata(&runtime, intent_id, kind).await;
+        (metadata, approval_id)
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_scoped_operator_emits_authenticated_resolver_metadata() {
+        let (metadata, approval_id) =
+            resolve_approval_scoped_metadata(ferrum_proto::TokenRole::Operator, true).await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("resolver-1")
+        );
+        assert_eq!(
+            metadata.get("actor_source").and_then(|v| v.as_str()),
+            Some("scoped")
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_scoped_admin_emits_admin_role_metadata() {
+        let (metadata, _) =
+            resolve_approval_scoped_metadata(ferrum_proto::TokenRole::Admin, true).await;
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("admin")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_denied_emits_authenticated_resolver_metadata() {
+        let (metadata, approval_id) =
+            resolve_approval_scoped_metadata(ferrum_proto::TokenRole::Operator, false).await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_bearer_emits_legacy_unauthenticated_metadata() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            bearer_token: Some("secret-token".to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let approval_id = seed_pending_approval(&runtime, intent_id, proposal_id).await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", "Bearer secret-token")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&approval_resolve_request(
+                            "legacy-body-operator",
+                            true,
+                        ))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let metadata = query_approval_event_metadata(
+            &runtime,
+            intent_id,
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted,
+        )
+        .await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("legacy-body-operator")
+        );
+        assert_eq!(
+            metadata.get("actor_source").and_then(|v| v.as_str()),
+            Some("request_body_legacy")
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            metadata.get("claimed_actor_type").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+        assert!(
+            metadata.get("actor_role").is_none(),
+            "unauthenticated resolver must not claim a role"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_oidc_emits_authenticated_role_metadata() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let approval_id = seed_pending_approval(&runtime, intent_id, proposal_id).await;
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("oidc-operator"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&approval_resolve_request("oidc-operator", true))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let metadata = query_approval_event_metadata(
+            &runtime,
+            intent_id,
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted,
+        )
+        .await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("oidc-operator")
+        );
+        assert_eq!(
+            metadata.get("actor_source").and_then(|v| v.as_str()),
+            Some("oidc")
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("operator")
         );
     }
 
@@ -10685,6 +11018,7 @@ rules:
             expires_at: now - chrono::Duration::minutes(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: now - chrono::Duration::hours(2),
+            resolver_evidence_version: None,
         };
         store.approvals().insert(&approval).await.unwrap();
 

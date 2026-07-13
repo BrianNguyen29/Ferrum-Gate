@@ -88,12 +88,13 @@ pub(crate) async fn auth_middleware(
             match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), &method, &path)
                 .await
             {
-                Ok((actor_id, scopes)) => {
+                Ok((actor_id, scopes, role)) => {
                     let (mut parts, body) = request.into_parts();
                     parts.extensions.insert(AuthActor {
                         actor_id,
                         source: "oidc",
                         scopes,
+                        role: Some(role),
                     });
                     let request = axum::http::Request::from_parts(parts, body);
                     next.run(request).await
@@ -189,6 +190,7 @@ pub(crate) async fn auth_middleware(
                 actor_id: token.actor_id.clone(),
                 source: "scoped",
                 scopes: token.scopes.clone(),
+                role: Some(token.role),
             });
             let request = axum::http::Request::from_parts(parts, body);
 
@@ -379,6 +381,8 @@ async fn verify_agent_request(
         actor_id: agent_id.to_string(),
         source: "agent",
         scopes: agent.allowed_scopes.clone(),
+        // Agent auth authenticates by Ed25519 key, not by token role.
+        role: None,
     });
     let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
     Ok(next.run(request).await)
@@ -585,7 +589,7 @@ async fn validate_oidc_token(
     jwks_cache: Option<&Arc<OidcJwksCache>>,
     method: &str,
     path: &str,
-) -> Result<(String, Vec<String>), OidcAuthError> {
+) -> Result<(String, Vec<String>, ferrum_proto::TokenRole), OidcAuthError> {
     // Step 1: decode header to get kid and alg
     let header = match jsonwebtoken::decode_header(token) {
         Ok(h) => h,
@@ -752,5 +756,5 @@ async fn validate_oidc_token(
     }
 
     tracing::debug!(actor_id = %actor_id, role = ?role, "oidc auth succeeded");
-    Ok((actor_id, scopes))
+    Ok((actor_id, scopes, role))
 }

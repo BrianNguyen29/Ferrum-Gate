@@ -160,6 +160,7 @@ fn make_approval(
         expires_at: ts_offset(3600),
         state,
         created_at: ts_offset(0),
+        resolver_evidence_version: None,
     }
 }
 

@@ -7,6 +7,9 @@ pub(crate) struct AuthActor {
     pub(crate) actor_id: String,
     pub(crate) source: &'static str,
     pub(crate) scopes: Vec<String>,
+    /// Authenticated token role when the auth source carries one (Scoped, OIDC).
+    /// `None` for Agent auth, which authenticates by Ed25519 key, not by role.
+    pub(crate) role: Option<ferrum_proto::TokenRole>,
 }
 
 impl AuthActor {

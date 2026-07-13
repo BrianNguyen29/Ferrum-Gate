@@ -258,6 +258,12 @@ pub(crate) async fn resolve_approval_sqlite(
         return Ok(false);
     }
     approval.state = state;
+    // Stamp the resolution-evidence version in the SAME atomic CAS write as the
+    // state transition. This marks the approval as resolved by the hardened
+    // resolver so I6 role-bound binding requires authenticated resolver
+    // evidence; the marker survives a later provenance-append failure because
+    // it commits with the grant itself.
+    approval.resolver_evidence_version = Some(ferrum_proto::CURRENT_RESOLVER_EVIDENCE_VERSION);
     let raw_json = to_json(&approval)?;
 
     let result = sqlx::query(

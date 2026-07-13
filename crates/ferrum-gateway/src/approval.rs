@@ -710,11 +710,47 @@ pub(crate) async fn resolve_approval(
     };
     let event_kind_for_summary = event_kind.clone();
 
+    // Resolver evidence metadata (P0 role binding):
+    // - Authenticated resolvers (Scoped/OIDC/Agent) are recorded with
+    //   actor_authenticated=true plus their auth source and role (when the auth
+    //   mode carries one), so I6 approver_roles checks bind to authenticated
+    //   evidence rather than request-body claims.
+    // - Bearer/Disabled resolvers have no authenticated identity: record the
+    //   request-body actor explicitly as unauthenticated legacy evidence
+    //   (actor_authenticated=false, actor_source=request_body_legacy) so it can
+    //   never satisfy role-bound approval bindings.
     let mut metadata = ferrum_proto::JsonMap::new();
+    metadata.insert(
+        "approval_id".to_string(),
+        serde_json::json!(approval_id.to_string()),
+    );
     metadata.insert(
         "actor_id".to_string(),
         serde_json::json!(&effective_actor_id),
     );
+    match &auth_actor {
+        Some(Extension(actor)) => {
+            metadata.insert("actor_source".to_string(), serde_json::json!(actor.source));
+            metadata.insert("actor_authenticated".to_string(), serde_json::json!(true));
+            if let Some(role) = actor.role {
+                metadata.insert(
+                    "actor_role".to_string(),
+                    serde_json::json!(role.to_string()),
+                );
+            }
+        }
+        None => {
+            metadata.insert(
+                "actor_source".to_string(),
+                serde_json::json!("request_body_legacy"),
+            );
+            metadata.insert("actor_authenticated".to_string(), serde_json::json!(false));
+            metadata.insert(
+                "claimed_actor_type".to_string(),
+                serde_json::json!(format!("{:?}", request.actor.actor_type).to_ascii_lowercase()),
+            );
+        }
+    }
     if let Some(reason) = &request.reason {
         metadata.insert("reason".to_string(), serde_json::json!(reason));
     }

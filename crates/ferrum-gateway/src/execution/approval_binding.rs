@@ -3,7 +3,8 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use chrono::Utc;
 use ferrum_proto::{
-    ApprovalBinding, ApprovalState, ProposalId, ProvenanceEventKind, ProvenanceQueryRequest,
+    ApprovalBinding, ApprovalState, ProposalId, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceQueryRequest,
 };
 use ferrum_store::StoreFacade;
 
@@ -18,6 +19,17 @@ use crate::problem::ApiProblem;
 /// 4. Approval not expired (403 PolicyDenied)
 /// 5. Binding digest matches approval digest (403 IntegrityMismatch)
 /// 6. Computed proposal digest matches binding digest (403 IntegrityMismatch)
+/// 7. When `approver_roles` is non-empty, an `ApprovalGranted` provenance event
+///    for this approval carries authenticated resolver evidence
+///    (`actor_authenticated=true` + matching `actor_role`). The durable
+///    `resolver_evidence_version` marker (stamped atomically by
+///    `ApprovalRepo::resolve`) decides strictness:
+///    - Marker PRESENT (new-code resolution): only authenticated new-format
+///      resolver evidence satisfies; absence of matching evidence fails closed
+///      (403 PolicyDenied). A resolved-but-no-event grant can never fall back.
+///    - Marker ABSENT (pre-hardening historical record): the legacy
+///      `requested_by` fallback applies only when no new-format
+///      resolver-evidence event exists for the approval.
 ///
 /// Skips all checks when `approval_binding=None` (backward compatible).
 pub(crate) async fn validate_approval_binding_digest(
@@ -112,28 +124,73 @@ pub(crate) async fn validate_approval_binding_digest(
             })
             .await
             .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
-        let approved_by_allowed_role = grant_events.iter().any(|event| {
-            event.proposal_id == Some(approval.proposal_id)
-                && event
-                    .metadata
-                    .get("approval_id")
-                    .and_then(|value| value.as_str())
-                    == Some(binding.approval_id.to_string().as_str())
-                && event
-                    .metadata
-                    .get("actor_role")
-                    .and_then(|value| value.as_str())
-                    .is_some_and(|role| {
-                        binding.approver_roles.iter().any(|allowed| allowed == role)
-                    })
-        }) || {
-            let requested_by_role =
-                format!("{:?}", approval.requested_by.actor_type).to_ascii_lowercase();
-            binding
-                .approver_roles
-                .iter()
-                .any(|allowed| allowed == &requested_by_role)
+
+        let approval_id_str = binding.approval_id.to_string();
+        // Events relevant to this approval: new-format events carry
+        // metadata.approval_id; both formats set object_id to the approval id.
+        let relevant_events: Vec<&ProvenanceEvent> = grant_events
+            .iter()
+            .filter(|event| {
+                event.proposal_id == Some(approval.proposal_id)
+                    && (event
+                        .metadata
+                        .get("approval_id")
+                        .and_then(|value| value.as_str())
+                        == Some(approval_id_str.as_str())
+                        || event.object.object_id == approval_id_str)
+            })
+            .collect();
+
+        let role_matches = |event: &ProvenanceEvent| {
+            event
+                .metadata
+                .get("actor_role")
+                .and_then(|value| value.as_str())
+                .is_some_and(|role| binding.approver_roles.iter().any(|allowed| allowed == role))
         };
+
+        // New-format events carry the actor_authenticated marker. When any such
+        // event exists for this approval, only authenticated resolver evidence
+        // can satisfy the role binding: events marked actor_authenticated=false
+        // (Bearer/Disabled request-body actor) never satisfy, and the
+        // requested_by fallback does not apply.
+        let has_new_format_event = relevant_events
+            .iter()
+            .any(|event| event.metadata.contains_key("actor_authenticated"));
+
+        // The durable resolver-evidence marker is authoritative. When present,
+        // the approval was resolved by the hardened resolver, so ONLY
+        // authenticated new-format resolver evidence can satisfy the binding —
+        // a resolved-but-no-event grant (provenance append failed after the
+        // state committed) fails closed here instead of falling back. When the
+        // marker is absent, the record predates the hardening, so the legacy
+        // fallback is preserved for genuinely historical approvals.
+        let requires_resolver_evidence = approval.resolver_evidence_version.is_some();
+
+        let approved_by_allowed_role = if requires_resolver_evidence || has_new_format_event {
+            relevant_events.iter().any(|event| {
+                event
+                    .metadata
+                    .get("actor_authenticated")
+                    .and_then(|value| value.as_bool())
+                    == Some(true)
+                    && role_matches(event)
+            })
+        } else {
+            // Historical carve-out: approvals granted before resolver-evidence
+            // metadata existed (or granted out-of-band with no provenance
+            // event) keep the pre-hardening behavior: old-format actor_role
+            // evidence, else the requested_by actor_type fallback.
+            relevant_events.iter().any(|event| role_matches(event)) || {
+                let requested_by_role =
+                    format!("{:?}", approval.requested_by.actor_type).to_ascii_lowercase();
+                binding
+                    .approver_roles
+                    .iter()
+                    .any(|allowed| allowed == &requested_by_role)
+            }
+        };
+
         if !approved_by_allowed_role {
             return Err(ApiProblem::new(
                 StatusCode::FORBIDDEN,
@@ -145,3 +202,7 @@ pub(crate) async fn validate_approval_binding_digest(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "approval_binding_tests.rs"]
+mod tests;

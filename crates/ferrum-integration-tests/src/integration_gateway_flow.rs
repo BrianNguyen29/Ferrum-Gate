@@ -4276,6 +4276,7 @@ async fn test_i6_valid_binding_succeeds() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -4423,6 +4424,7 @@ async fn test_i6_pending_approval_denied() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Pending, // Not Granted!
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -4581,6 +4583,7 @@ async fn test_i6_digest_mismatch_denied() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -4739,6 +4742,7 @@ async fn test_i6_expired_binding_denied() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -5038,6 +5042,7 @@ async fn test_i6_chain_broken_digest_mismatch_between_approval_and_binding() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -5634,6 +5639,7 @@ async fn test_i6_single_use_with_valid_approval_binding() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -5924,6 +5930,7 @@ fn make_test_approval(
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Pending,
         created_at,
+        resolver_evidence_version: None,
     }
 }
 
@@ -12229,6 +12236,7 @@ async fn test_resolve_approval_conflict_already_granted() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -12332,6 +12340,7 @@ async fn test_resolve_approval_conflict_already_denied() {
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         state: ferrum_proto::ApprovalState::Denied,
         created_at: chrono::Utc::now(),
+        resolver_evidence_version: None,
     };
     store
         .approvals()
@@ -12436,6 +12445,7 @@ async fn test_resolve_approval_forbidden_expired() {
         expires_at: chrono::Utc::now() - chrono::Duration::hours(1), // Already expired
         state: ferrum_proto::ApprovalState::Pending,                 // Still Pending but expired
         created_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        resolver_evidence_version: None,
     };
     store
         .approvals()

@@ -92,6 +92,7 @@ fn make_approval(
         expires_at,
         state,
         created_at,
+        resolver_evidence_version: None,
     }
 }
 
