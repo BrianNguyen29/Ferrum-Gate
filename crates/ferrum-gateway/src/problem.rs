@@ -36,6 +36,17 @@ impl ApiProblem {
         )
     }
 
+    /// Generic non-enumerating 404 used when a guarded workflow object is
+    /// missing or access is denied. Keeps missing and inaccessible objects
+    /// indistinguishable to callers.
+    pub(crate) fn object_not_found() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            ApiErrorCode::NotFound,
+            "object not found",
+        )
+    }
+
     /// Build an internal-server-error problem from an `anyhow::Error`.
     pub(crate) fn internal(err: anyhow::Error) -> Self {
         Self(

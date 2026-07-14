@@ -29,6 +29,9 @@ mod server;
 mod state;
 mod timeout_reconciler;
 
+#[cfg(test)]
+mod object_guard_tests;
+
 #[cfg(feature = "worm-sink")]
 mod worm_sink;
 

@@ -87,6 +87,7 @@ fn clear_test_env() {
         "FERRUMD_GCS_CREDENTIALS_PATH",
         "FERRUMD_GCS_LIVE",
         "FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS",
+        "FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -6273,6 +6274,151 @@ secret = "c2VjcmV0"
         "expected invalid OIDC token profile error, got: {}",
         error
     );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_defaults_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.legacy_object_compat_allow_until.is_none());
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2099-01-01T00:00:00Z"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let expected = chrono::DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(config.legacy_object_compat_allow_until, Some(expected));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2099-01-01T00:00:00Z"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL",
+            "2100-06-15T12:00:00Z",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let expected = chrono::DateTime::parse_from_rfc3339("2100-06-15T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(config.legacy_object_compat_allow_until, Some(expected));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_cli_overrides_all() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2099-01-01T00:00:00Z"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL",
+            "2100-06-15T12:00:00Z",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        legacy_object_compat_allow_until: Some("2110-12-31T23:59:59Z".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let expected = chrono::DateTime::parse_from_rfc3339("2110-12-31T23:59:59Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(config.legacy_object_compat_allow_until, Some(expected));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_rejects_non_future() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2000-01-01T00:00:00Z"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let result = resolve_config(&args);
+    assert!(result.is_err());
 
     let _ = fs::remove_file(path);
 }

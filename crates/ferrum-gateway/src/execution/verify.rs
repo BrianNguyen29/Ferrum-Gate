@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
 use chrono::Utc;
@@ -11,6 +11,8 @@ use ferrum_proto::{
     ProvenanceEventKind, RollbackClass,
 };
 
+use crate::AuthActor;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::{
     lifecycle_event_metadata, mark_lifecycle_obligation_written, parse_execution_id,
     record_lifecycle_transition_outbox_with_obligations,
@@ -41,6 +43,7 @@ use crate::state::AppState;
 pub(crate) async fn verify_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Result<Json<ferrum_proto::VerifyExecutionResponse>, ApiProblem> {
     let execution_id = match parse_execution_id(&execution_id) {
         Ok(id) => id,
@@ -56,11 +59,7 @@ pub(crate) async fn verify_execution(
             return governance_err!(
                 state,
                 GovernanceRoute::ExecutionsVerify,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                )
+                ApiProblem::object_not_found()
             );
         }
         Err(e) => {
@@ -71,6 +70,19 @@ pub(crate) async fn verify_execution(
             );
         }
     };
+
+    // P1.4d: exact owner access guard before any state mutation or provenance response.
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        execution.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "execution",
+        "verify",
+    ) {
+        return governance_err!(state, GovernanceRoute::ExecutionsVerify, problem);
+    }
 
     // Get the rollback contract ID from the execution
     let rollback_contract_id = match execution.rollback_contract_id {

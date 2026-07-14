@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
+use chrono::Utc;
 use ferrum_proto::{ApiErrorCode, EvaluateOutcomeResponse, OutcomeReport};
 
+use crate::AuthActor;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::parse_execution_id;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
@@ -21,6 +24,7 @@ use crate::state::AppState;
 pub(crate) async fn evaluate_outcome(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(report): Json<OutcomeReport>,
 ) -> Result<Json<EvaluateOutcomeResponse>, ApiProblem> {
     let execution_id = parse_execution_id(&execution_id).map_err(|e| {
@@ -58,13 +62,24 @@ pub(crate) async fn evaluate_outcome(
         .ok_or_else(|| {
             state.metrics.record_governance_error(
                 GovernanceRoute::ExecutionsEvaluateOutcome,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                ),
+                ApiProblem::object_not_found(),
             )
         })?;
+
+    // P1.4d: exact owner access guard before any PDP evaluation.
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        execution.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "execution",
+        "evaluate_outcome",
+    ) {
+        return Err(state
+            .metrics
+            .record_governance_error(GovernanceRoute::ExecutionsEvaluateOutcome, problem));
+    }
 
     // Look up intent
     let intent = state

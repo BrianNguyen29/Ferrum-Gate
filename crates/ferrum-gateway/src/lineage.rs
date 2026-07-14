@@ -10,9 +10,10 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
+use chrono::Utc;
 use ferrum_graph::LineageGraph;
 use ferrum_proto::{
     ApiErrorCode, EventId, ExecutionDetailResponse, ExecutionId, LineageDirection,
@@ -21,6 +22,8 @@ use ferrum_proto::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::AuthActor;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::problem::ApiProblem;
@@ -52,12 +55,47 @@ pub(crate) struct LineageResponse {
 pub(crate) async fn get_execution_lineage(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Result<Json<LineageResponse>, ApiProblem> {
     let execution_id = parse_execution_id(&execution_id).map_err(|e| {
         state
             .metrics
             .record_governance_error(GovernanceRoute::ProvenanceLineageExecutionId, e)
     })?;
+
+    // P1.4d: load execution for ownership guard before returning lineage detail.
+    let record = match state.runtime.store.executions().get(execution_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ProvenanceLineageExecutionId,
+                ApiProblem::object_not_found()
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::ProvenanceLineageExecutionId,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        record.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "execution",
+        "lineage",
+    ) {
+        return governance_err!(
+            state,
+            GovernanceRoute::ProvenanceLineageExecutionId,
+            problem
+        );
+    }
 
     let request = ProvenanceQueryRequest {
         intent_id: None,
@@ -317,6 +355,7 @@ pub(crate) async fn query_lineage(
 pub(crate) async fn get_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Result<Json<ExecutionDetailResponse>, ApiProblem> {
     let execution_id = parse_execution_id(&execution_id).map_err(|e| {
         state
@@ -329,11 +368,7 @@ pub(crate) async fn get_execution(
             return governance_err!(
                 state,
                 GovernanceRoute::ExecutionsExecutionId,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                )
+                ApiProblem::object_not_found()
             );
         }
         Err(e) => {
@@ -344,6 +379,19 @@ pub(crate) async fn get_execution(
             );
         }
     };
+
+    // P1.4d: exact owner access guard before serializing sensitive execution detail.
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        record.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "execution",
+        "detail",
+    ) {
+        return governance_err!(state, GovernanceRoute::ExecutionsExecutionId, problem);
+    }
 
     // Look up the rollback contract if present, for fs-first rollback inspection.
     // This enables operators to inspect contract state, target path, before_hash,

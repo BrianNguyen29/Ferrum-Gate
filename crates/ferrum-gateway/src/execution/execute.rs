@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
 use chrono::Utc;
@@ -11,6 +11,8 @@ use ferrum_proto::{
     ObjectType, ProvenanceEvent, ProvenanceEventKind,
 };
 
+use crate::AuthActor;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::{
     lifecycle_event_metadata, mark_lifecycle_transition_reconciled, parse_execution_id,
     record_lifecycle_transition_outbox, validate_argument_constraints,
@@ -25,6 +27,7 @@ use crate::state::AppState;
 pub(crate) async fn execute_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(request): Json<ferrum_proto::ExecuteExecutionRequest>,
 ) -> Result<Json<ferrum_proto::ExecuteExecutionResponse>, ApiProblem> {
     let execution_id = match parse_execution_id(&execution_id) {
@@ -41,11 +44,7 @@ pub(crate) async fn execute_execution(
             return governance_err!(
                 state,
                 GovernanceRoute::ExecutionsExecute,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                )
+                ApiProblem::object_not_found()
             );
         }
         Err(e) => {
@@ -56,6 +55,19 @@ pub(crate) async fn execute_execution(
             );
         }
     };
+
+    // P1.4d: exact owner access guard before any state mutation or adapter call.
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        execution.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "execution",
+        "execute",
+    ) {
+        return governance_err!(state, GovernanceRoute::ExecutionsExecute, problem);
+    }
 
     // WS3: Defense-in-depth — enforce draft-only guard at execute checkpoint.
     // Look up the intent and reject execution if the intent enforces draft-only mode.

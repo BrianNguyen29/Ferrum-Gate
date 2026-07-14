@@ -32,6 +32,7 @@ use ferrum_store::StoreFacade;
 use std::sync::Arc;
 
 use crate::AuthActor;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::{validate_approval_binding_digest, validate_argument_constraints};
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
@@ -390,12 +391,44 @@ pub(crate) async fn mint_capability(
 pub(crate) async fn revoke_capability(
     State(state): State<Arc<AppState>>,
     Path(capability_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Result<Json<serde_json::Value>, ApiProblem> {
     let id = parse_capability_id(&capability_id).inspect_err(|_| {
         state
             .metrics
             .increment_governance_error(GovernanceRoute::CapabilitiesRevoke)
     })?;
+
+    // Load the durable capability for the ownership guard before any mutation.
+    let lease = match state.runtime.store.capabilities().get(id).await {
+        Ok(Some(lease)) => lease,
+        Ok(None) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesRevoke,
+                ApiProblem::object_not_found()
+            );
+        }
+        Err(e) => {
+            return governance_err!(
+                state,
+                GovernanceRoute::CapabilitiesRevoke,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+    };
+
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        lease.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "capability",
+        "revoke",
+    ) {
+        return governance_err!(state, GovernanceRoute::CapabilitiesRevoke, problem);
+    }
 
     // Revoke the capability in the capability service (in-memory)
     // If NotFound, fall back to store and revoke there synchronously
@@ -409,7 +442,7 @@ pub(crate) async fn revoke_capability(
                     return governance_err!(
                         state,
                         GovernanceRoute::CapabilitiesRevoke,
-                        ApiProblem::from_capability(CapabilityError::NotFound)
+                        ApiProblem::object_not_found()
                     );
                 }
                 Err(e) => {

@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::Extension, extract::State, http::StatusCode};
 use chrono::Utc;
+use ferrum_cap::CapabilityError;
 use ferrum_proto::{
     ActorRef, ActorType, ApiErrorCode, AuthorizeExecutionRequest, AuthorizeExecutionResponse,
     Decision, EventId, ExecutionId, ExecutionRecord, ExecutionState, HashChainRef,
     LifecycleOutboxRecord, ObjectRef, ObjectType, ProvenanceEvent, ProvenanceEventKind,
 };
 
+use crate::AuthActor;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::{
     classify_authorization_cas_failure, get_capability_for_authorize, lifecycle_event_metadata,
     mark_lifecycle_transition_reconciled, validate_approval_binding_digest,
@@ -26,26 +29,28 @@ use crate::state::AppState;
 ///
 /// 1. Load capability from in-memory service, falling back to persisted store
 ///    via `get_capability_for_authorize`.
-/// 2. Binding invariant — reject (403 IntegrityMismatch) if
+/// 2. Enforce exact-owner access guard (Bearer/Disabled unaffected).
+/// 3. Binding invariant — reject (403 IntegrityMismatch) if
 ///    `request.proposal_id != lease.proposal_id` before any durable
 ///    capability mutation.
-/// 3. I5 invariant — validate that capability `resource_bindings` is a subset
+/// 4. I5 invariant — validate that capability `resource_bindings` is a subset
 ///    of the intent's `resource_scope`.
-/// 4. I6 invariant — if the capability has an `approval_binding`, validate the
+/// 5. I6 invariant — if the capability has an `approval_binding`, validate the
 ///    approval binding digest (and the proposal's canonical action digest)
 ///    against the binding. Skipped when `approval_binding=None`.
-/// 5. Persist the single-use Active -> Used transition atomically via
+/// 6. Persist the single-use Active -> Used transition atomically via
 ///    `record_authorization` (which also requires `expires_at > now`). On a
 ///    lost CAS the capability is reloaded and mapped to the accurate error
 ///    (`AlreadyUsed` / `Revoked` / `Expired` / `NotFound`); the in-memory
 ///    cache is synced only after the durable transition commits.
-/// 6. Insert an `ExecutionRecord` (state `Authorized` for dry-run, `Prepared`
+/// 7. Insert an `ExecutionRecord` (state `Authorized` for dry-run, `Prepared`
 ///    otherwise) and emit an `ActionProposalSubmitted` provenance event.
 ///
 /// All guards, ordering, status codes, and the response schema are preserved
 /// verbatim from the original `server.rs` implementation.
 pub(crate) async fn authorize_execution(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(request): Json<AuthorizeExecutionRequest>,
 ) -> Result<Json<AuthorizeExecutionResponse>, ApiProblem> {
     // Load capability from in-memory service, falling back to persisted store.
@@ -59,13 +64,27 @@ pub(crate) async fn authorize_execution(
     {
         Ok(lease) => lease,
         Err(e) => {
-            return governance_err!(
-                state,
-                GovernanceRoute::ExecutionsAuthorize,
+            let problem = if matches!(e, CapabilityError::NotFound) {
+                ApiProblem::object_not_found()
+            } else {
                 ApiProblem::from_capability(e)
-            );
+            };
+            return governance_err!(state, GovernanceRoute::ExecutionsAuthorize, problem);
         }
     };
+
+    // P1.4d: exact owner access guard before any durable capability mutation.
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        lease.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "capability",
+        "authorize",
+    ) {
+        return governance_err!(state, GovernanceRoute::ExecutionsAuthorize, problem);
+    }
 
     // Binding invariant: the request's proposal_id MUST match the lease's
     // proposal_id. This prevents a holder of one capability from using it to
@@ -223,11 +242,12 @@ pub(crate) async fn authorize_execution(
             let err =
                 classify_authorization_cas_failure(&state.runtime.store, request.capability_id)
                     .await;
-            return governance_err!(
-                state,
-                GovernanceRoute::ExecutionsAuthorize,
+            let problem = if matches!(err, CapabilityError::NotFound) {
+                ApiProblem::object_not_found()
+            } else {
                 ApiProblem::from_capability(err)
-            );
+            };
+            return governance_err!(state, GovernanceRoute::ExecutionsAuthorize, problem);
         }
         Err(e) => {
             return governance_err!(

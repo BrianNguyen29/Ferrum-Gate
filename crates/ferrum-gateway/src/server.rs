@@ -83,6 +83,16 @@ pub async fn run_http_server(
         nonce_cache,
     });
 
+    if state
+        .server_config
+        .legacy_object_compat_allow_until
+        .is_some()
+    {
+        tracing::warn!(
+            "legacy_object_compat_allow_until is configured; unbound workflow objects are permitted until the deadline"
+        );
+    }
+
     let approval_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
     let approval_reconciler_handle = if config.approval_timeout_enabled {
         Some(tokio::spawn(approval_timeout_reconciler(

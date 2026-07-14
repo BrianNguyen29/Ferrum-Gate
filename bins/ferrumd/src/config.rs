@@ -295,6 +295,12 @@ pub struct Args {
     /// the typ header to be exactly "at+jwt" or "application/at+jwt".
     #[arg(long)]
     oidc_token_profile: Option<String>,
+
+    /// RFC3339 deadline until which owner-less legacy workflow objects are
+    /// accessible in authenticated modes (Scoped/OIDC/Agent). Empty or omitted
+    /// means deny-by-default. Bearer and Disabled modes are unaffected.
+    #[arg(long)]
+    legacy_object_compat_allow_until: Option<String>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -478,6 +484,8 @@ struct ServerSection {
     behavioral_anomaly_critical_threshold: Option<u32>,
     #[serde(default)]
     behavioral_anomaly_max_actors: Option<usize>,
+    #[serde(default)]
+    legacy_object_compat_allow_until: Option<String>,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
@@ -1107,6 +1115,22 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(1000);
 
+    let legacy_object_compat_allow_until = args
+        .legacy_object_compat_allow_until
+        .clone()
+        .or(get_env("FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.legacy_object_compat_allow_until.clone())
+        })
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| anyhow::anyhow!("invalid legacy_object_compat_allow_until: {e}"))
+        })
+        .transpose()?;
+
     #[cfg(feature = "worm-sink")]
     let (audit_worm_sink_enabled, worm_sink_config) = {
         let enabled = if args.audit_worm_sink_enabled {
@@ -1565,6 +1589,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         behavioral_anomaly_warning_threshold,
         behavioral_anomaly_critical_threshold,
         behavioral_anomaly_max_actors,
+        legacy_object_compat_allow_until,
     };
 
     // Validate configuration

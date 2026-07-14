@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
 use chrono::Utc;
@@ -11,7 +11,9 @@ use ferrum_proto::{
     EventId, ExecutionState, ObjectRef, ObjectType, ProvenanceEvent, ProvenanceEventKind,
 };
 
+use crate::AuthActor;
 use crate::audit;
+use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::{
     execution_is_cancelable_pre_side_effect, mark_lifecycle_transition_reconciled,
     parse_execution_id, record_lifecycle_transition_outbox,
@@ -31,6 +33,7 @@ use crate::state::AppState;
 pub(crate) async fn cancel_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
 ) -> Result<Json<CancelExecutionResponse>, ApiProblem> {
     let execution_id = parse_execution_id(&execution_id).map_err(|e| {
         state
@@ -54,13 +57,22 @@ pub(crate) async fn cancel_execution(
         .ok_or_else(|| {
             state.metrics.record_governance_error(
                 GovernanceRoute::ExecutionsCancel,
-                ApiProblem::new(
-                    StatusCode::NOT_FOUND,
-                    ApiErrorCode::NotFound,
-                    "execution not found",
-                ),
+                ApiProblem::object_not_found(),
             )
         })?;
+
+    // P1.4d: exact owner access guard before any state mutation or audit side effect.
+    if let Err(problem) = enforce_object_owner_guard(
+        auth_actor.as_ref().map(|Extension(a)| a),
+        execution.owner_actor_id.as_ref(),
+        state.server_config.auth_mode,
+        state.server_config.legacy_object_compat_allow_until,
+        Utc::now(),
+        "execution",
+        "cancel",
+    ) {
+        return governance_err!(state, GovernanceRoute::ExecutionsCancel, problem);
+    }
 
     let previous_state = execution.state.clone();
 

@@ -625,6 +625,11 @@ pub struct ServerConfig {
     /// Maximum number of distinct principals tracked in memory by the behavioral profiler.
     /// Default: 1000. Valid range: 1..=100_000.
     pub behavioral_anomaly_max_actors: usize,
+    /// Temporary compatibility deadline for owner-less legacy workflow objects in
+    /// authenticated modes. When set, unbound capabilities and executions are
+    /// accessible until the RFC3339 deadline; when unset or expired they are
+    /// denied. Bearer/Disabled auth modes are unaffected.
+    pub legacy_object_compat_allow_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -749,6 +754,10 @@ impl std::fmt::Debug for ServerConfig {
             "behavioral_anomaly_max_actors",
             &self.behavioral_anomaly_max_actors,
         );
+        d.field(
+            "legacy_object_compat_allow_until",
+            &self.legacy_object_compat_allow_until,
+        );
         d.finish()
     }
 }
@@ -818,6 +827,7 @@ impl Default for ServerConfig {
             behavioral_anomaly_warning_threshold: 5,
             behavioral_anomaly_critical_threshold: 10,
             behavioral_anomaly_max_actors: 1000,
+            legacy_object_compat_allow_until: None,
         }
     }
 }
@@ -1155,6 +1165,18 @@ impl ServerConfig {
                     "behavioral_anomaly_max_actors must be between 1 and 100000, got {}",
                     self.behavioral_anomaly_max_actors
                 ));
+            }
+        }
+
+        // Validate legacy object compatibility deadline. It must be a finite,
+        // explicit future timestamp; expired deadlines are denied at runtime but
+        // rejected at config time because they are no-ops.
+        if let Some(allow_until) = self.legacy_object_compat_allow_until {
+            if allow_until <= chrono::Utc::now() {
+                return Err(
+                    "legacy_object_compat_allow_until must be a future RFC3339 timestamp"
+                        .to_string(),
+                );
             }
         }
 
