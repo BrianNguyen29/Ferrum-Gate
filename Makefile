@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill dr-smoke adapter-smoke stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-soft coverage-threshold-hard invariant-smoke
+.PHONY: help check fmt lint test docs test-python-validators validate validate-prod-monitoring tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill dr-smoke adapter-smoke stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-soft coverage-threshold-hard invariant-smoke
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -8,7 +8,8 @@ help:
 	@echo "make invariant-smoke - run blocking safety-kernel smoke suite (fails on zero-test matches)"
 	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
-	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools)"
+	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools, monitoring templates)"
+	@echo "make validate-prod-monitoring - run production-only monitoring drift gate (explicit; fails on active unsafe template values)"
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence, expanded validators)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
@@ -73,7 +74,7 @@ test-python-validators:
 	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + docs-links + CI badges + python-validator-tests)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + docs-links + CI badges + monitoring templates + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
@@ -85,8 +86,13 @@ validate:
 	@python3 scripts/validate_runbook_adr_status.py
 	@python3 scripts/validate_docs_links.py
 	@python3 scripts/validate_ci_badges.py
+	@python3 scripts/validate_monitoring_templates.py
 	@$(MAKE) test-python-validators
 	@$(MAKE) site-check
+
+validate-prod-monitoring:
+	@echo "Running production-only monitoring drift validation..."
+	@python3 scripts/validate_monitoring_templates.py --production
 
 tree:
 	find . -maxdepth 4 | sort
