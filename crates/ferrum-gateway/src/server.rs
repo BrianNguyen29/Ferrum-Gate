@@ -8013,6 +8013,115 @@ rules:
     }
 
     #[tokio::test]
+    async fn test_oidc_jwks_missing_kid_returns_401_no_leak() {
+        use axum::{Json, Router, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // JWKS endpoint returns 200 with a syntactically valid JWKS that does
+        // NOT contain the kid declared in the JWT header.
+        let jwks = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "other-rsa-key",
+                "n": "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ",
+                "e": "AQAB"
+            }]
+        });
+
+        let jwks_request_count = Arc::new(AtomicUsize::new(0));
+        let jwks_request_count_for_handler = jwks_request_count.clone();
+        let app = Router::new().route(
+            "/jwks",
+            get(move || {
+                let counter = jwks_request_count_for_handler.clone();
+                let jwks = jwks.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(jwks)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let jwks_url = format!("http://{}/jwks", addr);
+
+        let runtime = test_runtime().await;
+        let mut config = test_oidc_server_config();
+        if let Some(ref mut oidc) = config.oidc_config {
+            // Force JWKS fallback by removing static keys.
+            oidc.static_keys.clear();
+            oidc.jwks_url = Some(jwks_url.clone());
+        }
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        // kid is intentionally absent from the JWKS returned above.
+        let jwt = mint_test_jwt(claims, Some("missing-kid"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // The mock JWKS handler must have been reached exactly once; if it
+        // was never reached, the test would still pass on status alone and the
+        // key-miss branch would not actually be exercised.
+        assert_eq!(
+            jwks_request_count.load(Ordering::SeqCst),
+            1,
+            "expected exactly one JWKS handler request"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+
+        // Generic Unauthorized response: must not disclose the requested kid
+        // or the JWKS endpoint/config.
+        assert_oidc_401_body_is_generic(StatusCode::UNAUTHORIZED, &text);
+        assert!(
+            !text.to_lowercase().contains("missing-kid"),
+            "response body leaked the missing kid: {}",
+            text
+        );
+        assert!(
+            !text.to_lowercase().contains(&jwks_url.to_lowercase()),
+            "response body leaked the jwks url: {}",
+            text
+        );
+        assert!(
+            !text.to_lowercase().contains("other-rsa-key"),
+            "response body leaked an unrelated key id: {}",
+            text
+        );
+    }
+
+    #[tokio::test]
     async fn test_oidc_future_iat_returns_401() {
         let runtime = test_runtime().await;
         let config = test_oidc_server_config();
