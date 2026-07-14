@@ -42,6 +42,7 @@ fn clear_test_env() {
         "FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED",
         "FERRUMD_OIDC_ALLOWED_ALGORITHMS",
         "FERRUMD_OIDC_ROLE_MAPPINGS",
+        "FERRUMD_OIDC_TOKEN_PROFILE",
         "FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED",
         "FERRUMD_LIFECYCLE_RECONCILIATION_INTERVAL_SECS",
         "FERRUMD_LIFECYCLE_RECONCILIATION_BATCH_LIMIT",
@@ -6096,6 +6097,180 @@ allowed_hosts = ["example.com:8080"]
     assert!(
         error.to_string().contains("port"),
         "expected port rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// === OIDC token profile tests ===
+
+#[test]
+fn test_resolve_config_oidc_token_profile_defaults_to_legacy_jwt() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::LegacyJwt
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_oidc_token_profile_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "rfc9068_access_token"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::Rfc9068AccessToken
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_oidc_token_profile_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_OIDC_TOKEN_PROFILE", "legacy_jwt");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "rfc9068_access_token"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::LegacyJwt
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_oidc_token_profile() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "strict"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("invalid OIDC token profile"),
+        "expected invalid OIDC token profile error, got: {}",
         error
     );
 

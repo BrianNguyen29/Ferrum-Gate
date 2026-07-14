@@ -135,6 +135,36 @@ impl KeyMaterial {
     }
 }
 
+/// JWT token profile for OIDC authentication.
+///
+/// Controls whether the gateway enforces a strict `typ` header on incoming
+/// OIDC/JWT tokens. The default is `LegacyJwt`, which preserves the existing
+/// behavior of accepting any signed JWT (including tokens with a missing or
+/// non-standard `typ`). The `Rfc9068AccessToken` profile opts into RFC 9068
+/// access-token validation and requires the `typ` header to be exactly one of
+/// the well-known values before any key or signature work is performed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum OidcTokenProfile {
+    /// Legacy behavior: accept any signed JWT `typ` (or none). No typ enforcement.
+    #[default]
+    LegacyJwt,
+    /// RFC 9068 access-token profile: require `typ` to be exactly `at+jwt` or
+    /// `application/at+jwt`.
+    Rfc9068AccessToken,
+}
+
+impl std::str::FromStr for OidcTokenProfile {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "legacy_jwt" => Ok(Self::LegacyJwt),
+            "rfc9068_access_token" => Ok(Self::Rfc9068AccessToken),
+            _ => Err(format!("unknown OIDC token profile: {s}")),
+        }
+    }
+}
+
 /// OIDC configuration for JWT validation (Phase 4.3 + 4.4).
 ///
 /// Supports both static keys (offline validation) and live JWKS fetch
@@ -166,6 +196,9 @@ pub struct OidcConfig {
     pub jwks_url: Option<String>,
     /// JWKS cache TTL in seconds. Default: 300.
     pub jwks_cache_ttl_secs: u64,
+    /// JWT token profile governing `typ` header validation.
+    /// Default: `LegacyJwt` (no `typ` enforcement).
+    pub token_profile: OidcTokenProfile,
 }
 
 impl Default for OidcConfig {
@@ -189,6 +222,7 @@ impl Default for OidcConfig {
             require_email_verified: true,
             jwks_url: None,
             jwks_cache_ttl_secs: 300,
+            token_profile: OidcTokenProfile::default(),
         }
     }
 }

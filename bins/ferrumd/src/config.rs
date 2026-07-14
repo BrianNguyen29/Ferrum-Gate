@@ -289,6 +289,12 @@ pub struct Args {
     /// Enable live GCS SDK calls for the GCS adapter (default: false).
     #[arg(long)]
     gcs_live: bool,
+
+    /// OIDC token profile: "legacy_jwt" (default) or "rfc9068_access_token".
+    /// "legacy_jwt" accepts any signed JWT typ. "rfc9068_access_token" requires
+    /// the typ header to be exactly "at+jwt" or "application/at+jwt".
+    #[arg(long)]
+    oidc_token_profile: Option<String>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -645,6 +651,8 @@ struct OidcSection {
     jwks_url: Option<String>,
     #[serde(default)]
     static_keys: Vec<StaticKeyEntry>,
+    #[serde(default = "default_oidc_token_profile")]
+    token_profile: String,
 }
 
 fn default_jwks_cache_ttl() -> u64 {
@@ -657,6 +665,10 @@ fn default_actor_id_claim() -> String {
 
 fn default_role_source_claim() -> String {
     "groups".to_string()
+}
+
+fn default_oidc_token_profile() -> String {
+    "legacy_jwt".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1336,6 +1348,16 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
             .or_else(|| file_oidc.map(|o| o.jwks_cache_ttl_secs))
             .unwrap_or(300);
 
+        let token_profile = args
+            .oidc_token_profile
+            .clone()
+            .or(get_env::<String>("FERRUMD_OIDC_TOKEN_PROFILE")?)
+            .or_else(|| file_oidc.map(|o| o.token_profile.clone()))
+            .unwrap_or_else(|| "legacy_jwt".to_string());
+        let token_profile_parsed: ferrum_gateway::OidcTokenProfile = token_profile
+            .parse()
+            .map_err(|e: String| anyhow::anyhow!("invalid OIDC token profile: {e}"))?;
+
         let actor_id_claim = get_env::<String>("FERRUMD_OIDC_ACTOR_ID_CLAIM")?
             .or_else(|| file_oidc.map(|o| o.actor_id_claim.clone()))
             .unwrap_or_else(|| "sub".to_string());
@@ -1474,6 +1496,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
             require_email_verified,
             jwks_url,
             jwks_cache_ttl_secs,
+            token_profile: token_profile_parsed,
         })
     } else {
         None

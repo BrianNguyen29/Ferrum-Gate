@@ -583,6 +583,32 @@ enum OidcAuthError {
 ///
 /// Fail closed: any validation failure returns `OidcAuthError::Unauthorized`.
 /// Unmapped role or missing required scope returns `OidcAuthError::Forbidden`.
+/// Decode the raw JWT header segment and return true if the `alg` claim is
+/// literally `"none"`. This is a defense-in-depth check because the typed
+/// `jsonwebtoken::Algorithm` enum does not include the `none` algorithm and
+/// would otherwise reject it only as an unknown algorithm.
+fn jwt_header_alg_is_none(token: &str) -> bool {
+    let header_b64 = token.split('.').next().unwrap_or("");
+    if header_b64.is_empty() {
+        return false;
+    }
+    let decoded = match base64::Engine::decode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        header_b64,
+    ) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let raw: serde_json::Value = match serde_json::from_slice(&decoded) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    raw.get("alg")
+        .and_then(|v| v.as_str())
+        .map(|s| s.eq_ignore_ascii_case("none"))
+        .unwrap_or(false)
+}
+
 async fn validate_oidc_token(
     token: &str,
     oidc: &OidcConfig,
@@ -590,6 +616,13 @@ async fn validate_oidc_token(
     method: &str,
     path: &str,
 ) -> Result<(String, Vec<String>, ferrum_proto::TokenRole), OidcAuthError> {
+    // Defense-in-depth: reject "none" algorithm unconditionally, regardless of
+    // the configured allowlist.
+    if jwt_header_alg_is_none(token) {
+        tracing::warn!("jwt algorithm 'none' rejected");
+        return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
+    }
+
     // Step 1: decode header to get kid and alg
     let header = match jsonwebtoken::decode_header(token) {
         Ok(h) => h,
@@ -599,14 +632,19 @@ async fn validate_oidc_token(
         }
     };
 
-    // Reject "none" algorithm unconditionally
-    if header.alg == jsonwebtoken::Algorithm::HS256
-        && !oidc
-            .allowed_algorithms
-            .contains(&jsonwebtoken::Algorithm::HS256)
-    {
-        // HS256 is only allowed if explicitly listed (tests)
+    // Profile-gated `typ` validation: when the strict RFC 9068 access-token
+    // profile is enabled, the token type must be exactly `at+jwt` or
+    // `application/at+jwt` before any key or signature work is performed.
+    if oidc.token_profile == crate::OidcTokenProfile::Rfc9068AccessToken {
+        match header.typ.as_deref() {
+            Some("at+jwt") | Some("application/at+jwt") => {}
+            typ => {
+                tracing::warn!(typ = ?typ, "jwt typ rejected by rfc9068_access_token profile");
+                return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
+            }
+        }
     }
+
     if !oidc.allowed_algorithms.contains(&header.alg) {
         tracing::warn!(alg = ?header.alg, "jwt algorithm not in allowlist");
         return Err(OidcAuthError::Unauthorized(

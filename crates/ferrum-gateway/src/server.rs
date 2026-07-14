@@ -6910,7 +6910,7 @@ rules:
 
     // ── OIDC/JWT Offline Validation Tests (Phase 4.3) ──
 
-    fn test_oidc_config() -> OidcConfig {
+    fn test_oidc_config_with_profile(token_profile: crate::OidcTokenProfile) -> OidcConfig {
         let mut role_mappings = std::collections::HashMap::new();
         role_mappings.insert("fg-admins".to_string(), ferrum_proto::TokenRole::Admin);
         role_mappings.insert(
@@ -6942,15 +6942,28 @@ rules:
             require_email_verified: false,
             jwks_url: None,
             jwks_cache_ttl_secs: 300,
+            token_profile,
         }
+    }
+
+    fn test_oidc_config() -> OidcConfig {
+        test_oidc_config_with_profile(crate::OidcTokenProfile::LegacyJwt)
     }
 
     fn mint_test_jwt(
         claims: serde_json::Map<String, serde_json::Value>,
         kid: Option<&str>,
     ) -> String {
+        mint_test_jwt_with_typ(claims, kid, Some("JWT"))
+    }
+
+    fn mint_test_jwt_with_typ(
+        claims: serde_json::Map<String, serde_json::Value>,
+        kid: Option<&str>,
+        typ: Option<&str>,
+    ) -> String {
         let header = jsonwebtoken::Header {
-            typ: Some("JWT".to_string()),
+            typ: typ.map(|s| s.to_string()),
             alg: jsonwebtoken::Algorithm::HS256,
             kid: kid.map(|s| s.to_string()),
             ..Default::default()
@@ -7370,6 +7383,229 @@ rules:
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    fn test_oidc_server_config_with_profile(
+        token_profile: crate::OidcTokenProfile,
+    ) -> ServerConfig {
+        ServerConfig {
+            auth_mode: AuthMode::Oidc,
+            oidc_config: Some(test_oidc_config_with_profile(token_profile)),
+            ..ServerConfig::default()
+        }
+    }
+
+    fn valid_oidc_claims() -> serde_json::Map<String, serde_json::Value> {
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+        claims
+    }
+
+    fn mint_unsigned_jwt(
+        claims: serde_json::Map<String, serde_json::Value>,
+        _kid: Option<&str>,
+        typ: Option<&str>,
+    ) -> String {
+        let mut header = serde_json::Map::new();
+        header.insert("alg".to_string(), serde_json::json!("none"));
+        if let Some(t) = typ {
+            header.insert("typ".to_string(), serde_json::json!(t));
+        }
+        let header_json = serde_json::to_string(&header).unwrap();
+        let claims_json = serde_json::to_string(&claims).unwrap();
+        let header_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            header_json.as_bytes(),
+        );
+        let claims_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            claims_json.as_bytes(),
+        );
+        format!("{header_b64}.{claims_b64}.")
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_accepts_at_jwt_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), Some("at+jwt"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_accepts_application_at_jwt_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(
+            valid_oidc_claims(),
+            Some("test-key-1"),
+            Some("application/at+jwt"),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_rejects_legacy_jwt_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        // Legacy "JWT" typ must be rejected under the strict RFC 9068 profile.
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), Some("JWT"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Response must not leak the expected token type.
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            !text.contains("at+jwt"),
+            "response must not disclose expected token type: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_rejects_missing_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), None);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_legacy_accepts_missing_typ() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), None);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_none_algorithm_rejected_in_legacy_profile() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_unsigned_jwt(valid_oidc_claims(), Some("test-key-1"), Some("JWT"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_none_algorithm_rejected_in_rfc9068_profile() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_unsigned_jwt(valid_oidc_claims(), Some("test-key-1"), Some("at+jwt"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     // ── Phase 4.4: JWKS cache/fetch tests ──
