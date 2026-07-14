@@ -182,6 +182,21 @@ fn helper_unbound_with_expired_compat_denies() {
     assert_eq!(result.unwrap_err().1, StatusCode::NOT_FOUND);
 }
 
+#[test]
+fn helper_unbound_with_exact_deadline_denies() {
+    let now = Utc::now();
+    let result = enforce_object_owner_guard(
+        Some(&actor("actor-a")),
+        None,
+        AuthMode::Scoped,
+        Some(now),
+        now,
+        "execution",
+        "test",
+    );
+    assert_eq!(result.unwrap_err().1, StatusCode::NOT_FOUND);
+}
+
 // ---------------------------------------------------------------------------
 // Handler integration tests
 // ---------------------------------------------------------------------------

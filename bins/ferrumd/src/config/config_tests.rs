@@ -6237,6 +6237,54 @@ secret = "c2VjcmV0"
 }
 
 #[test]
+fn test_resolve_config_oidc_token_profile_cli_overrides_env_and_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_OIDC_TOKEN_PROFILE", "rfc9068_access_token");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "legacy_jwt"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        oidc_token_profile: Some("legacy_jwt".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::LegacyJwt
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
 fn test_resolve_config_rejects_invalid_oidc_token_profile() {
     let _guard = env_lock().lock().unwrap();
     clear_test_env();
@@ -6418,7 +6466,13 @@ legacy_object_compat_allow_until = "2000-01-01T00:00:00Z"
     };
 
     let result = resolve_config(&args);
-    assert!(result.is_err());
+    let error = result.expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("legacy_object_compat_allow_until must be a future RFC3339 timestamp"),
+        "expected future-timestamp error, got: {error}"
+    );
 
     let _ = fs::remove_file(path);
 }

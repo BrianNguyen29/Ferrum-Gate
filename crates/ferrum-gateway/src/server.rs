@@ -7607,6 +7607,65 @@ rules:
         assert_eq!(response.status(), StatusCode::OK);
     }
 
+    fn assert_oidc_401_body_is_generic(status: StatusCode, body: &str) {
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let lower = body.to_lowercase();
+        assert!(
+            !lower.contains("none")
+                && !lower.contains("alg")
+                && !lower.contains("at+jwt")
+                && !lower.contains("profile")
+                && !lower.contains("allowed")
+                && !lower.contains("hs256")
+                && !lower.contains("rs256"),
+            "response body must not disclose algorithm or profile hints: {body}"
+        );
+        let err: ApiError = serde_json::from_str(body).expect("body must be a valid ApiError");
+        assert_eq!(
+            err.code,
+            ferrum_proto::ApiErrorCode::Unauthorized,
+            "expected canonical Unauthorized code"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oidc_malformed_authorization_returns_generic_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let cases = vec![
+            "malformed",
+            "Basic dXNlcjpwYXNz",
+            "Bearer",
+            "Bearer ",
+            "Bearer not-a-jwt",
+            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            "Bearer abc.def.ghi",
+        ];
+
+        for header in cases {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("Authorization", header)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert_oidc_401_body_is_generic(status, &text);
+        }
+    }
+
     #[tokio::test]
     async fn test_oidc_none_algorithm_rejected_in_legacy_profile() {
         let runtime = test_runtime().await;
@@ -7627,6 +7686,13 @@ rules:
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_oidc_401_body_is_generic(status, &text);
     }
 
     #[tokio::test]
@@ -7650,6 +7716,197 @@ rules:
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_oidc_401_body_is_generic(status, &text);
+    }
+
+    fn oidc_claims_for_sub(sub: &str) -> serde_json::Map<String, serde_json::Value> {
+        let mut claims = valid_oidc_claims();
+        claims.insert("sub".to_string(), serde_json::json!(sub));
+        claims
+    }
+
+    async fn setup_oidc_owner_guard_runtime(
+        owner: &str,
+    ) -> (GatewayRuntime, axum::Router, ExecutionId) {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let execution_id = ExecutionId::new();
+
+        runtime
+            .store
+            .intents()
+            .insert(&ferrum_proto::IntentEnvelope {
+                intent_id,
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: "owner guard test".to_string(),
+                goal: "test".to_string(),
+                normalized_goal: "test".to_string(),
+                allowed_outcomes: vec![],
+                forbidden_outcomes: vec![],
+                resource_scope: vec![],
+                risk_tier: RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: RollbackClass::R0NativeReversible,
+                time_budget: TimeBudget {
+                    max_duration_ms: 30_000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: TrustContextSummary {
+                    input_labels: vec![],
+                    sensitivity_labels: vec![],
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: vec![],
+                tags: vec![],
+                metadata: ferrum_proto::JsonMap::new(),
+                status: IntentStatus::Active,
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        runtime
+            .store
+            .proposals()
+            .insert(&ferrum_proto::ActionProposal {
+                proposal_id,
+                intent_id,
+                step_index: 0,
+                title: "proposal".to_string(),
+                tool_name: "test_tool".to_string(),
+                server_name: "test_server".to_string(),
+                raw_arguments: serde_json::json!({}),
+                expected_effect: "test".to_string(),
+                estimated_risk: RiskTier::Low,
+                requested_rollback_class: RollbackClass::R0NativeReversible,
+                taint_inputs: vec![],
+                metadata: ferrum_proto::JsonMap::new(),
+                created_at: chrono::Utc::now(),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        let mint_response = runtime
+            .cap
+            .mint(ferrum_proto::CapabilityMintRequest {
+                intent_id,
+                proposal_id,
+                tool_binding: ferrum_proto::ToolBinding {
+                    server_name: "test_server".to_string(),
+                    tool_name: "test_tool".to_string(),
+                    tool_version: None,
+                },
+                resource_bindings: vec![],
+                argument_constraints: vec![],
+                taint_budget: ferrum_proto::TaintBudget {
+                    max_taint_score: 0,
+                    allow_external_tool_output: false,
+                    allow_external_metadata: false,
+                    allow_untrusted_text: false,
+                },
+                approval_binding: None,
+                requested_ttl_secs: 60,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap();
+
+        runtime
+            .store
+            .capabilities()
+            .insert(&mint_response.lease)
+            .await
+            .unwrap();
+
+        let record = ExecutionRecord {
+            execution_id,
+            proposal_id,
+            intent_id,
+            capability_id: mint_response.lease.capability_id,
+            rollback_contract_id: None,
+            decision: Decision::Allow,
+            state: ExecutionState::Authorized,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: Some(owner.to_string()),
+        };
+        runtime.store.executions().insert(&record).await.unwrap();
+
+        (runtime, router, execution_id)
+    }
+
+    #[tokio::test]
+    async fn test_oidc_owner_guard_cross_owner_read_returns_404_and_preserves_state() {
+        let (runtime, router, execution_id) = setup_oidc_owner_guard_runtime("actor-a").await;
+
+        // Owner can read their own execution through the real OIDC middleware.
+        let jwt_a = mint_test_jwt(oidc_claims_for_sub("actor-a"), Some("test-key-1"));
+        let owner_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/executions/{execution_id}"))
+                    .header("Authorization", format!("Bearer {}", jwt_a))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(owner_response.status(), StatusCode::OK);
+
+        // Non-owner must receive a generic 404 and must not alter the execution.
+        let jwt_b = mint_test_jwt(oidc_claims_for_sub("actor-b"), Some("test-key-1"));
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/executions/{execution_id}"))
+                    .header("Authorization", format!("Bearer {}", jwt_b))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains("object not found"),
+            "expected generic 404: {text}"
+        );
+
+        let after = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.state, ExecutionState::Authorized);
     }
 
     // ── Phase 4.4: JWKS cache/fetch tests ──
