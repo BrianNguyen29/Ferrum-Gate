@@ -38,6 +38,7 @@ aes-gcm.workspace = true
 sha1.workspace = true
 hmac.workspace = true
 data-encoding.workspace = true
+ipnet.workspace = true
 urlencoding.workspace = true
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 serde.workspace = true

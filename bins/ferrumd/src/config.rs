@@ -5,6 +5,7 @@ use ferrum_adapter_gcs::GcsConfig;
 #[cfg(feature = "s3")]
 use ferrum_adapter_s3::S3Config;
 use ferrum_gateway::{AuthMode, ServerConfig};
+use ipnet::IpNet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -60,6 +61,22 @@ pub struct Args {
     /// Rate limit: burst size per IP (default 50).
     #[arg(long)]
     rate_limit_burst: Option<u32>,
+
+    /// Trusted proxy CIDR ranges (comma-separated) whose single `X-Real-IP`
+    /// header may be honored. `X-Forwarded-For` is ignored. Defaults to empty
+    /// (trust-none). Universal CIDRs (0.0.0.0/0, ::/0) are rejected.
+    #[arg(long)]
+    trusted_proxy_cidrs: Option<String>,
+
+    /// Pre-auth rate limit: sustained requests per second per source.
+    /// When omitted, inherits rate_limit_per_second.
+    #[arg(long)]
+    pre_auth_rate_limit_per_second: Option<u64>,
+
+    /// Pre-auth rate limit: burst size per source.
+    /// When omitted, inherits rate_limit_burst.
+    #[arg(long)]
+    pre_auth_rate_limit_burst: Option<u32>,
 
     /// Log format: "text" or "json" (default "text").
     #[arg(long)]
@@ -298,6 +315,20 @@ pub fn get_env_path_list(key: &str) -> Result<Option<Vec<PathBuf>>> {
     Ok(Some(paths))
 }
 
+/// Parse a comma-separated list of CIDR ranges into typed [`IpNet`] values.
+/// Empty entries are ignored; any structurally invalid CIDR is rejected here at
+/// the config/startup boundary so the core consumer stays fully typed.
+fn parse_cidr_list(raw: &str) -> Result<Vec<IpNet>> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse::<IpNet>()
+                .map_err(|e| anyhow::anyhow!("invalid CIDR '{item}': {e}"))
+        })
+        .collect()
+}
+
 pub fn redact_dsn_for_log(dsn: &str) -> String {
     let Some((scheme, rest)) = dsn.split_once("://") else {
         return dsn.to_string();
@@ -342,6 +373,12 @@ struct ServerSection {
     rate_limit_per_second: Option<u64>,
     #[serde(default)]
     rate_limit_burst: Option<u32>,
+    #[serde(default)]
+    trusted_proxy_cidrs: Vec<String>,
+    #[serde(default)]
+    pre_auth_rate_limit_per_second: Option<u64>,
+    #[serde(default)]
+    pre_auth_rate_limit_burst: Option<u32>,
     #[serde(default)]
     log_format: Option<String>,
     #[serde(default)]
@@ -736,6 +773,40 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or(get_env("FERRUMD_RATE_LIMIT_BURST")?)
         .or_else(|| server.as_ref().and_then(|s| s.rate_limit_burst))
         .unwrap_or(50);
+
+    // Trusted proxy CIDRs: CLI > env > config file > default (empty/trust-none).
+    // Parsed and validated into typed `IpNet` values at this startup boundary.
+    let trusted_proxy_cidrs: Vec<IpNet> = if let Some(cli) = args.trusted_proxy_cidrs.as_deref() {
+        parse_cidr_list(cli)?
+    } else if let Some(env) = get_env::<String>("FERRUMD_TRUSTED_PROXY_CIDRS")? {
+        parse_cidr_list(&env)?
+    } else if let Some(file) = server.as_ref() {
+        file.trusted_proxy_cidrs
+            .iter()
+            .map(|cidr| {
+                cidr.parse::<IpNet>()
+                    .map_err(|e| anyhow::anyhow!("invalid trusted_proxy_cidrs entry '{cidr}': {e}"))
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
+    // Pre-auth rate limits stay optional so that, when omitted, the effective
+    // values inherit `rate_limit_*` (see ServerConfig accessors).
+    let pre_auth_rate_limit_per_second = args
+        .pre_auth_rate_limit_per_second
+        .or(get_env("FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.pre_auth_rate_limit_per_second)
+        });
+
+    let pre_auth_rate_limit_burst = args
+        .pre_auth_rate_limit_burst
+        .or(get_env("FERRUMD_PRE_AUTH_RATE_LIMIT_BURST")?)
+        .or_else(|| server.as_ref().and_then(|s| s.pre_auth_rate_limit_burst));
 
     let write_queue_threshold = args
         .write_queue_threshold
@@ -1376,6 +1447,9 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         store_wal_autocheckpoint,
         rate_limit_per_second,
         rate_limit_burst,
+        trusted_proxy_cidrs,
+        pre_auth_rate_limit_per_second,
+        pre_auth_rate_limit_burst,
         write_queue_threshold,
         pg_max_connections,
         pg_min_idle,

@@ -26,8 +26,11 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_SQLITE_DB_ROOTS` | Comma-separated SQLite database parent roots | `/var/lib/ferrumgate/databases` |
 | `FERRUMD_LOG_FILTER` | Log filter | `info` |
 | `FERRUMD_LOG_FORMAT` | Log format | `json` |
-| `FERRUMD_RATE_LIMIT_PER_SECOND` | Rate limit | `2` |
-| `FERRUMD_RATE_LIMIT_BURST` | Rate limit burst | `50` |
+| `FERRUMD_RATE_LIMIT_PER_SECOND` | Inner authenticated rate limit | `2` |
+| `FERRUMD_RATE_LIMIT_BURST` | Inner authenticated rate limit burst | `50` |
+| `FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND` | Outer pre-auth rate limit (inherits rate limit if unset) | `2` |
+| `FERRUMD_PRE_AUTH_RATE_LIMIT_BURST` | Outer pre-auth burst (inherits rate limit burst if unset) | `50` |
+| `FERRUMD_TRUSTED_PROXY_CIDRS` | Comma-separated CIDRs of trusted immediate peers | `10.0.0.0/8,172.16.0.0/12` |
 | `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND` | Allow non-local bind without TLS | `false` (default) |
 | `FERRUMD_STORE_SYNCHRONOUS` | SQLite synchronous pragma | `NORMAL` |
 | `FERRUMD_STORE_WAL_AUTOCHECKPOINT` | SQLite WAL autocheckpoint pages | `1000` |
@@ -60,6 +63,9 @@ sqlite_db_roots = ["/var/lib/ferrumgate/databases"]
 log_format = "json"
 rate_limit_per_second = 2
 rate_limit_burst = 50
+# trusted_proxy_cidrs = []   # safest default; only peers in these CIDRs may supply X-Real-IP
+# pre_auth_rate_limit_per_second = 2
+# pre_auth_rate_limit_burst = 50
 store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 ```
 
@@ -84,6 +90,7 @@ This config auto-loads if no `--config` is specified and the file exists. **Neve
 - [ ] Set `fs_workdir` / `FERRUMD_FS_WORKDIR` for any non-loopback production-like deployment.
 - [ ] Set Git and SQLite root allowlists before enabling their mutation adapters.
 - [ ] Configure reverse proxy with TLS termination (nginx/Caddy).
+- [ ] If ferrumd sits behind a reverse proxy, configure `trusted_proxy_cidrs` and ensure the proxy sets a single `X-Real-IP` header; otherwise leave it empty to bucket by peer IP.
 - [ ] Set up systemd service with env file.
 - [ ] Enable backup timer/cron.
 - [ ] Configure AlertManager for off-VM alerting.

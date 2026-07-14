@@ -4,6 +4,7 @@ use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
 use ferrum_store::{LifecycleReconciliationReport, StoreFacade};
 use ferrum_sync::RuntimeBridge;
+use ipnet::IpNet;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -438,6 +439,22 @@ pub struct ServerConfig {
     pub rate_limit_per_second: u64,
     /// Rate limit: burst size per IP.
     pub rate_limit_burst: u32,
+    /// CIDR ranges of trusted reverse proxies / load balancers whose single
+    /// `X-Real-IP` header may be honored. `X-Forwarded-For` is ignored.
+    ///
+    /// Parsed and validated at the config/startup boundary into typed
+    /// [`IpNet`] values so the core consumer never deals with raw strings.
+    /// Defaults to empty (trust-none): no proxy headers are honored unless a
+    /// range is explicitly configured. Universal CIDRs (`0.0.0.0/0`, `::/0`)
+    /// are rejected because they would silently trust every client.
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+    /// Optional pre-auth (unauthenticated) rate limit: sustained requests per
+    /// second per source. When `None`, inherits `rate_limit_per_second`.
+    /// `Some(0)` is rejected; the pre-auth limit can never be disabled.
+    pub pre_auth_rate_limit_per_second: Option<u64>,
+    /// Optional pre-auth (unauthenticated) rate limit: burst size per source.
+    /// When `None`, inherits `rate_limit_burst`. `Some(0)` is rejected.
+    pub pre_auth_rate_limit_burst: Option<u32>,
     /// Write queue depth threshold for deep readiness probe.
     /// Valid range: 1..=10000. Default: 100.
     pub write_queue_threshold: u64,
@@ -593,6 +610,12 @@ impl std::fmt::Debug for ServerConfig {
         d.field("store_wal_autocheckpoint", &self.store_wal_autocheckpoint);
         d.field("rate_limit_per_second", &self.rate_limit_per_second);
         d.field("rate_limit_burst", &self.rate_limit_burst);
+        d.field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs);
+        d.field(
+            "pre_auth_rate_limit_per_second",
+            &self.pre_auth_rate_limit_per_second,
+        );
+        d.field("pre_auth_rate_limit_burst", &self.pre_auth_rate_limit_burst);
         d.field("write_queue_threshold", &self.write_queue_threshold);
         d.field("pg_max_connections", &self.pg_max_connections);
         d.field("pg_min_idle", &self.pg_min_idle);
@@ -706,6 +729,9 @@ impl Default for ServerConfig {
             store_wal_autocheckpoint: None,
             rate_limit_per_second: 2,
             rate_limit_burst: 50,
+            trusted_proxy_cidrs: Vec::new(),
+            pre_auth_rate_limit_per_second: None,
+            pre_auth_rate_limit_burst: None,
             write_queue_threshold: 100,
             pg_max_connections: 10,
             pg_min_idle: 2,
@@ -900,6 +926,35 @@ impl ServerConfig {
             return Err("rate_limit_burst must be at most 10000".to_string());
         }
 
+        // Validate trusted proxy CIDRs. Universal CIDRs (`0.0.0.0/0`, `::/0`)
+        // would match every client address and therefore silently trust any
+        // `X-Forwarded-For` / `X-Real-IP` header, so they are rejected. Any
+        // structurally invalid CIDR is already rejected at the parse boundary.
+        for cidr in &self.trusted_proxy_cidrs {
+            if cidr.prefix_len() == 0 {
+                return Err(format!(
+                    "trusted_proxy_cidrs must not contain a universal CIDR that matches all addresses: {cidr}"
+                ));
+            }
+        }
+
+        // Validate pre-auth rate limits when explicitly configured. When left
+        // unset they inherit `rate_limit_*` (already validated above), so the
+        // pre-auth limit is always enabled and can never be disabled.
+        if let Some(per_second) = self.pre_auth_rate_limit_per_second {
+            if per_second == 0 {
+                return Err("pre_auth_rate_limit_per_second must be at least 1".to_string());
+            }
+        }
+        if let Some(burst) = self.pre_auth_rate_limit_burst {
+            if burst == 0 {
+                return Err("pre_auth_rate_limit_burst must be at least 1".to_string());
+            }
+            if burst > 10_000 {
+                return Err("pre_auth_rate_limit_burst must be at most 10000".to_string());
+            }
+        }
+
         // Validate write_queue_threshold range
         if !(1..=10000).contains(&self.write_queue_threshold) {
             return Err(format!(
@@ -1060,6 +1115,22 @@ impl ServerConfig {
         }
 
         Ok(())
+    }
+
+    /// Effective pre-auth (unauthenticated) sustained rate limit in requests
+    /// per second. Falls back to the authenticated `rate_limit_per_second`
+    /// when no explicit pre-auth value is configured.
+    pub fn effective_pre_auth_rate_limit_per_second(&self) -> u64 {
+        self.pre_auth_rate_limit_per_second
+            .unwrap_or(self.rate_limit_per_second)
+    }
+
+    /// Effective pre-auth (unauthenticated) burst size. Falls back to the
+    /// authenticated `rate_limit_burst` when no explicit pre-auth value is
+    /// configured.
+    pub fn effective_pre_auth_rate_limit_burst(&self) -> u32 {
+        self.pre_auth_rate_limit_burst
+            .unwrap_or(self.rate_limit_burst)
     }
 }
 

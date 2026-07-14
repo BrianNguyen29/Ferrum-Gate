@@ -20,19 +20,21 @@ use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{InMemoryNonceCache, SqliteStore, StoreFacade};
 use ferrum_sync::RuntimeBridge;
 use std::net::SocketAddr;
+#[cfg(any(test, feature = "test-utils"))]
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 use tower::ServiceBuilder;
-
-use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
+use tower_governor::GovernorLayer;
 
 use crate::auth::auth_middleware;
 use crate::behavioral::build_profiler;
+use crate::governor_config;
 #[cfg(test)]
 use crate::metrics::GovernanceRoute;
 use crate::metrics::Metrics;
-use crate::rate_limit::PrincipalOrIpKeyExtractor;
+use crate::rate_limit::{AuthActorIpKeyExtractor, ResolvedIpKeyExtractor, resolve_client_ip};
 use crate::state::AppState;
 use crate::timeout_reconciler::{approval_timeout_reconciler, quarantine_timeout_reconciler};
 use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
@@ -153,42 +155,79 @@ pub async fn run_http_server(
         None
     };
 
-    let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(PrincipalOrIpKeyExtractor)
-        .per_second(config.rate_limit_per_second)
-        .burst_size(config.rate_limit_burst)
-        .finish()
-        .unwrap();
+    let outer_governor_conf = governor_config!(
+        ResolvedIpKeyExtractor,
+        config.effective_pre_auth_rate_limit_per_second(),
+        config.effective_pre_auth_rate_limit_burst(),
+    );
+    let outer_limiter = outer_governor_conf.limiter().clone();
+
+    let inner_layer_and_limiter = if config.auth_mode == AuthMode::Scoped
+        || config.auth_mode == AuthMode::Oidc
+        || config.auth_mode == AuthMode::Agent
+    {
+        let conf = governor_config!(
+            AuthActorIpKeyExtractor,
+            config.rate_limit_per_second,
+            config.rate_limit_burst,
+        );
+        let limiter = conf.limiter().clone();
+        let layer = GovernorLayer::new(conf);
+        Some((layer, limiter))
+    } else {
+        None
+    };
 
     // Spawn periodic cleanup of rate limiter entries
-    let limiter = governor_conf.limiter().clone();
+    let inner_layer_and_limiter_for_cleanup = inner_layer_and_limiter.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
-            limiter.retain_recent();
+            outer_limiter.retain_recent();
+            if let Some((_, ref limiter)) = inner_layer_and_limiter_for_cleanup {
+                limiter.retain_recent();
+            }
         }
     });
 
-    let workload_router = crate::router::build_workload_router(state.clone())
-        .layer(GovernorLayer::new(governor_conf));
-
-    let mut app = crate::router::build_app_router(state.clone(), workload_router);
-
-    // Add auth layer if auth mode requires authentication
-    if config.auth_mode == AuthMode::Bearer
-        || config.auth_mode == AuthMode::Scoped
-        || config.auth_mode == AuthMode::Oidc
-        || config.auth_mode == AuthMode::Agent
-    {
-        let auth_layer = ServiceBuilder::new()
+    let auth_layer = || {
+        ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 auth_middleware,
             ))
-            .into_inner();
-        app = app.layer(auth_layer);
-    }
+            .into_inner()
+    };
+
+    let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
+    let monitoring_router = if config.auth_mode == AuthMode::Disabled {
+        monitoring_router
+    } else {
+        monitoring_router.layer(auth_layer())
+    };
+
+    let workload_router = crate::router::build_workload_router(state.clone());
+    let workload_router = match config.auth_mode {
+        AuthMode::Disabled => workload_router,
+        AuthMode::Bearer => workload_router.layer(auth_layer()),
+        AuthMode::Scoped | AuthMode::Oidc | AuthMode::Agent => {
+            let (inner_layer, _) = inner_layer_and_limiter
+                .as_ref()
+                .expect("inner governor built above");
+            workload_router
+                .layer(inner_layer.clone())
+                .layer(auth_layer())
+        }
+    };
+    let workload_router = workload_router
+        .layer(GovernorLayer::new(outer_governor_conf))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            resolve_client_ip,
+        ));
+
+    let app = monitoring_router.merge(workload_router);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!("ferrumd listening on {}", config.bind_addr);
@@ -286,44 +325,149 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
     router
 }
 
+/// Build a router with dual rate limiting using the provided server config.
+///
+/// This test-only helper mirrors the production composition:
+///   - monitoring routes are outside both governors;
+///   - workload routes get an outer IP-only governor before auth, and an inner
+///     `AuthActor`+IP governor after auth for modes that carry identity;
+///   - disabled/bearer modes do not get the inner governor.
+///
+/// The caller is expected to supply `ConnectInfo` extensions on requests; if
+/// no connect info is provided the resolver fails closed.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn build_router_with_governor_and_config(
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+) -> Router {
+    build_router_with_governor_inner(runtime, server_config, false)
+}
+
 /// Build a router with rate limiting enabled using a custom GovernorConfig.
 /// This is a test-only helper that allows configuring rate limits for integration tests.
 /// For production, rate limiting is applied in `run_http_server` with 2 req/s and burst 50.
 ///
-/// Uses PrincipalOrIpKeyExtractor which supports x-real-ip header for client IP identification
-/// and buckets authenticated requests by principal identity, falling back to IP for
-/// anonymous traffic.  This allows tests to set the IP via header without needing
-/// MockConnectInfo.
+/// Auth is disabled so the router is driven entirely by the outer IP-only governor.
+/// A test-only layer is added that materializes `ConnectInfo` from the `x-real-ip`
+/// header so existing integration tests can continue to vary client IPs without
+/// manually injecting `ConnectInfo` extensions.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn build_router_with_governor(
     runtime: GatewayRuntime,
     per_second: u64,
     burst_size: u32,
 ) -> Router {
-    // Use PrincipalOrIpKeyExtractor to support x-real-ip header and principal-aware
-    // rate limiting in tests.
-    let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(PrincipalOrIpKeyExtractor)
-        .per_second(per_second)
-        .burst_size(burst_size)
-        .finish()
-        .unwrap();
+    let server_config = ServerConfig {
+        auth_mode: AuthMode::Disabled,
+        rate_limit_per_second: per_second,
+        rate_limit_burst: burst_size,
+        ..ServerConfig::default()
+    };
+    build_router_with_governor_inner(runtime, server_config, true)
+}
 
-    let server_config = ServerConfig::default();
+#[cfg(any(test, feature = "test-utils"))]
+fn build_router_with_governor_inner(
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+    add_mock_connect_info: bool,
+) -> Router {
+    let jwks_cache = server_config.oidc_config.as_ref().and_then(|oidc| {
+        oidc.jwks_url
+            .as_ref()
+            .map(|url| Arc::new(OidcJwksCache::new(url.clone(), oidc.jwks_cache_ttl_secs)))
+    });
     let state = Arc::new(AppState {
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
         profiler: build_profiler(&server_config),
-        jwks_cache: None,
+        jwks_cache,
         nonce_cache: Arc::new(InMemoryNonceCache::new(
             server_config.nonce_cache_max_entries,
         )),
     });
 
-    let workload_router = crate::router::build_workload_router(state.clone())
-        .layer(GovernorLayer::new(governor_conf));
-    crate::router::build_app_router(state, workload_router)
+    let outer_conf = governor_config!(
+        ResolvedIpKeyExtractor,
+        server_config.effective_pre_auth_rate_limit_per_second(),
+        server_config.effective_pre_auth_rate_limit_burst(),
+    );
+    let inner_layer = if server_config.auth_mode == AuthMode::Scoped
+        || server_config.auth_mode == AuthMode::Oidc
+        || server_config.auth_mode == AuthMode::Agent
+    {
+        Some(GovernorLayer::new(governor_config!(
+            AuthActorIpKeyExtractor,
+            server_config.rate_limit_per_second,
+            server_config.rate_limit_burst,
+        )))
+    } else {
+        None
+    };
+
+    let auth_layer = || {
+        ServiceBuilder::new()
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ))
+            .into_inner()
+    };
+
+    let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
+    let monitoring_router = if server_config.auth_mode == AuthMode::Disabled {
+        monitoring_router
+    } else {
+        monitoring_router.layer(auth_layer())
+    };
+
+    let workload_router = crate::router::build_workload_router(state.clone());
+    let workload_router = match server_config.auth_mode {
+        AuthMode::Disabled => workload_router,
+        AuthMode::Bearer => workload_router.layer(auth_layer()),
+        AuthMode::Scoped | AuthMode::Oidc | AuthMode::Agent => {
+            let inner_layer = inner_layer.expect("inner governor layer built above");
+            workload_router.layer(inner_layer).layer(auth_layer())
+        }
+    };
+    let mut workload_router = workload_router.layer(GovernorLayer::new(outer_conf)).layer(
+        axum::middleware::from_fn_with_state(state.clone(), resolve_client_ip),
+    );
+
+    if add_mock_connect_info {
+        workload_router =
+            workload_router.layer(axum::middleware::from_fn(mock_connect_info_from_x_real_ip));
+    }
+
+    monitoring_router.merge(workload_router)
+}
+
+/// Test-only middleware that synthesizes `ConnectInfo` from the `x-real-ip`
+/// header. This keeps existing integration tests working without requiring them
+/// to manually inject `ConnectInfo` extensions.
+#[cfg(any(test, feature = "test-utils"))]
+async fn mock_connect_info_from_x_real_ip(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::extract::connect_info::ConnectInfo;
+    if request
+        .extensions()
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .is_none()
+    {
+        let ip = request
+            .headers()
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<IpAddr>().ok())
+            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(std::net::SocketAddr::new(ip, 0)));
+    }
+    next.run(request).await
 }
 
 /// Deterministic lookup hash: blake3(raw_token_value).

@@ -132,13 +132,24 @@ FerrumGate does not terminate TLS. Deploy behind a reverse proxy.
 
 ### Caddy example
 
+ferrumd ignores `X-Forwarded-For`; only a single `X-Real-IP` header from a
+trusted immediate peer is honored. Make sure `trusted_proxy_cidrs` includes the
+Caddy peer IP. Use the `{remote_host}` placeholder so the header contains a bare
+IP address; `{remote}` would include a port and is rejected.
+
 ```
 ferrumgate.example.com {
-    reverse_proxy localhost:8080
+    reverse_proxy localhost:8080 {
+        header_up X-Real-IP {remote_host}
+    }
 }
 ```
 
 ### nginx example
+
+The proxy's immediate peer IP must be listed in ferrumd's `trusted_proxy_cidrs`.
+ferrumd ignores `X-Forwarded-For`; it only uses a single `X-Real-IP` header
+from a trusted immediate peer.
 
 ```nginx
 server {

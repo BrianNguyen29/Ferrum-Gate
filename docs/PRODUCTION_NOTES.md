@@ -300,15 +300,32 @@ store uses a persistent volume and is restricted to one replica; configure Postg
 enabling autoscaling or multiple replicas.
 
 ## Rate Limiting
-- Built-in via `tower_governor`: 2 req/s sustained, burst of 50
-- Applied per-IP using `GovernorLayer` with `PrincipalOrIpKeyExtractor`
+- Built-in via `tower_governor`: dual-governor token bucket.
+- All workload routes are wrapped by an outer pre-auth IP-only governor.
+  The resolved client IP is used for bucketing.
+- For auth modes `scoped`, `oidc`, and `agent`, an inner `AuthActor`+IP
+  governor is also applied after authentication.
+- Auth modes `disabled` and `bearer` use only the outer governor.
+- Monitoring routes (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`,
+  `/v1/metrics`) bypass both governors.
 - Periodic cleanup of rate limiter entries (every 60s)
 
 ### Trust model
-- Authenticated requests are bucketed by a principal identifier (agent id or a hash of the `Authorization` header) combined with IP; anonymous requests are bucketed by IP alone.
-- The principal component depends on the auth middleware running *before* the rate limiter so that credentials have already been validated. The current middleware order applies the `GovernorLayer` to the workload router and then wraps the merged app with the auth layer, so auth runs first.
-- The IP component uses `SmartIpKeyExtractor`, which trusts `X-Real-IP` and `X-Forwarded-For` when present. Production deployments must place `ferrumd` behind a reverse proxy or load balancer that overwrites these headers to the real client address; otherwise a client can pick its own rate-limit bucket by sending an arbitrary header.
-- See `configs/examples/nginx-ferrumgate.conf` for an example nginx configuration that sets `X-Real-IP` and `X-Forwarded-For`.
+- `trusted_proxy_cidrs` defaults to `[]` (trust-none). This is the safest
+  default and the recommended starting point.
+- Only an immediate peer whose IP falls inside a configured CIDR may
+  supply a single `X-Real-IP` header. Malformed, multiple, or missing
+  values fall back to the transport peer IP.
+- `X-Forwarded-For` is ignored entirely.
+- Adding or removing a CIDR is a config change; removing `trusted_proxy_cidrs`
+  or setting it to `[]` safely reverts to peer-IP bucketing.
+- Universal CIDRs (`0.0.0.0/0`, `::/0`) are rejected at startup.
+
+### Pre-auth limits
+- The outer governor uses the `pre_auth_rate_limit_*` values when set.
+- When omitted, the outer governor inherits the `rate_limit_*` values
+  (2 req/s, burst 50 by default).
+- The pre-auth governor cannot be disabled; set to at least 1/1.
 
 ## Capability TTL
 - Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)

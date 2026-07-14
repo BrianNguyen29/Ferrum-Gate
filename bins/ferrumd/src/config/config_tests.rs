@@ -20,6 +20,9 @@ fn clear_test_env() {
         "FERRUMD_LOG_FILTER",
         "FERRUMD_RATE_LIMIT_PER_SECOND",
         "FERRUMD_RATE_LIMIT_BURST",
+        "FERRUMD_TRUSTED_PROXY_CIDRS",
+        "FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND",
+        "FERRUMD_PRE_AUTH_RATE_LIMIT_BURST",
         "FERRUMD_LOG_FORMAT",
         "FERRUMD_WRITE_QUEUE_THRESHOLD",
         "FERRUMD_PG_MAX_CONNECTIONS",
@@ -5418,4 +5421,437 @@ live = false
 
     let _ = fs::remove_file(path);
     clear_test_env();
+}
+
+// === trusted_proxy_cidrs tests ===
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_defaults_to_trust_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(
+        config.trusted_proxy_cidrs.is_empty(),
+        "trusted_proxy_cidrs must default to empty (trust-none)"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["10.0.0.0/8", "192.168.0.0/16", "2001:db8::/32"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.trusted_proxy_cidrs.len(), 3);
+    assert_eq!(config.trusted_proxy_cidrs[0].to_string(), "10.0.0.0/8");
+    assert_eq!(config.trusted_proxy_cidrs[1].to_string(), "192.168.0.0/16");
+    assert_eq!(config.trusted_proxy_cidrs[2].to_string(), "2001:db8::/32");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_cli_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["10.0.0.0/8"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        trusted_proxy_cidrs: Some("172.16.0.0/12, 100.64.0.0/10".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.trusted_proxy_cidrs.len(), 2);
+    assert_eq!(config.trusted_proxy_cidrs[0].to_string(), "172.16.0.0/12");
+    assert_eq!(config.trusted_proxy_cidrs[1].to_string(), "100.64.0.0/10");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["10.0.0.0/8"]
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_TRUSTED_PROXY_CIDRS", "192.0.2.0/24");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.trusted_proxy_cidrs.len(), 1);
+    assert_eq!(config.trusted_proxy_cidrs[0].to_string(), "192.0.2.0/24");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_universal_ipv4_trusted_proxy_cidr() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["0.0.0.0/0"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("universal CIDR"),
+        "expected universal CIDR rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_universal_ipv6_trusted_proxy_cidr() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["::/0"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("universal CIDR"),
+        "expected universal CIDR rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_trusted_proxy_cidr() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["not-a-cidr"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid trusted_proxy_cidrs entry"),
+        "expected invalid CIDR rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// === pre-auth rate limit tests ===
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_inherits_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, None);
+    assert_eq!(config.pre_auth_rate_limit_burst, None);
+    // Backwards-compatible: effective pre-auth values equal the inner defaults.
+    assert_eq!(config.effective_pre_auth_rate_limit_per_second(), 2);
+    assert_eq!(config.effective_pre_auth_rate_limit_burst(), 50);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_inherits_custom_inner() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_per_second = 7
+rate_limit_burst = 70
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, None);
+    assert_eq!(config.pre_auth_rate_limit_burst, None);
+    assert_eq!(config.effective_pre_auth_rate_limit_per_second(), 7);
+    assert_eq!(config.effective_pre_auth_rate_limit_burst(), 70);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 3
+pre_auth_rate_limit_burst = 25
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, Some(3));
+    assert_eq!(config.pre_auth_rate_limit_burst, Some(25));
+    assert_eq!(config.effective_pre_auth_rate_limit_per_second(), 3);
+    assert_eq!(config.effective_pre_auth_rate_limit_burst(), 25);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_cli_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 3
+pre_auth_rate_limit_burst = 25
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        pre_auth_rate_limit_per_second: Some(9),
+        pre_auth_rate_limit_burst: Some(90),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, Some(9));
+    assert_eq!(config.pre_auth_rate_limit_burst, Some(90));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 3
+pre_auth_rate_limit_burst = 25
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND", "11");
+        std::env::set_var("FERRUMD_PRE_AUTH_RATE_LIMIT_BURST", "110");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, Some(11));
+    assert_eq!(config.pre_auth_rate_limit_burst, Some(110));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_zero_pre_auth_rate_limit_per_second() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("pre_auth_rate_limit_per_second must be at least 1"),
+        "expected zero pre-auth per-second rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_zero_pre_auth_rate_limit_burst() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_burst = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("pre_auth_rate_limit_burst must be at least 1"),
+        "expected zero pre-auth burst rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_pre_auth_rate_limit_burst_too_large() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_burst = 20000
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("pre_auth_rate_limit_burst must be at most 10000"),
+        "expected pre-auth burst upper-bound rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
 }
