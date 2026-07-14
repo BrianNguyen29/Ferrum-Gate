@@ -76,6 +76,14 @@ fn build_nonce_cache(
     }
 }
 
+fn http_egress_enabled(config: &ferrum_gateway::ServerConfig) -> bool {
+    config
+        .http_egress
+        .as_ref()
+        .map(|c| !c.is_empty())
+        .unwrap_or(false)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -151,7 +159,20 @@ async fn main() -> Result<()> {
              set FERRUMD_FS_WORKDIR or server.fs_workdir to enable bounded filesystem mutations"
         );
     }
-    register_http_adapter(&mut registry);
+    if http_egress_enabled(&config) {
+        let http_egress = config.http_egress.as_ref().expect("checked above");
+        register_http_adapter(&mut registry, http_egress)
+            .map_err(|e| anyhow::anyhow!("failed to register HTTP adapter: {e}"))?;
+        tracing::info!(
+            "HTTP adapter registered for allowed hosts: {:?}",
+            http_egress.allowed_hosts
+        );
+    } else {
+        tracing::warn!(
+            "HTTP adapter not registered because http_egress.allowed_hosts is empty; \
+             set FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS or server.http_egress.allowed_hosts to enable bounded HTTP mutations"
+        );
+    }
     let sqlite_adapter_enabled = !config.sqlite_db_roots.is_empty();
     if sqlite_adapter_enabled {
         for root in &config.sqlite_db_roots {
@@ -231,7 +252,9 @@ async fn main() -> Result<()> {
     if git_enabled {
         rollback_service.register_planner(Arc::new(PlannableGitAdapter));
     }
-    rollback_service.register_planner(Arc::new(PlannableHttpAdapter));
+    if http_egress_enabled(&config) {
+        rollback_service.register_planner(Arc::new(PlannableHttpAdapter));
+    }
     #[cfg(feature = "s3")]
     {
         if let Some(ref s3_cfg) = config.s3_config {
@@ -425,6 +448,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrum_adapter_http::HttpEgressConfig;
 
     #[tokio::test]
     async fn test_startup_reconciler_is_idempotent_without_pending_records() {
@@ -441,5 +465,22 @@ mod tests {
 
         assert_eq!(first, LifecycleReconciliationReport::default());
         assert_eq!(second, LifecycleReconciliationReport::default());
+    }
+
+    #[test]
+    fn test_http_egress_enabled_requires_non_empty_config() {
+        let mut config = ferrum_gateway::ServerConfig::default();
+
+        // Absent config -> disabled
+        assert!(!http_egress_enabled(&config));
+
+        // Present but empty -> disabled (not merely Some)
+        config.http_egress = Some(HttpEgressConfig::default());
+        assert!(!http_egress_enabled(&config));
+
+        // Non-empty allowed_hosts -> enabled
+        config.http_egress =
+            Some(HttpEgressConfig::from_hosts(vec!["example.com".to_string()]).unwrap());
+        assert!(http_egress_enabled(&config));
     }
 }

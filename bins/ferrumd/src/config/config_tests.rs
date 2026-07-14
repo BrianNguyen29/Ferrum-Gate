@@ -85,6 +85,7 @@ fn clear_test_env() {
         "FERRUMD_GCS_PROJECT_ID",
         "FERRUMD_GCS_CREDENTIALS_PATH",
         "FERRUMD_GCS_LIVE",
+        "FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -5850,6 +5851,251 @@ pre_auth_rate_limit_burst = 20000
             .to_string()
             .contains("pre_auth_rate_limit_burst must be at most 10000"),
         "expected pre-auth burst upper-bound rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_absent_is_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.http_egress.is_none());
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com", "api.example.com"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let http_egress = config.http_egress.expect("http_egress should be present");
+    assert_eq!(
+        http_egress.allowed_hosts,
+        vec!["example.com".to_string(), "api.example.com".to_string()]
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com"]
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS",
+            "env.example.com,other.com",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let http_egress = config.http_egress.expect("http_egress should be present");
+    assert_eq!(
+        http_egress.allowed_hosts,
+        vec!["env.example.com".to_string(), "other.com".to_string()]
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_http_egress_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS", "env.example.com");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        http_egress_allowed_hosts: Some("cli.example.com".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let http_egress = config.http_egress.expect("http_egress should be present");
+    assert_eq!(
+        http_egress.allowed_hosts,
+        vec!["cli.example.com".to_string()]
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_http_egress_empty_env_disables() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com"]
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS", "   ");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.http_egress.is_none());
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_http_egress_rejects_ip_literal() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["127.0.0.1"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("IP address"),
+        "expected IP address rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_rejects_wildcard() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["*.example.com"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("wildcard"),
+        "expected wildcard rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_rejects_port() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com:8080"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("port"),
+        "expected port rejection, got: {}",
         error
     );
 

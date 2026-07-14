@@ -59,6 +59,7 @@ ferrum-graph = { path = "../ferrum-graph" }
 ferrum-sync = { path = "../ferrum-sync" }
 ferrum-firewall = { path = "../ferrum-firewall" }
 ferrum-adapter-s3 = { path = "../ferrum-adapter-s3" }
+ferrum-adapter-http = { path = "../ferrum-adapter-http" }
 ferrum-adapter-gcs = { path = "../ferrum-adapter-gcs", optional = true }
 ferrum-audit-bundle = { path = "../ferrum-audit-bundle" }
 uuid.workspace = true

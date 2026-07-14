@@ -1,3 +1,4 @@
+use ferrum_adapter_http::HttpEgressConfig;
 use ferrum_cap::CapabilityService;
 use ferrum_firewall::TaintScoringFirewall;
 use ferrum_pdp::PdpEngine;
@@ -479,6 +480,8 @@ pub struct ServerConfig {
     pub git_repo_roots: Vec<PathBuf>,
     /// Parent roots under which SQLite database files may be mutated.
     pub sqlite_db_roots: Vec<PathBuf>,
+    /// HTTP egress configuration. When present and non-empty, enables the HTTP adapter.
+    pub http_egress: Option<HttpEgressConfig>,
     /// S3 adapter configuration. When present, enables the S3 adapter.
     #[cfg(feature = "s3")]
     pub s3_config: Option<ferrum_adapter_s3::S3Config>,
@@ -628,6 +631,7 @@ impl std::fmt::Debug for ServerConfig {
         d.field("fs_workdir", &self.fs_workdir);
         d.field("git_repo_roots", &self.git_repo_roots);
         d.field("sqlite_db_roots", &self.sqlite_db_roots);
+        d.field("http_egress", &self.http_egress);
         #[cfg(feature = "s3")]
         d.field("s3_config", &self.s3_config);
         #[cfg(feature = "gcs")]
@@ -741,6 +745,7 @@ impl Default for ServerConfig {
             fs_workdir: None,
             git_repo_roots: Vec::new(),
             sqlite_db_roots: Vec::new(),
+            http_egress: None,
             #[cfg(feature = "s3")]
             s3_config: None,
             #[cfg(feature = "gcs")]
@@ -872,6 +877,11 @@ impl ServerConfig {
         }
         if self.sqlite_db_roots.iter().any(|root| !root.is_absolute()) {
             return Err("all sqlite_db_roots must be absolute paths".to_string());
+        }
+        if let Some(http_egress) = &self.http_egress {
+            http_egress
+                .validate()
+                .map_err(|e| format!("invalid http_egress.allowed_hosts: {e}"))?;
         }
 
         if production_like && !self.lifecycle_reconciliation_enabled {

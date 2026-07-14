@@ -45,6 +45,13 @@ fs_workdir = "/var/lib/ferrumgate/workdir"
 git_repo_roots = ["/var/lib/ferrumgate/repos"]
 sqlite_db_roots = ["/var/lib/ferrumgate"]
 
+# HTTP egress adapter (optional; disabled when absent or empty).
+# Only exact DNS host names are permitted; IP literals, wildcards, ports,
+# and suffix matches are rejected. The adapter and planner are registered only
+# when allowed_hosts is non-empty.
+# [server.http_egress]
+# allowed_hosts = ["api.example.com"]
+
 # Log filter (info, debug, warn, error)
 log_filter = "info"
 

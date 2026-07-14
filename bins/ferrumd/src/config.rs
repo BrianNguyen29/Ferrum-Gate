@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 #[cfg(feature = "gcs")]
 use ferrum_adapter_gcs::GcsConfig;
+use ferrum_adapter_http::HttpEgressConfig;
 #[cfg(feature = "s3")]
 use ferrum_adapter_s3::S3Config;
 use ferrum_gateway::{AuthMode, ServerConfig};
@@ -280,6 +281,11 @@ pub struct Args {
     #[arg(long)]
     audit_worm_sink_secret_access_key: Option<String>,
 
+    /// Comma-separated list of exact allowed HTTP egress host names.
+    /// When empty or omitted, the HTTP adapter and planner are not registered.
+    #[arg(long)]
+    http_egress_allowed_hosts: Option<String>,
+
     /// Enable live GCS SDK calls for the GCS adapter (default: false).
     #[arg(long)]
     gcs_live: bool,
@@ -326,6 +332,17 @@ fn parse_cidr_list(raw: &str) -> Result<Vec<IpNet>> {
             item.parse::<IpNet>()
                 .map_err(|e| anyhow::anyhow!("invalid CIDR '{item}': {e}"))
         })
+        .collect()
+}
+
+fn parse_allowed_hosts(raw: &str) -> Result<Vec<String>> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| Ok(item.to_string()))
         .collect()
 }
 
@@ -461,12 +478,20 @@ struct ServerSection {
     #[cfg(feature = "gcs")]
     #[serde(default)]
     gcs_config: Option<GcsConfigSection>,
+    #[serde(default)]
+    http_egress: Option<HttpEgressSection>,
     #[cfg(feature = "worm-sink")]
     #[serde(default)]
     audit_worm_sink_enabled: Option<bool>,
     #[cfg(feature = "worm-sink")]
     #[serde(default)]
     audit_worm_sink: Option<WormSinkSection>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HttpEgressSection {
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
 }
 
 #[cfg(feature = "worm-sink")]
@@ -1190,6 +1215,26 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.sqlite_db_roots.clone()))
         .unwrap_or_default();
 
+    let http_egress_allowed_hosts = if let Some(cli) = args.http_egress_allowed_hosts.as_deref() {
+        Some(parse_allowed_hosts(cli)?)
+    } else if let Some(env) = get_env::<String>("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS")? {
+        let hosts = parse_allowed_hosts(&env)?;
+        if hosts.is_empty() { None } else { Some(hosts) }
+    } else if let Some(file) = server.as_ref().and_then(|s| s.http_egress.as_ref()) {
+        let hosts = file.allowed_hosts.clone();
+        if hosts.is_empty() { None } else { Some(hosts) }
+    } else {
+        None
+    };
+
+    let http_egress = if let Some(hosts) = http_egress_allowed_hosts {
+        let cfg = HttpEgressConfig::from_hosts(hosts)
+            .map_err(|e| anyhow::anyhow!("invalid http_egress.allowed_hosts: {e}"))?;
+        if cfg.is_empty() { None } else { Some(cfg) }
+    } else {
+        None
+    };
+
     #[cfg(feature = "s3")]
     let s3_config = {
         let file_s3 = server.as_ref().and_then(|s| s.s3_config.as_ref());
@@ -1459,6 +1504,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         fs_workdir,
         git_repo_roots,
         sqlite_db_roots,
+        http_egress,
         #[cfg(feature = "s3")]
         s3_config,
         #[cfg(feature = "gcs")]
