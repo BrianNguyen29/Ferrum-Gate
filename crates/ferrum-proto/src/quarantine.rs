@@ -17,6 +17,8 @@ pub struct QuarantineHold {
     pub resolved_by: Option<ActorRef>,
     pub resolution_reason: Option<String>,
     pub metadata: JsonMap,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_actor_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

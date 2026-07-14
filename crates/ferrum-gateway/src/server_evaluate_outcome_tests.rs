@@ -47,6 +47,7 @@ async fn test_evaluate_outcome_endpoint_aligned() {
         status: IntentStatus::Active,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     };
     runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -66,6 +67,7 @@ async fn test_evaluate_outcome_endpoint_aligned() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -112,6 +114,7 @@ async fn test_evaluate_outcome_endpoint_aligned() {
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     runtime.store.executions().insert(&record).await.unwrap();
 
@@ -195,6 +198,7 @@ async fn test_evaluate_outcome_endpoint_forbidden() {
         status: IntentStatus::Active,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     };
     runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -214,6 +218,7 @@ async fn test_evaluate_outcome_endpoint_forbidden() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -260,6 +265,7 @@ async fn test_evaluate_outcome_endpoint_forbidden() {
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     runtime.store.executions().insert(&record).await.unwrap();
 
@@ -368,6 +374,7 @@ async fn test_evaluate_outcome_id_mismatch() {
         status: IntentStatus::Active,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     };
     runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -387,6 +394,7 @@ async fn test_evaluate_outcome_id_mismatch() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -433,6 +441,7 @@ async fn test_evaluate_outcome_id_mismatch() {
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     runtime.store.executions().insert(&record).await.unwrap();
 

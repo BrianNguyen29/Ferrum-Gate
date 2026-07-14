@@ -869,6 +869,7 @@ async fn run_execution_pipeline_scenario(
                         taint_inputs: vec![],
                         metadata: JsonMap::new(),
                         created_at: Utc::now(),
+                                            owner_actor_id: None,
                     };
 
                     let mut req = client
@@ -1204,6 +1205,7 @@ async fn run_capability_scenario(
                         taint_inputs: vec![],
                         metadata: JsonMap::new(),
                         created_at: Utc::now(),
+                                            owner_actor_id: None,
                     };
 
                     let mut req = client
@@ -1614,6 +1616,7 @@ async fn run_mixed_scenario(
                                 taint_inputs: vec![],
                                 metadata: JsonMap::new(),
                                 created_at: Utc::now(),
+                                owner_actor_id: None,
                             };
 
                             let mut req = client

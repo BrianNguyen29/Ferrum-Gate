@@ -42,6 +42,8 @@ pub struct ActionProposal {
     pub taint_inputs: Vec<String>,
     pub metadata: JsonMap,
     pub created_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_actor_id: Option<String>,
 }
 
 /// Explicit adapter/action binding for proposals whose side effects cannot be
@@ -188,6 +190,8 @@ pub struct ExecutionRecord {
     pub finished_at: Option<Timestamp>,
     pub result_digest: Option<String>,
     pub metadata: JsonMap,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_actor_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -238,6 +242,7 @@ mod tests {
             taint_inputs: vec!["user-input".to_string()],
             metadata: serde_json::from_value(serde_json::json!({"key": "value"})).unwrap(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 

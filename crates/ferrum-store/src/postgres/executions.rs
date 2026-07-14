@@ -29,8 +29,8 @@ impl ExecutionRepo for PostgresExecutionRepo {
         sqlx::query(
             "INSERT INTO executions (
                 execution_id, intent_id, proposal_id, capability_id, rollback_contract_id,
-                decision, state, started_at, finished_at, result_digest, raw_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                decision, state, started_at, finished_at, result_digest, owner_actor_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(execution.execution_id.to_string())
         .bind(execution.intent_id.to_string())
@@ -42,6 +42,7 @@ impl ExecutionRepo for PostgresExecutionRepo {
         .bind(rfc3339_utc(execution.started_at))
         .bind(opt_rfc3339_utc(execution.finished_at))
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -67,7 +68,8 @@ impl ExecutionRepo for PostgresExecutionRepo {
                  state = $4,
                  finished_at = $5,
                  result_digest = $6,
-                 raw_json = $7
+                 owner_actor_id = $7,
+                 raw_json = $8
              WHERE execution_id = $1",
         )
         .bind(execution.execution_id.to_string())
@@ -76,6 +78,7 @@ impl ExecutionRepo for PostgresExecutionRepo {
         .bind(enum_text(&execution.state)?)
         .bind(opt_rfc3339_utc(execution.finished_at))
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;

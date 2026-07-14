@@ -46,6 +46,7 @@ impl PostgresIntentRepo {
                         enum_text(&intent.default_rollback_class)?,
                         intent.created_at,
                         intent.expires_at,
+                        intent.owner_actor_id.as_ref(),
                         to_json(intent)?,
                     ))
                 })
@@ -54,7 +55,7 @@ impl PostgresIntentRepo {
             let mut builder = sqlx::QueryBuilder::new(
                 "INSERT INTO intents (
                     intent_id, principal_id, normalized_goal, status, risk_tier, approval_mode,
-                    default_rollback_class, created_at, expires_at, raw_json
+                    default_rollback_class, created_at, expires_at, owner_actor_id, raw_json
                 ) ",
             );
 
@@ -68,7 +69,8 @@ impl PostgresIntentRepo {
                     .push_bind(&row.6)
                     .push_bind(row.7)
                     .push_bind(row.8)
-                    .push_bind(&row.9);
+                    .push_bind(row.9)
+                    .push_bind(&row.10);
             });
 
             builder.build().execute(&self.pool).await?;
@@ -85,8 +87,8 @@ impl IntentRepo for PostgresIntentRepo {
         sqlx::query(
             "INSERT INTO intents (
                 intent_id, principal_id, normalized_goal, status, risk_tier, approval_mode,
-                default_rollback_class, created_at, expires_at, raw_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                default_rollback_class, created_at, expires_at, owner_actor_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(intent.intent_id.to_string())
         .bind(intent.principal_id.to_string())
@@ -97,6 +99,7 @@ impl IntentRepo for PostgresIntentRepo {
         .bind(enum_text(&intent.default_rollback_class)?)
         .bind(intent.created_at)
         .bind(intent.expires_at)
+        .bind(&intent.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -117,7 +120,8 @@ impl IntentRepo for PostgresIntentRepo {
                  approval_mode = $5,
                  default_rollback_class = $6,
                  expires_at = $7,
-                 raw_json = $8
+                 owner_actor_id = $8,
+                 raw_json = $9
              WHERE intent_id = $1",
         )
         .bind(intent.intent_id.to_string())
@@ -127,6 +131,7 @@ impl IntentRepo for PostgresIntentRepo {
         .bind(enum_text(&intent.approval_mode)?)
         .bind(enum_text(&intent.default_rollback_class)?)
         .bind(intent.expires_at)
+        .bind(&intent.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;

@@ -70,6 +70,7 @@ async fn seed_approval(
             status: IntentStatus::Active,
             created_at: now,
             expires_at: now + Duration::hours(1),
+            owner_actor_id: None,
         })
         .await
         .unwrap();
@@ -88,6 +89,7 @@ async fn seed_approval(
         taint_inputs: Vec::new(),
         metadata: JsonMap::new(),
         created_at: now,
+        owner_actor_id: None,
     };
     let digest = proposal.canonical_action_digest();
     store.proposals().insert(&proposal).await.unwrap();
@@ -110,6 +112,7 @@ async fn seed_approval(
             state,
             created_at: now,
             resolver_evidence_version,
+            owner_actor_id: None,
         })
         .await
         .unwrap();

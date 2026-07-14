@@ -17,7 +17,7 @@
 use async_trait::async_trait;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
 use chrono::{Duration, Utc};
@@ -31,6 +31,7 @@ use ferrum_proto::{
 use ferrum_store::StoreFacade;
 use std::sync::Arc;
 
+use crate::AuthActor;
 use crate::execution::{validate_approval_binding_digest, validate_argument_constraints};
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
@@ -151,10 +152,64 @@ async fn validate_quarantine_hold_for_proposal(
     }
 }
 
+/// Trusted gateway-only mint path: constructs a `CapabilityLease` with the
+/// server-derived owner and persists it through the store capability repository.
+///
+/// The public `CapabilityService::mint` remains ownerless; this helper is the
+/// only place an authenticated owner is bound before the initial insert. Owned
+/// leases are not cached in the in-memory capability service; durable
+/// authorization falls back to the store when the in-memory service misses.
+async fn mint_capability_with_owner(
+    store: &Arc<dyn StoreFacade>,
+    request: CapabilityMintRequest,
+    owner_actor_id: Option<String>,
+) -> Result<CapabilityMintResponse, CapabilityError> {
+    if request.requested_ttl_secs > 300 {
+        return Err(CapabilityError::TtlTooLong);
+    }
+
+    let now = Utc::now();
+    let lease = CapabilityLease {
+        capability_id: CapabilityId::new(),
+        intent_id: request.intent_id,
+        proposal_id: request.proposal_id,
+        tool_binding: request.tool_binding,
+        resource_bindings: request.resource_bindings,
+        argument_constraints: request.argument_constraints,
+        taint_budget: request.taint_budget,
+        approval_binding: request.approval_binding,
+        issued_by: "ferrum-cap".to_string(),
+        policy_bundle_id: PolicyBundleId::new(),
+        tool_manifest_id: None,
+        manifest_hash: None,
+        status: CapabilityStatus::Active,
+        issued_at: now,
+        expires_at: now + Duration::seconds(request.requested_ttl_secs as i64),
+        revoked_at: None,
+        metadata: request.metadata,
+        owner_actor_id,
+    };
+
+    store
+        .capabilities()
+        .insert(&lease)
+        .await
+        .map_err(map_store_error)?;
+
+    Ok(CapabilityMintResponse {
+        lease,
+        warnings: Vec::new(),
+    })
+}
+
 pub(crate) async fn mint_capability(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(request): Json<CapabilityMintRequest>,
 ) -> Result<Json<CapabilityMintResponse>, ApiProblem> {
+    // Server-derived ownership: the authenticated actor is injected only via the
+    // trusted internal mint call. The public HTTP DTO cannot carry an owner.
+    let owner_actor_id = auth_actor.map(|Extension(actor)| actor.actor_id);
     let proposal = match state
         .runtime
         .store
@@ -276,34 +331,17 @@ pub(crate) async fn mint_capability(
         Err(problem) => return governance_err!(state, GovernanceRoute::CapabilitiesMint, problem),
     }
 
-    let response = match state.runtime.cap.mint(request).await {
-        Ok(response) => response,
-        Err(e) => {
-            return governance_err!(
-                state,
-                GovernanceRoute::CapabilitiesMint,
-                ApiProblem::from_capability(e)
-            );
-        }
-    };
-
-    // Backward-compat: only the in-memory service needs the handler to persist
-    // the minted lease. Store-backed services insert atomically during mint.
-    if !state.runtime.cap.is_store_backed() {
-        if let Err(e) = state
-            .runtime
-            .store
-            .capabilities()
-            .insert(&response.lease)
-            .await
-        {
-            return governance_err!(
-                state,
-                GovernanceRoute::CapabilitiesMint,
-                ApiProblem::internal(anyhow::Error::from(e))
-            );
-        }
-    }
+    let response =
+        match mint_capability_with_owner(&state.runtime.store, request, owner_actor_id).await {
+            Ok(response) => response,
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::CapabilitiesMint,
+                    ApiProblem::from_capability(e)
+                );
+            }
+        };
 
     // Emit CapabilityMinted provenance event.
     let cap_event = ProvenanceEvent {
@@ -556,6 +594,7 @@ impl CapabilityService for StoreCapabilityService {
             expires_at: now + Duration::seconds(request.requested_ttl_secs as i64),
             revoked_at: None,
             metadata: request.metadata,
+            owner_actor_id: None,
         };
 
         self.store
@@ -758,6 +797,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 
@@ -776,6 +816,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -1064,6 +1105,7 @@ mod tests {
 #[cfg(test)]
 mod quarantine_hold_tests {
     use super::*;
+    use crate::execution::get_capability_for_authorize;
     use crate::state::{AppState, GatewayRuntime, ServerConfig};
     use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
     use ferrum_store::{SqliteStore, StoreFacade};
@@ -1122,6 +1164,7 @@ mod quarantine_hold_tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -1144,6 +1187,7 @@ mod quarantine_hold_tests {
             taint_inputs: vec![],
             metadata: JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -1180,6 +1224,7 @@ mod quarantine_hold_tests {
             resolved_by: None,
             resolution_reason: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime
             .store
@@ -1323,7 +1368,7 @@ mod quarantine_hold_tests {
         insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
         let state = AppState::test_new(runtime, ServerConfig::default());
         let request = make_mint_request(intent_id, proposal_id);
-        let result = mint_capability(State(Arc::clone(&state)), axum::Json(request)).await;
+        let result = mint_capability(State(Arc::clone(&state)), None, axum::Json(request)).await;
         assert!(
             result.is_ok(),
             "expected mint to succeed for Allowed hold, got {:?}",
@@ -1339,7 +1384,7 @@ mod quarantine_hold_tests {
         insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
         let state = AppState::test_new(runtime, ServerConfig::default());
         let request = make_mint_request(intent_id, proposal_id);
-        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+        let err = mint_capability(State(Arc::clone(&state)), None, axum::Json(request))
             .await
             .unwrap_err();
         assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
@@ -1353,7 +1398,7 @@ mod quarantine_hold_tests {
         insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
         let state = AppState::test_new(runtime, ServerConfig::default());
         let request = make_mint_request(intent_id, proposal_id);
-        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+        let err = mint_capability(State(Arc::clone(&state)), None, axum::Json(request))
             .await
             .unwrap_err();
         assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
@@ -1367,7 +1412,7 @@ mod quarantine_hold_tests {
         insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
         let state = AppState::test_new(runtime, ServerConfig::default());
         let request = make_mint_request(intent_id, proposal_id);
-        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+        let err = mint_capability(State(Arc::clone(&state)), None, axum::Json(request))
             .await
             .unwrap_err();
         assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
@@ -1393,9 +1438,211 @@ mod quarantine_hold_tests {
         insert_quarantine_policy_event(&runtime, proposal_id, intent_id).await;
         let state = AppState::test_new(runtime, ServerConfig::default());
         let request = make_mint_request(intent_id, proposal_id);
-        let err = mint_capability(State(Arc::clone(&state)), axum::Json(request))
+        let err = mint_capability(State(Arc::clone(&state)), None, axum::Json(request))
             .await
             .unwrap_err();
         assert_eq!(err.1, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    async fn insert_allow_policy_event(
+        runtime: &GatewayRuntime,
+        proposal_id: ferrum_proto::ProposalId,
+        intent_id: ferrum_proto::IntentId,
+    ) {
+        let mut metadata = ferrum_proto::JsonMap::new();
+        metadata.insert("decision".to_string(), serde_json::json!("Allow"));
+        let event = ferrum_proto::ProvenanceEvent {
+            event_id: ferrum_proto::EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::PolicyEvaluated,
+            occurred_at: chrono::Utc::now(),
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Gateway,
+                actor_id: "ferrum-gateway".to_string(),
+                display_name: Some("FerrumGate Gateway".to_string()),
+            },
+            object: ferrum_proto::ObjectRef {
+                object_type: ferrum_proto::ObjectType::PolicyBundle,
+                object_id: proposal_id.to_string(),
+                summary: Some("Policy evaluated for proposal".to_string()),
+            },
+            intent_id: Some(intent_id),
+            proposal_id: Some(proposal_id),
+            execution_id: None,
+            capability_id: None,
+            rollback_contract_id: None,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: ferrum_proto::HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata,
+            source_runtime_id: None,
+        };
+        runtime
+            .store
+            .provenance()
+            .append_event(&event)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mint_binds_owner_from_auth_actor() {
+        let runtime = test_runtime().await;
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        runtime
+            .store
+            .intents()
+            .insert(&make_intent(intent_id))
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&make_proposal(proposal_id, intent_id))
+            .await
+            .unwrap();
+        insert_allow_policy_event(&runtime, proposal_id, intent_id).await;
+
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let auth_actor = AuthActor {
+            actor_id: "gateway-user-42".to_string(),
+            source: "test",
+            scopes: vec!["*".to_string()],
+            role: None,
+        };
+        let response = mint_capability(
+            State(Arc::clone(&state)),
+            Some(axum::Extension(auth_actor)),
+            axum::Json(request),
+        )
+        .await
+        .expect("mint should succeed")
+        .0;
+        assert_eq!(
+            response.lease.owner_actor_id,
+            Some("gateway-user-42".to_string()),
+            "gateway must bind the authenticated actor as the capability owner"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mint_persists_owner_to_store_not_memory() {
+        let runtime = test_runtime().await;
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        runtime
+            .store
+            .intents()
+            .insert(&make_intent(intent_id))
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&make_proposal(proposal_id, intent_id))
+            .await
+            .unwrap();
+        insert_allow_policy_event(&runtime, proposal_id, intent_id).await;
+
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let auth_actor = AuthActor {
+            actor_id: "gateway-user-42".to_string(),
+            source: "test",
+            scopes: vec!["*".to_string()],
+            role: None,
+        };
+        let response = mint_capability(
+            State(Arc::clone(&state)),
+            Some(axum::Extension(auth_actor)),
+            axum::Json(request),
+        )
+        .await
+        .expect("mint should succeed")
+        .0;
+
+        let cap_id = response.lease.capability_id;
+        assert_eq!(
+            response.lease.owner_actor_id,
+            Some("gateway-user-42".to_string())
+        );
+
+        let stored = state
+            .runtime
+            .store
+            .capabilities()
+            .get(cap_id)
+            .await
+            .expect("store read should succeed")
+            .expect("store should contain the lease");
+        assert_eq!(
+            stored.owner_actor_id,
+            Some("gateway-user-42".to_string()),
+            "store must persist the authenticated owner"
+        );
+
+        let in_mem = state.runtime.cap.get(cap_id).await;
+        assert!(
+            matches!(in_mem, Err(CapabilityError::NotFound)),
+            "in-memory service must not cache the owned lease: {:?}",
+            in_mem
+        );
+    }
+
+    #[tokio::test]
+    async fn test_durable_fallback_authorization_returns_owned_lease() {
+        let runtime = test_runtime().await;
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        runtime
+            .store
+            .intents()
+            .insert(&make_intent(intent_id))
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&make_proposal(proposal_id, intent_id))
+            .await
+            .unwrap();
+        insert_allow_policy_event(&runtime, proposal_id, intent_id).await;
+
+        let state = AppState::test_new(runtime, ServerConfig::default());
+        let request = make_mint_request(intent_id, proposal_id);
+        let auth_actor = AuthActor {
+            actor_id: "gateway-user-42".to_string(),
+            source: "test",
+            scopes: vec!["*".to_string()],
+            role: None,
+        };
+        let response = mint_capability(
+            State(Arc::clone(&state)),
+            Some(axum::Extension(auth_actor)),
+            axum::Json(request),
+        )
+        .await
+        .expect("mint should succeed")
+        .0;
+
+        let cap_id = response.lease.capability_id;
+        let fresh_cap = Arc::new(ferrum_cap::InMemoryCapabilityService::default())
+            as Arc<dyn CapabilityService>;
+        let lease = get_capability_for_authorize(&fresh_cap, &state.runtime.store, cap_id)
+            .await
+            .expect("durable fallback should find the persisted lease");
+        assert_eq!(
+            lease.owner_actor_id,
+            Some("gateway-user-42".to_string()),
+            "fallback authorization must return the store-owned lease"
+        );
     }
 }

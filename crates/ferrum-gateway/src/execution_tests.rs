@@ -220,6 +220,7 @@ async fn capability_binding_rejects_tool_mismatch() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: Utc::now(),
+        owner_actor_id: None,
     };
     assert!(validate_capability_proposal_binding(&lease, &proposal).is_err());
 }

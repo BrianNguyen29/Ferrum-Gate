@@ -189,6 +189,7 @@ mod tests {
             expires_at: now + chrono::Duration::seconds(expires_in_secs),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 

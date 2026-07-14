@@ -32,6 +32,8 @@ pub struct ApprovalRequest {
     /// serialized JSON when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolver_evidence_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_actor_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

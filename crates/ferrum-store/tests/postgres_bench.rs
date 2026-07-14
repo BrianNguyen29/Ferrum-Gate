@@ -57,6 +57,7 @@ fn make_test_intent(intent_id: IntentId, status: IntentStatus) -> IntentEnvelope
         status,
         created_at: now,
         expires_at: now + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     }
 }
 

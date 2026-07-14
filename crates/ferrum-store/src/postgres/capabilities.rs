@@ -25,8 +25,8 @@ impl CapabilityRepo for PostgresCapabilityRepo {
         sqlx::query(
             "INSERT INTO capabilities (
                 capability_id, intent_id, proposal_id, server_name, tool_name, status,
-                issued_at, expires_at, revoked_at, raw_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                issued_at, expires_at, revoked_at, owner_actor_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(capability.capability_id.to_string())
         .bind(capability.intent_id.to_string())
@@ -37,6 +37,7 @@ impl CapabilityRepo for PostgresCapabilityRepo {
         .bind(capability.issued_at)
         .bind(capability.expires_at)
         .bind(capability.revoked_at)
+        .bind(&capability.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -61,7 +62,8 @@ impl CapabilityRepo for PostgresCapabilityRepo {
                  issued_at = $3,
                  expires_at = $4,
                  revoked_at = $5,
-                 raw_json = $6
+                 owner_actor_id = $6,
+                 raw_json = $7
              WHERE capability_id = $1",
         )
         .bind(capability.capability_id.to_string())
@@ -69,6 +71,7 @@ impl CapabilityRepo for PostgresCapabilityRepo {
         .bind(capability.issued_at)
         .bind(capability.expires_at)
         .bind(capability.revoked_at)
+        .bind(&capability.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;

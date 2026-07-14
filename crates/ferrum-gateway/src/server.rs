@@ -1547,6 +1547,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -1565,6 +1566,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -1597,6 +1599,7 @@ mod tests {
             expires_at: now + chrono::Duration::minutes(5),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime
             .store
@@ -1617,6 +1620,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime.store.executions().insert(&execution).await.unwrap();
 
@@ -3071,6 +3075,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -3087,6 +3092,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -3134,6 +3140,7 @@ mod tests {
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
             resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -3241,6 +3248,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -3257,6 +3265,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -3302,6 +3311,7 @@ mod tests {
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
             resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -3356,6 +3366,7 @@ mod tests {
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
             resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval2).await.unwrap();
 
@@ -3784,6 +3795,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -3800,6 +3812,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -3820,6 +3833,7 @@ mod tests {
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
             resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -3941,6 +3955,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -3957,6 +3972,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -3975,6 +3991,7 @@ mod tests {
             resolved_by: None,
             resolution_reason: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime
             .store
@@ -4070,6 +4087,7 @@ mod tests {
                 status: ferrum_proto::IntentStatus::Active,
                 created_at: now,
                 expires_at: now + chrono::Duration::hours(1),
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4090,6 +4108,7 @@ mod tests {
                 taint_inputs: Vec::new(),
                 metadata: ferrum_proto::JsonMap::new(),
                 created_at: now,
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4208,6 +4227,7 @@ mod tests {
                 resolved_by: None,
                 resolution_reason: None,
                 metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4242,6 +4262,7 @@ mod tests {
                 state: ferrum_proto::ApprovalState::Pending,
                 created_at: chrono::Utc::now(),
                 resolver_evidence_version: None,
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4310,6 +4331,7 @@ mod tests {
                 state: ferrum_proto::ApprovalState::Pending,
                 created_at: chrono::Utc::now(),
                 resolver_evidence_version: None,
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4390,6 +4412,7 @@ mod tests {
                 state: ferrum_proto::ApprovalState::Pending,
                 created_at: chrono::Utc::now(),
                 resolver_evidence_version: None,
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4704,6 +4727,7 @@ mod tests {
                 resolved_by: None,
                 resolution_reason: None,
                 metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4773,6 +4797,7 @@ mod tests {
                 resolved_by: None,
                 resolution_reason: None,
                 metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -4933,6 +4958,7 @@ mod tests {
                 resolved_by: None,
                 resolution_reason: None,
                 metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -5098,6 +5124,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -5117,6 +5144,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -5163,6 +5191,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime.store.executions().insert(&record).await.unwrap();
 
@@ -5498,6 +5527,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicyBundleSimulateRequest {
@@ -5562,6 +5592,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicyBundleSimulateRequest {
@@ -5623,6 +5654,7 @@ rules:
             taint_inputs: vec!["external".to_string()],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicyBundleSimulateRequest {
@@ -5683,6 +5715,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicySimulateRequest {
@@ -5729,6 +5762,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicySimulateRequest {
@@ -11361,6 +11395,7 @@ rules:
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         store.intents().insert(&intent).await.unwrap();
 
@@ -11378,6 +11413,7 @@ rules:
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
         store.proposals().insert(&proposal).await.unwrap();
 
@@ -11399,6 +11435,7 @@ rules:
             state: ferrum_proto::ApprovalState::Pending,
             created_at: now - chrono::Duration::hours(2),
             resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         store.approvals().insert(&approval).await.unwrap();
 

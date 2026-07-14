@@ -35,10 +35,14 @@ pub enum CapabilityError {
 
 #[async_trait]
 pub trait CapabilityService: Send + Sync {
+    /// Public ownerless mint path. The returned lease never carries an
+    /// authenticated owner; ownership is bound only by the trusted gateway
+    /// creation path.
     async fn mint(
         &self,
         request: CapabilityMintRequest,
     ) -> Result<CapabilityMintResponse, CapabilityError>;
+
     async fn get(&self, capability_id: CapabilityId) -> Result<CapabilityLease, CapabilityError>;
     async fn mark_used(
         &self,
@@ -120,6 +124,7 @@ impl CapabilityService for InMemoryCapabilityService {
             expires_at: now + Duration::seconds(request.requested_ttl_secs as i64),
             revoked_at: None,
             metadata: request.metadata,
+            owner_actor_id: None,
         };
 
         self.inner
@@ -256,6 +261,17 @@ mod tests {
             matches!(result, Err(CapabilityError::TtlTooLong)),
             "TTL=302 should be rejected with TtlTooLong, got: {:?}",
             result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mint_produces_ownerless_lease() {
+        let service = InMemoryCapabilityService::default();
+        let request = make_mint_request(300);
+        let response = service.mint(request).await.unwrap();
+        assert_eq!(
+            response.lease.owner_actor_id, None,
+            "public mint must produce an ownerless lease"
         );
     }
 

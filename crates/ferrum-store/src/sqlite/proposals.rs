@@ -43,8 +43,8 @@ impl ProposalRepo for SqliteProposalRepo {
         sqlx::query(
             "INSERT INTO proposals (
                 proposal_id, intent_id, step_index, server_name, tool_name,
-                estimated_risk, requested_rollback_class, created_at, raw_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                estimated_risk, requested_rollback_class, created_at, owner_actor_id, raw_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )
         .bind(proposal.proposal_id.to_string())
         .bind(proposal.intent_id.to_string())
@@ -54,6 +54,7 @@ impl ProposalRepo for SqliteProposalRepo {
         .bind(enum_text(&proposal.estimated_risk)?)
         .bind(enum_text(&proposal.requested_rollback_class)?)
         .bind(proposal.created_at)
+        .bind(&proposal.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;

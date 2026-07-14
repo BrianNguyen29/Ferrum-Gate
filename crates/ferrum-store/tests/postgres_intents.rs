@@ -81,6 +81,7 @@ fn make_test_intent(intent_id: IntentId, status: IntentStatus) -> IntentEnvelope
         status,
         created_at: now,
         expires_at: now + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     }
 }
 
@@ -733,6 +734,7 @@ fn make_test_proposal(
         taint_inputs: vec![],
         metadata: JsonMap::new(),
         created_at: ts_offset(0),
+        owner_actor_id: None,
     }
 }
 
@@ -818,6 +820,7 @@ fn make_test_execution(
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -1332,6 +1335,7 @@ fn make_test_capability(
         expires_at: ts_offset(3600),
         revoked_at: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -1592,6 +1596,7 @@ async fn seed_lifecycle_outbox_graph(store: &PostgresStore) -> (ExecutionRecord,
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
     store.executions().insert(&execution).await.unwrap();
 
@@ -1967,6 +1972,7 @@ async fn postgres_lifecycle_authorization_stores_rfc3339_and_is_stale_visible() 
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
 
     let outbox = LifecycleOutboxRecord::pending(
@@ -2096,6 +2102,7 @@ async fn postgres_record_authorization_rejects_expired_active_capability() {
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
     let outbox = LifecycleOutboxRecord::pending(
         execution_id,
@@ -2396,6 +2403,7 @@ fn make_test_approval(
         state,
         created_at: ts_offset(0),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     }
 }
 

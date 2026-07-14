@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 16);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 17);
     }
 
     #[test]

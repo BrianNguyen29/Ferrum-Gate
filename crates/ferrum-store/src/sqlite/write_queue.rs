@@ -847,6 +847,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
 
         let (reply, _) = oneshot::channel();
@@ -905,6 +906,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
 
         let op = WriteOp::InsertIntent {
@@ -965,6 +967,7 @@ mod tests {
                 status: ferrum_proto::IntentStatus::Active,
                 created_at: chrono::Utc::now(),
                 expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+                owner_actor_id: None,
             };
 
             let (reply, _) = oneshot::channel();
@@ -1040,6 +1043,7 @@ mod tests {
                 status: ferrum_proto::IntentStatus::Active,
                 created_at: now,
                 expires_at: now + chrono::Duration::minutes(15),
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -1059,6 +1063,7 @@ mod tests {
                 taint_inputs: vec![],
                 metadata: JsonMap::new(),
                 created_at: now,
+                owner_actor_id: None,
             })
             .await
             .unwrap();
@@ -1077,6 +1082,7 @@ mod tests {
             resolved_by: None,
             resolution_reason: None,
             metadata: JsonMap::new(),
+            owner_actor_id: None,
         };
 
         let (reply, _) = oneshot::channel();

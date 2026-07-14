@@ -25,8 +25,8 @@ impl ApprovalRepo for PostgresApprovalRepo {
         sqlx::query(
             "INSERT INTO approvals (
                 approval_id, intent_id, proposal_id, execution_id, action_digest,
-                state, expires_at, created_at, raw_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                state, expires_at, created_at, owner_actor_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(approval.approval_id.to_string())
         .bind(approval.intent_id.to_string())
@@ -36,6 +36,7 @@ impl ApprovalRepo for PostgresApprovalRepo {
         .bind(enum_text(&approval.state)?)
         .bind(approval.expires_at.to_rfc3339())
         .bind(approval.created_at.to_rfc3339())
+        .bind(&approval.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -60,7 +61,8 @@ impl ApprovalRepo for PostgresApprovalRepo {
                  action_digest = $3,
                  state = $4,
                  expires_at = $5,
-                 raw_json = $6
+                 owner_actor_id = $6,
+                 raw_json = $7
              WHERE approval_id = $1",
         )
         .bind(approval.approval_id.to_string())
@@ -68,6 +70,7 @@ impl ApprovalRepo for PostgresApprovalRepo {
         .bind(&approval.action_digest)
         .bind(enum_text(&approval.state)?)
         .bind(approval.expires_at.to_rfc3339())
+        .bind(&approval.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;

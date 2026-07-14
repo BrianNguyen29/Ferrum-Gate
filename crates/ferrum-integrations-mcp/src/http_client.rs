@@ -1286,6 +1286,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 

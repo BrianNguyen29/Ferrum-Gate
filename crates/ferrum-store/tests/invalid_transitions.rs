@@ -112,6 +112,7 @@ fn make_capability(
         expires_at: ts_offset(3600),
         revoked_at: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -135,6 +136,7 @@ fn make_execution(
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -161,6 +163,7 @@ fn make_approval(
         state,
         created_at: ts_offset(0),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     }
 }
 

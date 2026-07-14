@@ -362,6 +362,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 

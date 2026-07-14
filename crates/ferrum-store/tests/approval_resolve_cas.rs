@@ -45,6 +45,7 @@ fn make_test_intent(intent_id: IntentId) -> ferrum_proto::IntentEnvelope {
         status: ferrum_proto::IntentStatus::Active,
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     }
 }
 
@@ -66,6 +67,7 @@ fn make_test_proposal(
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     }
 }
 
@@ -93,6 +95,7 @@ fn make_approval(
         state,
         created_at,
         resolver_evidence_version: None,
+        owner_actor_id: None,
     }
 }
 

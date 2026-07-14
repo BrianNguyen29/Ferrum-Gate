@@ -212,6 +212,7 @@ async fn test_single_use_capability_cannot_be_reused_via_gateway() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     let proposal_id = proposal.proposal_id;
 
@@ -424,6 +425,7 @@ async fn test_capability_durable_after_in_memory_state_loss() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     let proposal_id = proposal.proposal_id;
 
@@ -668,6 +670,7 @@ async fn test_authorize_durable_expired_active_capability_returns_expired() {
         expires_at: now - chrono::Duration::seconds(60), // already expired
         revoked_at: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     store
         .capabilities()
@@ -1051,6 +1054,7 @@ async fn compensate_execution_flow() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -1374,6 +1378,7 @@ async fn test_get_execution_returns_rollback_contract_with_fs_first_data() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -1397,6 +1402,7 @@ async fn test_get_execution_returns_rollback_contract_with_fs_first_data() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -1763,6 +1769,7 @@ async fn test_inspect_after_verify_execution_flow() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -1785,6 +1792,7 @@ async fn test_inspect_after_verify_execution_flow() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -2138,6 +2146,7 @@ async fn test_inspect_after_compensate_execution_flow() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -2160,6 +2169,7 @@ async fn test_inspect_after_compensate_execution_flow() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -2456,6 +2466,7 @@ async fn test_high_taint_triggers_quarantine() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -2557,6 +2568,7 @@ async fn test_poisoned_context_taint_at_boundary_69_no_quarantine() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -2649,6 +2661,7 @@ async fn test_poisoned_context_r0_bypasses_taint_check() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -2739,6 +2752,7 @@ async fn test_poisoned_context_taint_at_maximum_100() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -2829,6 +2843,7 @@ async fn test_poisoned_context_r3_requires_approval() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -2919,6 +2934,7 @@ async fn test_poisoned_context_moderate_taint_50_no_quarantine() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -3003,6 +3019,7 @@ async fn test_poisoned_context_trust_attributes_no_bypass() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -3110,6 +3127,7 @@ async fn test_i7_e2e_static_pdp_quarantine_on_high_taint() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
 
     store
@@ -3144,6 +3162,7 @@ async fn test_i7_e2e_static_pdp_quarantine_on_high_taint() {
             serde_json::json!(true),
         )]),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -3248,6 +3267,7 @@ async fn test_scope_mismatch_deny_on_empty_scope_with_mutation() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -3336,6 +3356,7 @@ async fn test_r0_allowed_with_empty_scope() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -3463,6 +3484,7 @@ async fn test_gateway_compile_draft_only_flow() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -3574,6 +3596,7 @@ async fn test_draft_only_intent_cannot_reach_prepare_by_bypassing_evaluate() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -3597,6 +3620,7 @@ async fn test_draft_only_intent_cannot_reach_prepare_by_bypassing_evaluate() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: now,
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -3653,6 +3677,7 @@ async fn test_draft_only_intent_cannot_reach_prepare_by_bypassing_evaluate() {
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     store
         .executions()
@@ -3767,6 +3792,7 @@ async fn test_i5_scope_validation_resource_bindings_exceed_intent_scope() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -3799,6 +3825,7 @@ async fn test_i5_scope_validation_resource_bindings_exceed_intent_scope() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -3949,6 +3976,7 @@ async fn test_i5_scope_validation_resource_bindings_within_intent_scope() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -3981,6 +4009,7 @@ async fn test_i5_scope_validation_resource_bindings_within_intent_scope() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -4451,6 +4480,7 @@ async fn test_i6_valid_binding_succeeds() {
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -4599,6 +4629,7 @@ async fn test_i6_pending_approval_denied() {
         state: ferrum_proto::ApprovalState::Pending, // Not Granted!
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -4758,6 +4789,7 @@ async fn test_i6_digest_mismatch_denied() {
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -4917,6 +4949,7 @@ async fn test_i6_expired_binding_denied() {
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -5217,6 +5250,7 @@ async fn test_i6_chain_broken_digest_mismatch_between_approval_and_binding() {
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -5412,6 +5446,7 @@ async fn test_cancel_execution_running_state_rejected() {
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     store
         .executions()
@@ -5587,6 +5622,7 @@ async fn test_cancel_execution_terminal_state_rejected() {
         finished_at: Some(chrono::Utc::now()),
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     store
         .executions()
@@ -5704,6 +5740,7 @@ async fn test_cancel_execution_prepared_state() {
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: None,
     };
     store
         .executions()
@@ -5814,6 +5851,7 @@ async fn test_i6_single_use_with_valid_approval_binding() {
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -5991,6 +6029,7 @@ fn make_test_intent(intent_id: ferrum_proto::IntentId) -> ferrum_proto::IntentEn
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     }
 }
 
@@ -6080,6 +6119,7 @@ fn make_test_proposal_with_class(
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: now,
+        owner_actor_id: None,
     }
 }
 
@@ -6105,6 +6145,7 @@ fn make_test_approval(
         state: ferrum_proto::ApprovalState::Pending,
         created_at,
         resolver_evidence_version: None,
+        owner_actor_id: None,
     }
 }
 
@@ -6614,6 +6655,7 @@ async fn test_outcome_evaluation_aligned_flow() {
         status: IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -6637,6 +6679,7 @@ async fn test_outcome_evaluation_aligned_flow() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -6871,6 +6914,7 @@ async fn test_outcome_evaluation_forbidden_flow() {
         status: IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -6894,6 +6938,7 @@ async fn test_outcome_evaluation_forbidden_flow() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -7466,6 +7511,7 @@ async fn test_prepare_endpoint_returns_fs_adapter_for_file_write() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -7489,6 +7535,7 @@ async fn test_prepare_endpoint_returns_fs_adapter_for_file_write() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -7787,6 +7834,7 @@ async fn test_compensate_endpoint_restores_file_via_fs_adapter() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -7810,6 +7858,7 @@ async fn test_compensate_endpoint_restores_file_via_fs_adapter() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -8181,6 +8230,7 @@ async fn test_execute_and_verify_endpoint_flow_for_file_write() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -8204,6 +8254,7 @@ async fn test_execute_and_verify_endpoint_flow_for_file_write() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -8980,6 +9031,7 @@ async fn test_verify_auto_commit_false_suppresses_committed() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -9003,6 +9055,7 @@ async fn test_verify_auto_commit_false_suppresses_committed() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -9330,6 +9383,7 @@ async fn setup_verified_auto_commit_false_execution(
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -9355,6 +9409,7 @@ async fn setup_verified_auto_commit_false_execution(
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -9740,6 +9795,7 @@ async fn test_r3_commit_before_verify_returns_409() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -9762,6 +9818,7 @@ async fn test_r3_commit_before_verify_returns_409() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -10001,6 +10058,7 @@ async fn test_i11_sanitizes_execution_response_with_control_characters() {
         finished_at: None,
         result_digest: None,
         metadata,
+        owner_actor_id: None,
     };
 
     store
@@ -10250,6 +10308,7 @@ async fn test_firewall_high_taint_external_proposal_quarantine() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -10282,6 +10341,7 @@ async fn test_firewall_high_taint_external_proposal_quarantine() {
             ("dangerous".to_string(), serde_json::json!("true")),
         ]),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -10403,6 +10463,7 @@ async fn test_firewall_low_taint_internal_proposal_allows() {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -10426,6 +10487,7 @@ async fn test_firewall_low_taint_internal_proposal_allows() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -10552,6 +10614,7 @@ async fn test_policy_bundle_active_deny_rule_affects_evaluation() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -10664,6 +10727,7 @@ async fn test_policy_bundle_inactive_has_no_effect() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -10772,6 +10836,7 @@ async fn test_policy_bundle_nonmatching_rule_falls_back_to_pdp() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -10886,6 +10951,7 @@ async fn test_policy_bundle_taint_at_least_matcher() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::from([("source".to_string(), serde_json::json!("test"))]),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -10986,6 +11052,7 @@ async fn test_policy_bundle_scope_mismatch_matcher() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -11501,6 +11568,7 @@ async fn test_verify_after_compensate_returns_409() {
         status: IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     };
     store
         .intents()
@@ -11523,6 +11591,7 @@ async fn test_verify_after_compensate_returns_409() {
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         created_at: now,
+        owner_actor_id: None,
     };
     store
         .proposals()
@@ -11764,6 +11833,7 @@ async fn test_compensate_on_prepared_contract_returns_409_conflict() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -11961,6 +12031,7 @@ async fn test_repeat_compensate_on_compensated_contract_returns_409_conflict() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = axum::http::Request::builder()
@@ -12411,6 +12482,7 @@ async fn test_resolve_approval_conflict_already_granted() {
         state: ferrum_proto::ApprovalState::Granted,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -12515,6 +12587,7 @@ async fn test_resolve_approval_conflict_already_denied() {
         state: ferrum_proto::ApprovalState::Denied,
         created_at: chrono::Utc::now(),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()
@@ -12620,6 +12693,7 @@ async fn test_resolve_approval_forbidden_expired() {
         state: ferrum_proto::ApprovalState::Pending,                 // Still Pending but expired
         created_at: chrono::Utc::now() - chrono::Duration::hours(2),
         resolver_evidence_version: None,
+        owner_actor_id: None,
     };
     store
         .approvals()

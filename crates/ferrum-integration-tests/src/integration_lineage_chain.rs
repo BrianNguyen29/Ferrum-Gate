@@ -106,6 +106,7 @@ fn make_test_intent(intent_id: ferrum_proto::IntentId) -> IntentEnvelope {
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     }
 }
 
@@ -168,6 +169,7 @@ async fn test_lineage_chain_minimum_provenance_events() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -463,6 +465,7 @@ async fn test_lineage_adversarial_partial_execution_no_terminal() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -728,6 +731,7 @@ async fn test_lineage_chain_full_provenance_events() {
         taint_inputs: Vec::new(),
         metadata: noop_binding_metadata(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -1015,6 +1019,7 @@ fn make_fs_test_intent(intent_id: ferrum_proto::IntentId, file_path: String) -> 
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     }
 }
 
@@ -1095,6 +1100,7 @@ async fn test_lineage_chain_fs_adapter_compensate() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -1411,6 +1417,7 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -1723,6 +1730,7 @@ fn make_sqlite_test_intent(intent_id: ferrum_proto::IntentId, db_path: String) -
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     }
 }
 
@@ -1824,6 +1832,7 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -2145,6 +2154,7 @@ fn make_maildraft_test_intent(intent_id: ferrum_proto::IntentId) -> IntentEnvelo
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     }
 }
 
@@ -2223,6 +2233,7 @@ async fn test_lineage_chain_maildraft_adapter_compensate() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()
@@ -2496,6 +2507,7 @@ fn make_git_test_intent(intent_id: ferrum_proto::IntentId, repo_path: String) ->
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + chrono::Duration::hours(1),
+        owner_actor_id: None,
     }
 }
 
@@ -2612,6 +2624,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     let request = Request::builder()

@@ -289,6 +289,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 
@@ -307,6 +308,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -341,6 +343,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -361,6 +364,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 

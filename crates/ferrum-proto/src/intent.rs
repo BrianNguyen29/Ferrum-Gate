@@ -28,6 +28,8 @@ pub struct IntentEnvelope {
     pub status: IntentStatus,
     pub created_at: Timestamp,
     pub expires_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_actor_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -277,6 +279,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 

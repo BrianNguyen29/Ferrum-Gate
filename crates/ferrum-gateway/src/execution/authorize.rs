@@ -190,6 +190,7 @@ pub(crate) async fn authorize_execution(
         finished_at: None,
         result_digest: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: lease.owner_actor_id.clone(),
     };
 
     let mut outbox = LifecycleOutboxRecord::pending(

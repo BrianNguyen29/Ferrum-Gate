@@ -524,6 +524,7 @@ fn call_evaluate_intent(
         taint_inputs: vec![],
         metadata: ferrum_proto::JsonMap::new(),
         created_at: chrono::Utc::now(),
+        owner_actor_id: None,
     };
 
     match client.evaluate_proposal(&proposal_id_proto, &proposal) {
