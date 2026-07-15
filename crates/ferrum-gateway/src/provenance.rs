@@ -299,9 +299,16 @@ mod tests {
     use chrono::{Duration, Utc};
     use ferrum_proto::{
         ActorRef, ActorType, CapabilityId, Decision, EventId, ExecutionId, ExecutionState,
-        HashChainRef, IntentId, JsonMap, ObjectRef, ObjectType, ProposalId,
+        HashChainRef, IntentId, JsonMap, ObjectRef, ObjectType, ProposalId, ProvenanceEdge,
+        ProvenanceEdgeType,
     };
-    use ferrum_store::SqliteStore;
+    use ferrum_store::{
+        AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
+        CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo,
+        MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo,
+        RollbackRepo, SqliteStore, StoreFacade, TokenRepo,
+    };
+    use std::sync::Arc;
 
     fn test_event(
         kind: ProvenanceEventKind,
@@ -364,6 +371,379 @@ mod tests {
             metadata: JsonMap::new(),
             owner_actor_id: None,
         }
+    }
+
+    /// Test-only StoreFacade that proxies every repo except provenance, which
+    /// always fails on `query`. Used to prove that lineage validation
+    /// propagates store failures rather than silently succeeding.
+    struct FailingProvenanceQueryStoreFacade {
+        inner: Arc<dyn StoreFacade>,
+    }
+
+    impl FailingProvenanceQueryStoreFacade {
+        fn new(inner: Arc<dyn StoreFacade>) -> Self {
+            Self { inner }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StoreFacade for FailingProvenanceQueryStoreFacade {
+        fn capabilities(&self) -> Arc<dyn CapabilityRepo> {
+            self.inner.capabilities()
+        }
+        fn executions(&self) -> Arc<dyn ExecutionRepo> {
+            self.inner.executions()
+        }
+        fn rollback_contracts(&self) -> Arc<dyn RollbackRepo> {
+            self.inner.rollback_contracts()
+        }
+        fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo> {
+            self.inner.lifecycle_outbox()
+        }
+        fn approvals(&self) -> Arc<dyn ApprovalRepo> {
+            self.inner.approvals()
+        }
+        fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+            self.inner.quarantine_holds()
+        }
+        fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
+            Arc::new(FailingProvenanceQueryRepo)
+        }
+        fn ledger(&self) -> Arc<dyn LedgerRepo> {
+            self.inner.ledger()
+        }
+        fn intents(&self) -> Arc<dyn IntentRepo> {
+            self.inner.intents()
+        }
+        fn proposals(&self) -> Arc<dyn ProposalRepo> {
+            self.inner.proposals()
+        }
+        fn policy_bundles(&self) -> Arc<dyn PolicyBundleRepo> {
+            self.inner.policy_bundles()
+        }
+        fn tokens(&self) -> Arc<dyn TokenRepo> {
+            self.inner.tokens()
+        }
+        fn audit_log(&self) -> Arc<dyn AuditLogRepo> {
+            self.inner.audit_log()
+        }
+        fn audit_merkle_roots(&self) -> Arc<dyn AuditMerkleRootRepo> {
+            self.inner.audit_merkle_roots()
+        }
+        fn audit_checkpoints(&self) -> Arc<dyn AuditCheckpointRepo> {
+            self.inner.audit_checkpoints()
+        }
+        fn agents(&self) -> Arc<dyn AgentRepo> {
+            self.inner.agents()
+        }
+        fn mfa_credentials(&self) -> Arc<dyn MfaCredentialRepo> {
+            self.inner.mfa_credentials()
+        }
+        fn write_queue_depth(&self) -> usize {
+            self.inner.write_queue_depth()
+        }
+        async fn health_check(&self) -> ferrum_store::Result<()> {
+            self.inner.health_check().await
+        }
+    }
+
+    struct FailingProvenanceQueryRepo;
+
+    #[async_trait::async_trait]
+    impl ProvenanceRepo for FailingProvenanceQueryRepo {
+        async fn append_event(
+            &self,
+            _event: &ferrum_proto::ProvenanceEvent,
+        ) -> ferrum_store::Result<()> {
+            Ok(())
+        }
+        async fn append_event_with_edges(
+            &self,
+            _event: &ferrum_proto::ProvenanceEvent,
+            _edges: &[ferrum_proto::ProvenanceEdge],
+        ) -> ferrum_store::Result<()> {
+            Ok(())
+        }
+        async fn get_event(
+            &self,
+            _event_id: ferrum_proto::EventId,
+        ) -> ferrum_store::Result<Option<ferrum_proto::ProvenanceEvent>> {
+            Ok(None)
+        }
+        async fn append_edges(
+            &self,
+            _to_event_id: ferrum_proto::EventId,
+            _edges: &[ferrum_proto::ProvenanceEdge],
+        ) -> ferrum_store::Result<()> {
+            Ok(())
+        }
+        async fn query(
+            &self,
+            _request: &ferrum_proto::ProvenanceQueryRequest,
+        ) -> ferrum_store::Result<Vec<ferrum_proto::ProvenanceEvent>> {
+            Err(ferrum_store::StoreError::Other(
+                "provenance query failure for testing".to_string(),
+            ))
+        }
+        async fn get_edges_to(
+            &self,
+            _to_event_id: ferrum_proto::EventId,
+        ) -> ferrum_store::Result<Vec<ferrum_proto::ProvenanceEdge>> {
+            Ok(Vec::new())
+        }
+        async fn get_edges_from(
+            &self,
+            _from_event_ids: &[ferrum_proto::EventId],
+        ) -> ferrum_store::Result<Vec<ferrum_proto::ProvenanceEdge>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn minimum_lineage_rejects_empty_lineage() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+
+        let error = validate_minimum_lineage_chain(&store, &execution)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("ToolCallPrepared"),
+            "error should name the missing prerequisite: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn minimum_lineage_rejects_partial_chain() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+        let base = Utc::now();
+
+        // Chain stops at SideEffectPrepared; ToolCallPrepared is missing.
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::PolicyEvaluated,
+                base,
+                &execution,
+                None,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::CapabilityMinted,
+                base + Duration::milliseconds(1),
+                &execution,
+                None,
+                Some(execution.capability_id),
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::ActionProposalSubmitted,
+                base + Duration::milliseconds(2),
+                &execution,
+                Some(execution.execution_id),
+                Some(execution.capability_id),
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::SideEffectPrepared,
+                base + Duration::milliseconds(3),
+                &execution,
+                Some(execution.execution_id),
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+
+        let error = validate_minimum_lineage_chain(&store, &execution)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("ToolCallPrepared"),
+            "error should name the missing prerequisite: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn minimum_lineage_rejects_missing_parent_edges() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+        let base = Utc::now();
+
+        // Insert all required events directly, without edges. The events exist
+        // but are not causally linked, so the chain should be rejected.
+        for kind in [
+            ProvenanceEventKind::PolicyEvaluated,
+            ProvenanceEventKind::CapabilityMinted,
+            ProvenanceEventKind::ActionProposalSubmitted,
+            ProvenanceEventKind::SideEffectPrepared,
+            ProvenanceEventKind::ToolCallPrepared,
+        ] {
+            let offset = match kind {
+                ProvenanceEventKind::PolicyEvaluated => 0,
+                ProvenanceEventKind::CapabilityMinted => 1,
+                ProvenanceEventKind::ActionProposalSubmitted => 2,
+                ProvenanceEventKind::SideEffectPrepared => 3,
+                ProvenanceEventKind::ToolCallPrepared => 4,
+                _ => 5,
+            };
+            let event = test_event(
+                kind,
+                base + Duration::milliseconds(offset),
+                &execution,
+                Some(execution.execution_id),
+                Some(execution.capability_id),
+            );
+            store.provenance().append_event(&event).await.unwrap();
+        }
+
+        let error = validate_minimum_lineage_chain(&store, &execution)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("SideEffectPrepared"),
+            "error should name the missing edge: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn minimum_lineage_rejects_wrong_parent_edge() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+        let base = Utc::now();
+
+        // Build a correct chain first, then add a second PolicyEvaluated event.
+        // Force ToolCallPrepared's parent edge to point to the later, unrelated
+        // PolicyEvaluated instead of SideEffectPrepared.
+        let policy = test_event(
+            ProvenanceEventKind::PolicyEvaluated,
+            base,
+            &execution,
+            None,
+            None,
+        );
+        let policy_id = policy.event_id;
+        append_governance_event(&store, policy).await.unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::CapabilityMinted,
+                base + Duration::milliseconds(1),
+                &execution,
+                None,
+                Some(execution.capability_id),
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::ActionProposalSubmitted,
+                base + Duration::milliseconds(2),
+                &execution,
+                Some(execution.execution_id),
+                Some(execution.capability_id),
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::SideEffectPrepared,
+                base + Duration::milliseconds(3),
+                &execution,
+                Some(execution.execution_id),
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+
+        let wrong_parent = test_event(
+            ProvenanceEventKind::PolicyEvaluated,
+            base + Duration::milliseconds(4),
+            &execution,
+            None,
+            None,
+        );
+        let wrong_parent_id = wrong_parent.event_id;
+        store
+            .provenance()
+            .append_event(&wrong_parent)
+            .await
+            .unwrap();
+
+        let mut tool_prepared = test_event(
+            ProvenanceEventKind::ToolCallPrepared,
+            base + Duration::milliseconds(5),
+            &execution,
+            Some(execution.execution_id),
+            None,
+        );
+        tool_prepared.parent_edges.push(ProvenanceEdge {
+            edge_type: ProvenanceEdgeType::Caused,
+            from_event_id: wrong_parent_id,
+            to_event_id: Some(tool_prepared.event_id),
+            summary: None,
+        });
+        store
+            .provenance()
+            .append_event_with_edges(&tool_prepared, &tool_prepared.parent_edges)
+            .await
+            .unwrap();
+
+        let error = validate_minimum_lineage_chain(&store, &execution)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("SideEffectPrepared"),
+            "error should identify the missing correct parent edge: {error}"
+        );
+        assert!(
+            !error.contains(&policy_id.to_string()),
+            "error should not be satisfied by the unrelated policy event"
+        );
+    }
+
+    #[tokio::test]
+    async fn minimum_lineage_propagates_store_query_failure() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+        let failing: Arc<dyn StoreFacade> = Arc::new(FailingProvenanceQueryStoreFacade::new(store));
+
+        let error = validate_minimum_lineage_chain(&failing, &execution)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("failed to load minimum lineage"),
+            "error should propagate store failure: {error}"
+        );
     }
 
     #[tokio::test]

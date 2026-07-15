@@ -63,3 +63,7 @@ ferrum-adapter-http = { path = "../ferrum-adapter-http" }
 ferrum-adapter-gcs = { path = "../ferrum-adapter-gcs", optional = true }
 ferrum-audit-bundle = { path = "../ferrum-audit-bundle" }
 uuid.workspace = true
+
+[dev-dependencies]
+# Enable tokio's test-util clock controls for deterministic time-based tests.
+tokio = { workspace = true, features = ["test-util"] }

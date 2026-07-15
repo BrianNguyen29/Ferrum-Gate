@@ -11732,7 +11732,7 @@ rules:
     }
 
     #[tokio::test]
-    async fn approval_timeout_reconciler_emits_provenance_and_increments_metric() {
+    async fn approval_timeout_store_emits_provenance_and_increments_metric() {
         let runtime = test_runtime().await;
         let store = runtime.store.clone();
 
