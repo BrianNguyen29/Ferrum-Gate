@@ -8,12 +8,13 @@ help:
 	@echo "make invariant-smoke - run blocking safety-kernel smoke suite (fails on zero-test matches)"
 	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
-	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools, monitoring templates)"
+	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools, monitoring templates, advisory ratchet)"
 	@echo "make validate-prod-monitoring - run production-only monitoring drift gate (explicit; fails on active unsafe template values)"
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence, expanded validators)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
 	@echo "make secret-scan - local hardcoded secrets scan (dependency-free)"
+	@echo "make advisory-ratchet - emit advisory coverage/perf ratchet status from existing evidence (non-blocking)"
 	@echo "make wal-drill      - local SQLite WAL crash-recovery drill"
 	@echo "make pg-restart-drill - local PostgreSQL container restart recovery drill"
 	@echo "make pg-restore-drill - local PostgreSQL populated backup/restore drill"
@@ -74,7 +75,7 @@ test-python-validators:
 	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + docs-links + CI badges + monitoring templates + python-validator-tests)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + docs-links + CI badges + monitoring templates + advisory ratchet + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
@@ -87,6 +88,7 @@ validate:
 	@python3 scripts/validate_docs_links.py
 	@python3 scripts/validate_ci_badges.py
 	@python3 scripts/validate_monitoring_templates.py
+	@$(MAKE) advisory-ratchet
 	@$(MAKE) test-python-validators
 	@$(MAKE) site-check
 
@@ -312,6 +314,10 @@ perf-baseline-update:
 	@echo "Review generated files before committing; remove 'sample' prefix only after promotion."
 	@bash scripts/run_perf_gate.sh --write-baselines --duration 5 --scenarios "health,intent-compile,sqlite-contention"
 	@echo "[INFO] Sample baselines regenerated. They remain SAMPLE / NON-AUTHORITATIVE by default."
+
+advisory-ratchet:
+	@echo "Emitting advisory coverage/perf ratchet status from existing evidence..."
+	@python3 scripts/check_advisory_ratchet.py
 
 release-preflight:
 	@echo "Running release preflight (dry-run, no push/publish)..."
