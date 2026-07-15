@@ -21,6 +21,7 @@ ferrum-adapter-git = { path = "../ferrum-adapter-git" }
 ferrum-adapter-maildraft = { path = "../ferrum-adapter-maildraft" }
 ferrum-adapter-sqlite = { path = "../ferrum-adapter-sqlite" }
 ferrum-sync = { path = "../ferrum-sync" }
+ferrum-testkit = { path = "../ferrum-testkit", features = ["gateway"] }
 http.workspace = true
 rusqlite = { workspace = true }
 serde.workspace = true

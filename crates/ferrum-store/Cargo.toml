@@ -28,4 +28,5 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 
 [dev-dependencies]
+ferrum-testkit = { path = "../ferrum-testkit" }
 tempfile = { workspace = true }

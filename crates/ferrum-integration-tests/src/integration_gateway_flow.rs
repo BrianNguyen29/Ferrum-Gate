@@ -28,6 +28,7 @@ use ferrum_store::{
     ProposalRepo, ProvenanceRepo, RollbackRepo, SqliteStore, StoreFacade,
 };
 use ferrum_sync::{McpBridge, RuntimeBridge};
+use ferrum_testkit::ApprovalFixture;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -4464,24 +4465,15 @@ async fn test_i6_valid_binding_succeeds() {
 
     // Create and insert a Granted approval with matching digest
     let approval_id = ferrum_proto::ApprovalId::new();
-    let approval = ferrum_proto::ApprovalRequest {
-        approval_id,
-        intent_id,
-        proposal_id,
-        execution_id: None,
-        requested_by: ferrum_proto::ActorRef {
-            actor_type: ferrum_proto::ActorType::Operator,
-            actor_id: "test-actor".to_string(),
-            display_name: Some("Test Operator".to_string()),
-        },
-        reason: "test approval".to_string(),
-        action_digest: proposal_digest.clone(), // Must match proposal digest
-        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-        state: ferrum_proto::ApprovalState::Granted,
-        created_at: chrono::Utc::now(),
-        resolver_evidence_version: None,
-        owner_actor_id: None,
-    };
+    let now = chrono::Utc::now();
+    let approval = ApprovalFixture::new()
+        .with_id(approval_id)
+        .with_intent_id(intent_id)
+        .with_proposal_id(proposal_id)
+        .with_action_digest(proposal_digest.clone())
+        .with_state(ferrum_proto::ApprovalState::Granted)
+        .with_now(now)
+        .build();
     store
         .approvals()
         .insert(&approval)

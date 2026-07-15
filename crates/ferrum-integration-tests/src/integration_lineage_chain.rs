@@ -14,101 +14,27 @@ use ferrum_gateway::GatewayRuntime;
 use ferrum_gateway::build_router;
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
-    ActionProposal, AuthorizeExecutionRequest, CapabilityMintRequest, EffectType, EventId,
-    IntentEnvelope, LineageDirection, LineageQueryRequest, OutcomeClause, ProposalId,
-    ProvenanceEventKind, RiskTier, RollbackClass, ToolBinding,
+    ActionProposal, AuthorizeExecutionRequest, CapabilityMintRequest, EventId, IntentEnvelope,
+    LineageDirection, LineageQueryRequest, ProposalId, ProvenanceEventKind, RiskTier,
+    RollbackClass, ToolBinding,
 };
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{IntentRepo, SqliteStore, StoreFacade};
+use ferrum_testkit::gateway::SqliteGateway;
+use ferrum_testkit::{IntentFixture, ProposalFixture, test_now};
 use http::{Method, Request, StatusCode};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-fn noop_binding_metadata() -> ferrum_proto::JsonMap {
-    ferrum_proto::JsonMap::from([
-        (
-            "action_type".to_string(),
-            serde_json::json!("McpToolMutation"),
-        ),
-        ("adapter_key".to_string(), serde_json::json!("noop")),
-    ])
-}
-
 /// Spawn a test server backed by an in-memory sqlite store.
 async fn spawn_test_server() -> Router {
-    let store = SqliteStore::connect("sqlite::memory:")
-        .await
-        .expect("failed to connect to sqlite");
-    store
-        .apply_embedded_migrations()
-        .await
-        .expect("failed to apply migrations");
-
-    let pdp = Arc::new(StaticPdpEngine);
-    let cap = Arc::new(InMemoryCapabilityService::default());
-
-    let mut registry = AdapterRegistry::default();
-    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
-
-    let runtime = GatewayRuntime::new(
-        pdp,
-        cap,
-        rollback,
-        Arc::new(store) as Arc<dyn StoreFacade>,
-        vec![],
-    );
-    build_router(runtime)
+    let gateway = SqliteGateway::new().await.expect("create sqlite gateway");
+    build_router(gateway.runtime)
 }
 
 // ---------------------------------------------------------------------------
 // Provenance lineage integration tests
 // ---------------------------------------------------------------------------
-
-/// Helper to create a minimal intent envelope for testing (satisfies FK constraints).
-fn make_test_intent(intent_id: ferrum_proto::IntentId) -> IntentEnvelope {
-    let now = chrono::Utc::now();
-    IntentEnvelope {
-        intent_id,
-        principal_id: ferrum_proto::PrincipalId::new(),
-        session_id: None,
-        channel_id: None,
-        title: "test-intent".to_string(),
-        goal: "test goal".to_string(),
-        normalized_goal: "test goal".to_string(),
-        allowed_outcomes: vec![OutcomeClause {
-            id: "read".to_string(),
-            description: "read only analysis".to_string(),
-            effect_type: EffectType::ReadOnlyAnalysis,
-            required: true,
-        }],
-        forbidden_outcomes: Vec::new(),
-        resource_scope: Vec::new(),
-        risk_tier: RiskTier::Low,
-        approval_mode: ferrum_proto::ApprovalMode::None,
-        default_rollback_class: RollbackClass::R0NativeReversible,
-        time_budget: ferrum_proto::TimeBudget {
-            max_duration_ms: 30_000,
-            max_steps: 8,
-            max_retries_per_step: 1,
-        },
-        trust_context: ferrum_proto::TrustContextSummary {
-            input_labels: Vec::new(),
-            sensitivity_labels: Vec::new(),
-            taint_score: 0,
-            contains_external_metadata: false,
-            contains_tool_output: false,
-            contains_untrusted_text: false,
-        },
-        derived_from_event_ids: Vec::new(),
-        tags: Vec::new(),
-        metadata: ferrum_proto::JsonMap::new(),
-        status: ferrum_proto::IntentStatus::Active,
-        created_at: now,
-        expires_at: now + chrono::Duration::hours(1),
-        owner_actor_id: None,
-    }
-}
 
 /// Full authorize → prepare → compensate flow, then verify lineage contains
 /// the minimum chain: ActionProposalSubmitted (authorize), SideEffectPrepared (prepare),
@@ -138,7 +64,11 @@ async fn test_lineage_chain_minimum_provenance_events() {
 
     // Pre-insert intent to satisfy FK constraint before evaluate writes proposal synchronously
     let intent_id = ferrum_proto::IntentId::new();
-    let intent = make_test_intent(intent_id);
+    let intent = IntentFixture::new()
+        .with_id(intent_id)
+        .with_risk_tier(RiskTier::Low)
+        .with_now(test_now())
+        .build();
     store
         .intents()
         .insert(&intent)
@@ -155,22 +85,10 @@ async fn test_lineage_chain_minimum_provenance_events() {
     let router = build_router(runtime);
 
     // Step 1: Evaluate a proposal
-    let proposal = ActionProposal {
-        proposal_id: ProposalId::new(),
-        intent_id,
-        step_index: 0,
-        title: "test proposal".to_string(),
-        tool_name: "test-tool".to_string(),
-        server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
-        expected_effect: "test effect".to_string(),
-        estimated_risk: RiskTier::Medium,
-        requested_rollback_class: RollbackClass::R0NativeReversible,
-        taint_inputs: Vec::new(),
-        metadata: noop_binding_metadata(),
-        created_at: chrono::Utc::now(),
-        owner_actor_id: None,
-    };
+    let proposal = ProposalFixture::new()
+        .with_intent_id(intent_id)
+        .with_now(test_now())
+        .build();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -434,7 +352,11 @@ async fn test_lineage_adversarial_partial_execution_no_terminal() {
 
     // Pre-insert intent to satisfy FK constraint before evaluate writes proposal synchronously
     let intent_id = ferrum_proto::IntentId::new();
-    let intent = make_test_intent(intent_id);
+    let intent = IntentFixture::new()
+        .with_id(intent_id)
+        .with_risk_tier(RiskTier::Low)
+        .with_now(test_now())
+        .build();
     store
         .intents()
         .insert(&intent)
@@ -451,22 +373,10 @@ async fn test_lineage_adversarial_partial_execution_no_terminal() {
     let router = build_router(runtime);
 
     // Step 1: Evaluate a proposal
-    let proposal = ActionProposal {
-        proposal_id: ProposalId::new(),
-        intent_id,
-        step_index: 0,
-        title: "test proposal".to_string(),
-        tool_name: "test-tool".to_string(),
-        server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
-        expected_effect: "test effect".to_string(),
-        estimated_risk: RiskTier::Medium,
-        requested_rollback_class: RollbackClass::R0NativeReversible,
-        taint_inputs: Vec::new(),
-        metadata: noop_binding_metadata(),
-        created_at: chrono::Utc::now(),
-        owner_actor_id: None,
-    };
+    let proposal = ProposalFixture::new()
+        .with_intent_id(intent_id)
+        .with_now(test_now())
+        .build();
 
     let request = Request::builder()
         .method(Method::POST)
@@ -700,7 +610,11 @@ async fn test_lineage_chain_full_provenance_events() {
 
     // Pre-insert intent to satisfy FK constraint before evaluate writes proposal synchronously
     let intent_id = ferrum_proto::IntentId::new();
-    let intent = make_test_intent(intent_id);
+    let intent = IntentFixture::new()
+        .with_id(intent_id)
+        .with_risk_tier(RiskTier::Low)
+        .with_now(test_now())
+        .build();
     store
         .intents()
         .insert(&intent)
@@ -717,22 +631,10 @@ async fn test_lineage_chain_full_provenance_events() {
     let router = build_router(runtime);
 
     // Step 1: Evaluate a proposal
-    let proposal = ActionProposal {
-        proposal_id: ProposalId::new(),
-        intent_id,
-        step_index: 0,
-        title: "test proposal".to_string(),
-        tool_name: "test-tool".to_string(),
-        server_name: "test-server".to_string(),
-        raw_arguments: serde_json::json!({}),
-        expected_effect: "test effect".to_string(),
-        estimated_risk: RiskTier::Medium,
-        requested_rollback_class: RollbackClass::R0NativeReversible,
-        taint_inputs: Vec::new(),
-        metadata: noop_binding_metadata(),
-        created_at: chrono::Utc::now(),
-        owner_actor_id: None,
-    };
+    let proposal = ProposalFixture::new()
+        .with_intent_id(intent_id)
+        .with_now(test_now())
+        .build();
 
     let request = Request::builder()
         .method(Method::POST)

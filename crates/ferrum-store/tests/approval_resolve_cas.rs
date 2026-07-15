@@ -10,6 +10,7 @@ use ferrum_proto::{
     ProposalId,
 };
 use ferrum_store::{ApprovalRepo, IntentRepo, ProposalRepo, SqliteStore, StoreFacade};
+use ferrum_testkit::ApprovalFixture;
 
 fn make_test_intent(intent_id: IntentId) -> ferrum_proto::IntentEnvelope {
     ferrum_proto::IntentEnvelope {
@@ -79,24 +80,19 @@ fn make_approval(
     created_at: chrono::DateTime<chrono::Utc>,
     expires_at: chrono::DateTime<chrono::Utc>,
 ) -> ApprovalRequest {
-    ApprovalRequest {
-        approval_id,
-        intent_id,
-        proposal_id,
-        execution_id: None,
-        requested_by: ActorRef {
+    ApprovalFixture::new()
+        .with_id(approval_id)
+        .with_intent_id(intent_id)
+        .with_proposal_id(proposal_id)
+        .with_state(state)
+        .with_created_at(created_at)
+        .with_expires_at(expires_at)
+        .with_requested_by(ActorRef {
             actor_type: ActorType::User,
             actor_id: "test-actor".to_string(),
             display_name: Some("Test Actor".to_string()),
-        },
-        reason: "test approval".to_string(),
-        action_digest: "test-digest".to_string(),
-        expires_at,
-        state,
-        created_at,
-        resolver_evidence_version: None,
-        owner_actor_id: None,
-    }
+        })
+        .build()
 }
 
 /// Insert a minimal intent + proposal so an approval can be inserted, and

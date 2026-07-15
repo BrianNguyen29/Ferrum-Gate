@@ -4,11 +4,26 @@ name = "ferrum-testkit"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+gateway = [
+    "dep:anyhow",
+    "dep:ferrum-cap",
+    "dep:ferrum-gateway",
+    "dep:ferrum-pdp",
+    "dep:ferrum-rollback",
+    "dep:ferrum-store",
+]
+
 [dependencies]
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+anyhow = { workspace = true, optional = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
-async-trait = { workspace = true }
 ferrum-proto = { path = "../ferrum-proto" }
+
+ferrum-cap = { path = "../ferrum-cap", optional = true }
+ferrum-gateway = { path = "../ferrum-gateway", optional = true }
+ferrum-pdp = { path = "../ferrum-pdp", optional = true }
+ferrum-rollback = { path = "../ferrum-rollback", optional = true }
+ferrum-store = { path = "../ferrum-store", optional = true }
