@@ -37,10 +37,6 @@ hyper.workspace = true
 uuid.workspace = true
 
 [[test]]
-name = "integration_gateway_flow"
-path = "src/integration_gateway_flow.rs"
-
-[[test]]
 name = "integration_contracts"
 path = "src/integration_contracts.rs"
 
@@ -55,3 +51,31 @@ path = "src/integration_fs_roundtrip.rs"
 [[test]]
 name = "integration_rate_limit"
 path = "src/integration_rate_limit.rs"
+
+[[test]]
+name = "integration_gateway_capabilities"
+path = "src/gateway_flow/capabilities.rs"
+
+[[test]]
+name = "integration_gateway_rollback"
+path = "src/gateway_flow/rollback.rs"
+
+[[test]]
+name = "integration_gateway_policy"
+path = "src/gateway_flow/policy.rs"
+
+[[test]]
+name = "integration_gateway_approvals"
+path = "src/gateway_flow/approvals.rs"
+
+[[test]]
+name = "integration_gateway_execution"
+path = "src/gateway_flow/execution.rs"
+
+[[test]]
+name = "integration_gateway_outcomes"
+path = "src/gateway_flow/outcomes.rs"
+
+[[test]]
+name = "integration_gateway_bridges"
+path = "src/gateway_flow/bridges.rs"

@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0.0",
   "p2_4_version": "P2.4-pre-migration",
-  "source_file": "crates/ferrum-integration-tests/src/integration_gateway_flow.rs",
+  "source_file": "crates/ferrum-integration-tests/src/gateway_flow/",
   "commit": "ac0c8073b5f3d574ad3caca89786e2858a04fbc2",
-  "note": "Inferred target domains from current file structure. The validator assumes immediately adjacent #[tokio::test] and async fn markers and does not perform AST parsing. The monolith contains 74 async #[tokio::test] functions, of which 73 begin with the 'test_' prefix and one is named 'compensate_execution_flow'.",
+  "note": "Inferred target domains from current file structure. The validator assumes immediately adjacent #[tokio::test] and async fn markers and does not perform AST parsing. The original monolith contained 74 async #[tokio::test] functions; after the split, the 74 functions are distributed across src/gateway_flow/*.rs.",
   "total_tests": 74,
   "targets": [
     "capability",

@@ -1,11 +1,31 @@
 //! Lightweight validator: P2.4 split manifest must enumerate every
-//! `#[tokio::test] async fn` in the monolith integration source file exactly once.
-//! The parser is intentionally line-oriented: it assumes the `#[tokio::test]`
-//! attribute is immediately adjacent to the `async fn` declaration. It does not
-//! perform full AST parsing.
+//! `#[tokio::test] async fn` in the split gateway_flow integration source files
+//! exactly once. The parser is intentionally line-oriented: it assumes the
+//! `#[tokio::test]` attribute is immediately adjacent to the `async fn`
+//! declaration. It does not perform full AST parsing.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+
+/// Load all Rust source files in `src/gateway_flow` and return them concatenated
+/// so that the existing line-oriented test parser can discover every
+/// `#[tokio::test] async fn` across the split targets.
+fn load_split_source() -> String {
+    let source_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/gateway_flow");
+    let mut source = String::new();
+    for entry in std::fs::read_dir(&source_dir)
+        .expect("gateway_flow source directory should exist")
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            source
+                .push_str(&std::fs::read_to_string(&path).expect("source file should be readable"));
+            source.push('\n');
+        }
+    }
+    source
+}
 
 /// Validates that `manifest` enumerates every test discovered in `source`
 /// exactly once and that the declared `total_tests` matches both counts.
@@ -74,7 +94,7 @@ fn validate_manifest(manifest: &serde_json::Value, source: &str) -> Result<(), S
 
     if total_tests != source_names.len() {
         return Err(format!(
-            "manifest 'total_tests' ({}) must equal monolith #[tokio::test] async fn count ({}); \
+            "manifest 'total_tests' ({}) must equal split source #[tokio::test] async fn count ({}); \
              the parser assumes immediately adjacent #[tokio::test] and async fn markers",
             total_tests,
             source_names.len()
@@ -83,7 +103,7 @@ fn validate_manifest(manifest: &serde_json::Value, source: &str) -> Result<(), S
 
     if manifest_names.len() != source_names.len() {
         return Err(format!(
-            "manifest count ({}) must equal monolith #[tokio::test] async fn count ({}); \
+            "manifest count ({}) must equal split source #[tokio::test] async fn count ({}); \
              check for duplicates or missing entries",
             manifest_names.len(),
             source_names.len()
@@ -95,7 +115,7 @@ fn validate_manifest(manifest: &serde_json::Value, source: &str) -> Result<(), S
 
     if !missing_in_manifest.is_empty() {
         return Err(format!(
-            "monolith tests missing from manifest: {:?}",
+            "split source tests missing from manifest: {:?}",
             missing_in_manifest
         ));
     }
@@ -119,10 +139,7 @@ fn p2_4_manifest_matches_monolith_test_names() {
     )
     .expect("manifest should be valid JSON");
 
-    let source_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration_gateway_flow.rs");
-    let source = std::fs::read_to_string(&source_path).expect("monolith source file should exist");
-
+    let source = load_split_source();
     validate_manifest(&manifest, &source).expect("manifest should be consistent");
 }
 
@@ -135,9 +152,7 @@ fn p2_4_manifest_duplicate_entry_fails() {
     )
     .expect("manifest should be valid JSON");
 
-    let source_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration_gateway_flow.rs");
-    let source = std::fs::read_to_string(&source_path).expect("monolith source file should exist");
+    let source = load_split_source();
 
     let mut dup_manifest = manifest.clone();
     let mut dup_tests = dup_manifest["tests"]
@@ -164,9 +179,7 @@ fn p2_4_manifest_total_tests_mismatch_fails() {
     )
     .expect("manifest should be valid JSON");
 
-    let source_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration_gateway_flow.rs");
-    let source = std::fs::read_to_string(&source_path).expect("monolith source file should exist");
+    let source = load_split_source();
 
     // Intentionally mismatch total_tests from the actual count.
     manifest["total_tests"] = serde_json::json!(99);
