@@ -172,6 +172,40 @@ class AdvisoryRatchetSchemaTests(unittest.TestCase):
         code, m = self._run_script(cov, perf)
         self.assertEqual(code, 0)
         self.assertEqual(m["status"], "blocked-no-comparable-coverage")
+        self.assertIn("legacy", m["coverage"]["reason"].lower())
+        self.assertIn("sample", m["coverage"]["reason"].lower())
+        self.assertIn("non-comparable", m["coverage"]["reason"].lower())
+        self.assertIn("legacy", m["perf"]["reason"].lower())
+        self.assertIn("sample", m["perf"]["reason"].lower())
+        self.assertIn("non-authoritative", m["perf"]["reason"].lower())
+
+    def test_legacy_coverage_blocked_non_comparable(self):
+        commit = self._fixed_commit()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cov = self._write(root, "coverage.json", {"kind": "coverage-baseline", "authoritative": False})
+            perf = self._write(root, "perf.json", self._valid_perf(commit))
+            code, m = self._run_script(cov, perf)
+        self.assertEqual(code, 0)
+        self.assertEqual(m["status"], "blocked-no-comparable-coverage")
+        self.assertIn("legacy", m["coverage"]["reason"].lower())
+        self.assertIn("sample", m["coverage"]["reason"].lower())
+        self.assertIn("non-comparable", m["coverage"]["reason"].lower())
+        self.assertNotEqual(m["status"], "advisory-pass")
+
+    def test_legacy_perf_blocked_non_authoritative(self):
+        commit = self._git_commit()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cov = self._write(root, "coverage.json", self._valid_coverage(commit))
+            perf = self._write(root, "perf.json", {"kind": "perf-baseline", "authoritative": False})
+            code, m = self._run_script(cov, perf)
+        self.assertEqual(code, 0)
+        self.assertEqual(m["status"], "blocked-no-authoritative-performance-baseline")
+        self.assertIn("legacy", m["perf"]["reason"].lower())
+        self.assertIn("sample", m["perf"]["reason"].lower())
+        self.assertIn("non-authoritative", m["perf"]["reason"].lower())
+        self.assertNotEqual(m["status"], "advisory-pass")
 
     def test_non_utf8_evidence_blocked_exit_zero(self):
         with tempfile.TemporaryDirectory() as d:

@@ -44,6 +44,9 @@ CANONICAL_COVERAGE_KIND = "ferrumgate.coverage-evidence"
 CANONICAL_PERF_KIND = "ferrumgate.perf-baseline-evidence"
 CANONICAL_FORMAT_VERSION = 1
 
+LEGACY_COVERAGE_KIND = "coverage-baseline"
+LEGACY_PERF_KIND = "perf-baseline"
+
 ALLOWED_RUNNER_PROVIDER = "github-actions-self-hosted"
 ALLOWED_RUNNER_CLASS = "ferrumgate-benchmark-linux-x86_64"
 
@@ -146,6 +149,11 @@ def evaluate_coverage(
         return "blocked", error or "coverage evidence is missing"
     if current_commit is None:
         current_commit = _git_commit() or ""
+    if evidence.get("kind") == LEGACY_COVERAGE_KIND:
+        return (
+            "blocked",
+            "legacy/sample coverage-baseline artifact is non-comparable (not canonical ferrumgate.coverage-evidence)",
+        )
     if evidence.get("kind") != CANONICAL_COVERAGE_KIND:
         return (
             "blocked",
@@ -352,6 +360,11 @@ def evaluate_perf(
         return "blocked", error or "perf evidence is missing"
     if current_commit is None:
         current_commit = _git_commit() or ""
+    if evidence.get("kind") == LEGACY_PERF_KIND:
+        return (
+            "blocked",
+            "legacy/sample perf-baseline artifact is non-authoritative (not canonical ferrumgate.perf-baseline-evidence)",
+        )
     if evidence.get("kind") != CANONICAL_PERF_KIND:
         return (
             "blocked",

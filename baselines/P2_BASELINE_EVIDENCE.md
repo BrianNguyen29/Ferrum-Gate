@@ -19,6 +19,20 @@
 
 ## Coverage baseline
 
+### Coverage artifact selection
+
+The advisory ratchet (`scripts/check_advisory_ratchet.py`) loads a default coverage evidence file when invoked without `--coverage-evidence`. That default remains the historical library-only capture:
+
+- `baselines/coverage/coverage-evidence-a14150e.json`
+
+The newer full-workspace first-attempt capture is stored separately:
+
+- `baselines/coverage/coverage-evidence-30d2c9e.json`
+
+Both files are local, non-authoritative samples. Neither is authoritative, neither is promotion-eligible, and neither is used as a ratchet promotion input. The ratchet's default has not been changed to point to the 30d2c9e evidence; changing that default would require an authoritative capture on a controlled runner, a matching current commit, and an ADR 011 promotion.
+
+The 30d2c9e evidence is retained for local visibility and historical comparison only. Its JSON does not match the canonical ratchet evidence schema (`kind`, `format_version`, `scope`, `synthetic`, and controlled-runner fields), so it will be rejected by the ratchet even if supplied as `--coverage-evidence`.
+
 ### Full-workspace first-attempt-stable capture (30d2c9e)
 
 #### Commands
