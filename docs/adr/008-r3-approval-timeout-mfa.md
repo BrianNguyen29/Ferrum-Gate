@@ -1,27 +1,30 @@
 # ADR 008 — R3 Approval Timeout and Second Factor
 
 ## Status
-Accepted (TOTP implemented in PR #209; lockout implemented in PR #213; approval timeout auto-deny, WebAuthn, and backup codes remain deferred)
+Accepted (TOTP implemented in PR #209; lockout implemented in PR #213; approval timeout auto-deny implemented; WebAuthn and backup codes remain deferred)
 
 ## Context
 
 R3 (irreversible / high-risk) actions require explicit operator approval via `approval:resolve`. The current implementation:
-- Uses single-factor authentication (scoped token only).
-- Has no timeout on pending approvals; an R3 action can remain in `pending` indefinitely.
+- Uses single-factor authentication by default (scoped token only).
+- Optional TOTP second-factor confirmation is implemented and opt-in via `approval_mfa_required`.
+- Optional approval timeout / auto-deny is implemented and opt-in via `approval_timeout_enabled` and `approval_timeout_seconds`.
+- WebAuthn and backup codes remain deferred.
 - Provides no out-of-band notification to the approving operator.
 
 This gap was identified in the threat model (B8 — unauthorized approval) and the OWASP LLM06 mapping: single-factor approval and the absence of timeout/escalation are noted limitations.
 
 ## Decision
 
-Propose two independent but complementary controls, each targeting a **separate follow-up PR** to keep review scope bounded:
+Two independent but complementary controls were added. Approval timeout is implemented; WebAuthn and backup codes remain deferred.
 
-### 1. Approval timeout with auto-deny (separate PR)
-- Introduce `approval_timeout_enabled: bool` (config default `false`) so deployments opt in explicitly and preserve backward compatibility.
-- Introduce `approval_timeout_seconds: u64` (config default `3600`, max `86400`).
-- Pending approvals older than the timeout are automatically rejected with status `Expired`.
-- A background task (or cron-like reconciliation) evaluates pending approvals on a configurable interval (`approval_reconciliation_interval_secs`, default `300`).
+### 1. Approval timeout with auto-deny (implemented)
+- `approval_timeout_enabled: bool` (config default `false`) so deployments opt in explicitly and preserve backward compatibility.
+- `approval_timeout_seconds: u64` (config default `3600`, validated min `60`, max `86400`).
+- Pending approvals older than the timeout are automatically transitioned to `Expired` by a background reconciler.
+- The reconciler runs on a configurable interval (`approval_reconciliation_interval_secs`, default `300`).
 - Metrics: `ferrumgate_approval_timeouts_total`.
+- For each expired approval, the reconciler attempts to append an `ApprovalTimedOut` provenance event. If provenance append fails, the approval is still expired; the failure is logged and observable, but the event is not queued or retried.
 
 ### 2. Second-factor confirmation / MFA TOTP (implemented in PR #209)
 - Introduce an optional `approval_mfa_required: bool` (config default `false`).
@@ -44,8 +47,8 @@ Both controls are opt-in to preserve backward compatibility.
 ## Acceptance criteria
 
 1. Approval timeout config is parsed, validated (min `60`, max `86400`), and applied.
-2. Pending approvals exceeding the timeout are transitioned to `Expired` with an audit entry.
-3. Timeout rejections are reflected via provenance and CLI (`ferrumctl admin approvals`).
+2. Pending approvals exceeding the timeout are transitioned to `Expired` by the reconciler. The current side effects are: persisting the `Expired` state, incrementing `ferrumgate_approval_timeouts_total`, and attempting to append an `ApprovalTimedOut` provenance event. Provenance append failures are logged and observable; the approval is still expired. In unconfigured or disabled deployments, timeout handling is effectively absent (the feature is opt-in).
+3. Timeout transitions increment `ferrumgate_approval_timeouts_total` and attempt to append an `ApprovalTimedOut` provenance event; append failures are logged and observable, and the approval is still expired. CLI (`ferrumctl admin approvals`) reflects the `Expired` state.
 4. TOTP verification interface is defined and implemented. ✅ Phase 1 & 2
 5. TOTP is implemented directly via module helpers. (The earlier no-op trait seam was removed in post-MFA-hardening cleanup.)
 6. When `approval_mfa_required=true`, approval resolve returns `403` with `mfa_required` detail if the second factor is missing or invalid, and `MfaInvalid` if the code is wrong. ✅ TOTP implemented

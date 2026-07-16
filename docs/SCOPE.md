@@ -34,8 +34,9 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | Store-backed CapabilityService | Implemented | ferrumd uses StoreCapabilityService for production mint/get/revoke/use paths; in-memory remains for tests/dev. |
 | PolicyBundle PDP engine | Implemented (Phase 1 / Beta) | Static-default bundle parity implemented; QuarantineHold enforced; bundle identity propagation and obligations deferred. |
 | MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; per-factor lockout implemented; WebAuthn/backup codes deferred |
-| Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
+| Approval timeout / auto-deny | Implemented (config-gated / opt-in) | `approval_timeout_enabled`/`approval_timeout_seconds` parsed and validated; background reconciler transitions stale pending approvals to `Expired`; emits metrics and attempts to append an `ApprovalTimedOut` provenance event; append failure is logged/observable; production-like config requires it. |
 | WORM audit sink | Implemented (feature-gated) | S3 Object Lock WORM-compatible sink behind the `worm-sink` feature; disabled by default; operator provisions bucket and Object Lock configuration |
+| Audit verification UX | Implemented (portable UX P3; WORM sink P2 experimental) | `ferrumctl audit export`/`verify` and the portable hash-chain/Merkle-root verification bundle are implemented; optional S3 Object Lock WORM sink is best-effort, operator-provisioned, feature-gated, with no external anchoring, compliance, or immutability claim. |
 | Behavioral anomaly detection | Implemented (Phase 1 V1) | In-memory advisory high-risk/R3 burst detection; opt-in, no ML/external service |
 | Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
 | GCS adapter | Implemented (shape-only) | Feature-gated behind `gcs`; generation-based rollback modeled; live SDK path is a declared seam. See ADR-018. |

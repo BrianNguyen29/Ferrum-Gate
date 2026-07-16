@@ -37,18 +37,20 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 | GCS adapter | P2 | Experimental | Shape-only put/delete/get; generation-based rollback modeled; shape-only unit tests in CI (`make adapter-smoke`); live SDK path is a declared seam. |
 | Azure Blob adapter | P0 | Not implemented | Deferred until GCS semantics are stable. |
 | WORM sink | P2 | Experimental | `worm-sink` feature-gated; operator provisions bucket and Object Lock; not a compliance claim. |
+| Audit verification UX | P3 | Beta | `ferrumctl audit export`/`verify` and the portable hash-chain/Merkle-root verification bundle are P3; optional S3 Object Lock WORM sink is P2 experimental, best-effort, operator-provisioned, with no external anchoring, compliance, or immutability claim. |
 
 > Adapter maturity levels and promotion criteria are defined in [`guides/adapter-maturity-lifecycle.md`](./guides/adapter-maturity-lifecycle.md). Promoting an adapter requires evidence, not just implementation; current labels remain conservative.
 
 | Behavioral anomaly detection | P2 | Experimental | Phase 1 V1; in-memory advisory high-risk/R3 burst detection; opt-in; does not change PDP decisions. V2/V3 persistence/enforcement/ML are future options only — see ADR 010. |
 | PolicyBundle PDP engine | P3 | Beta | Phase 1; `QuarantineHold` enforced; bundle identity propagation and obligations deferred. |
 | MFA TOTP | P4 | Stable | Enrollment/verification + per-factor lockout; WebAuthn and backup codes deferred. |
+| Approval timeout / auto-deny | P2 | Experimental | Config-gated (`approval_timeout_enabled`); opt-in; background reconciler transitions stale pending approvals to `Expired`; emits metrics and attempts to append an `ApprovalTimedOut` provenance event; append failure is logged/observable; required by production-like config checks. |
 | HA reconciler | P2 | Experimental | Opt-in; startup + periodic scan reconciles stale in-flight executions via CAS to Canceled/Failed with provenance/metrics. Does not provide leader election, rollback execution, capability revocation, or turnkey HA. |
 | HA leader election | P0 | Not implemented | Backlog; requires PostgreSQL HA and distributed consensus design. |
 | Schema drift checker | P4 | Stable | Refuses startup when `_schema_version` is newer than binary-supported version. |
 | Operator tooling (`ferrumctl`, `ferrum-tui`, `ferrum-stress`, `ferrum-migrate`) | P4 | Stable | CLI, dashboard, smoke tests, and SQLite→PostgreSQL migration. |
 | Helm chart | P2 | Experimental | Local-safe scaffold with monitoring rules; SQLite defaults are single-replica and allowlists are empty. Operators must configure PostgreSQL, secrets, topology, TLS, and HA for production. |
-| Perf regression gate | P1 | Design / spike | ADR 011; advisory CI gate until baselines are authoritative. |
+| Perf regression gate | P2 | Experimental / advisory | ADR 011; `make perf-gate` compares `ferrum-stress` results against sample baselines; advisory/non-blocking in regular CI; non-authoritative until promotion prerequisites are met. |
 | Coverage gate | P2 | Experimental / advisory | Config-driven thresholds (`coverage-thresholds.toml`) with 7 critical crates and 18 monitor-only workspace members; CI advisory only (`coverage-threshold-soft`); local hard gate available (`make coverage-threshold-hard`). |
 | Release automation | P4 | Stable | CI release workflow, cargo-deny, release-profile smoke. Does not imply managed service. |
 | External opencode verifier parity | P0 | Out of scope | Remains out-of-product unless tracked separately. |
@@ -57,10 +59,6 @@ FerrumGate uses a P0–P5 readiness scale to label every subsystem. **P5 is inte
 
 These are **deferred to upcoming separate PRs**. They are not implemented and have no committed timeline, but acceptance criteria are defined and they are prioritized over open-ended backlog items.
 
-- **Approval timeout / auto-deny** — Auto-deny stale approvals after a configurable timeout. See ADR 008 (separate PR from MFA).
-  - Acceptance: `approval_timeout_enabled` parsed; `approval_timeout_seconds` parsed/validated; pending approvals transition to `Expired`; reflected via provenance and CLI.
-- **Audit verification UX** — Portable `ferrumctl audit export` bundle and local direct-verify mode for operators with filesystem access. See ADR 009.
-  - Acceptance: `ferrumctl audit export` produces `.jsonl` + `manifest.json`; `ferrumctl audit verify` checks hash chain and Merkle root.
 - **MCP target-host smoke** — Automated smoke tests against a deployed MCP target host (not just local stdio).
   - Acceptance: CI workflow runs stdio + HTTP smoke against a target host; validates tool discovery and a health tool call.
 
@@ -69,8 +67,6 @@ These are **deferred to upcoming separate PRs**. They are not implemented and ha
 These require broader design decisions, additional evidence, or an ADR before they can be committed.
 
 - **WORM hardening follow-ups** — External anchoring evidence, operator runbook, and live Object Lock validation remain future; the feature-gated sink exists and is not a compliance claim.
-- **Performance regression gate** — Automated CI gate that blocks changes regressing established baselines. See ADR 011.
-  - Acceptance: `make perf-gate` runs short `ferrum-stress` scenarios and compares against baselines; advisory in CI until baselines are authoritative.
 - **MCP resumability** — Session resumability. Not implemented; no committed timeline.
   - Acceptance: Resume checkpoint persisted to store; session ID rehydration restores tool context and pending capability state.
 - **Production MCP HTTP/SSE** — Production-ready Streamable HTTP / SSE transport. Requires target-host smoke, load, and reconnect evidence first.
