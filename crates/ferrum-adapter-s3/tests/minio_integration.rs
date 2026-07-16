@@ -13,8 +13,13 @@
 // The WORM/Object-Lock tests create their own dedicated, uniquely-named buckets with Object Lock
 // enabled at creation. They validate MinIO Object Lock governance retention and legal-hold behavior
 // using test-only SDK calls (governance bypass, legal-hold clear, bucket/object cleanup). MinIO
-// Object Lock behavior is CI-wired/configured to run but remains experimental/best-effort/operator-owned;
-// these tests do not assert any compliance, immutability, or provider-certified guarantee.
+// Object Lock behavior has been tested locally against a MinIO container (governance retention and
+// legal hold); CI is configured to run the same target. It remains experimental/best-effort/
+// operator-owned; these tests do not assert any compliance, immutability, or provider-certified
+// guarantee.
+//
+// Reproduce: start MinIO on 127.0.0.1:9000, create the versioned `ferrum-test-bucket` (see Makefile),
+// then run `make s3-test`.
 
 use ferrum_adapter_s3::{PlannableS3Adapter, S3Adapter, S3Config};
 use ferrum_proto::{ActionType, CheckSpec, CheckType, JsonMap, RollbackTarget};
