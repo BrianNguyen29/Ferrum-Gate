@@ -187,15 +187,15 @@ adapter-smoke:
 
 s3-test:
 	@echo "Running S3 adapter MinIO integration tests..."
-	@if curl -sSf http://localhost:9000/minio/health/live >/dev/null 2>&1; then \
-		echo "[OK] MinIO detected at localhost:9000"; \
+	@if curl -sSf http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then \
+		echo "[OK] MinIO detected at 127.0.0.1:9000"; \
 		cargo test -p ferrum-adapter-s3 --features s3-client --test minio_integration -- --ignored; \
 	else \
-		echo "[SKIP] MinIO not running at localhost:9000."; \
+		echo "[SKIP] MinIO not running at 127.0.0.1:9000."; \
 		echo "To run these tests, start MinIO with:"; \
 		echo "  docker run -d -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data --console-address \":9001\""; \
 		echo "Then create a versioned bucket:"; \
-		echo "  mc alias set local http://localhost:9000 minioadmin minioadmin"; \
+		echo "  mc alias set local http://127.0.0.1:9000 minioadmin minioadmin"; \
 		echo "  mc mb local/ferrum-test-bucket"; \
 		echo "  mc version enable local/ferrum-test-bucket"; \
 		echo "Then re-run: make s3-test"; \
