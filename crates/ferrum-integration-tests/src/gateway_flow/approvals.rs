@@ -1,9 +1,11 @@
-use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
+use ferrum_cap::{CapabilityError, CapabilityService, InMemoryCapabilityService};
 use ferrum_gateway::GatewayRuntime;
 use ferrum_gateway::build_router;
 use ferrum_pdp::{PdpEngine, StaticPdpEngine};
 use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
-use ferrum_store::{ApprovalRepo, IntentRepo, ProposalRepo, SqliteStore, StoreFacade};
+use ferrum_store::{
+    ApprovalRepo, CapabilityRepo, IntentRepo, ProposalRepo, SqliteStore, StoreFacade,
+};
 use std::sync::Arc;
 #[allow(unused_imports)]
 use tower::ServiceExt;
@@ -1248,15 +1250,25 @@ async fn test_i6_single_use_with_valid_approval_binding() {
         error_response.code
     );
 
-    // Verify capability remains in Used state after failed reuse attempt
-    let cap_lease = cap
+    // Verify capability remains in Used state after failed reuse attempt.
+    // The gateway persists to the durable store and does not populate the
+    // in-memory cache, so read authoritative state from the store.
+    let cap_lease = store
+        .capabilities()
         .get(capability_id)
         .await
-        .expect("capability should still be accessible after reuse failure");
+        .expect("store read should succeed")
+        .expect("capability should still be present in the durable store after reuse failure");
     assert!(
         matches!(cap_lease.status, ferrum_proto::CapabilityStatus::Used),
         "capability status should remain Used after failed reuse, got: {:?}",
         cap_lease.status
+    );
+
+    // Document the owned-mint cache boundary.
+    assert!(
+        matches!(cap.get(capability_id).await, Err(CapabilityError::NotFound)),
+        "in-memory capability service should remain unpopulated by gateway mint"
     );
 }
 

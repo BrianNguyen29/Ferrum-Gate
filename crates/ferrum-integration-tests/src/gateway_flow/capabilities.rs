@@ -259,15 +259,27 @@ async fn test_single_use_capability_cannot_be_reused_via_gateway() {
     );
 
     // Verify capability remains in Used state after failed reuse attempt
-    // (proves no state corruption: used capability is not revived)
-    let cap_lease = cap
+    // (proves no state corruption: used capability is not revived).
+    // The gateway's owned-mint path persists to the durable store and does not
+    // populate the in-memory cache, so the authoritative state must be read
+    // from the store.
+    let cap_lease = store
+        .capabilities()
         .get(capability_id)
         .await
-        .expect("capability should still be accessible after reuse failure");
+        .expect("store read should succeed")
+        .expect("capability should still be present in the durable store after reuse failure");
     assert!(
         matches!(cap_lease.status, ferrum_proto::CapabilityStatus::Used),
         "capability status should remain Used after failed reuse, got: {:?}",
         cap_lease.status
+    );
+
+    // Document the owned-mint cache boundary: the in-memory service was never
+    // populated by the gateway mint path.
+    assert!(
+        matches!(cap.get(capability_id).await, Err(CapabilityError::NotFound)),
+        "in-memory capability service should remain unpopulated by gateway mint"
     );
 }
 
