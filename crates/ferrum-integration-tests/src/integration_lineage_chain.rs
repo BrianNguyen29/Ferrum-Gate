@@ -948,7 +948,7 @@ async fn test_lineage_chain_fs_adapter_compensate() {
     let rollback = Arc::new(rollback_service);
 
     let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
+        SqliteStore::connect_with_pool_size("sqlite::memory:", 1)
             .await
             .expect("connect to sqlite"),
     );
@@ -1265,7 +1265,7 @@ async fn test_lineage_chain_fs_adapter_full_committed() {
     let rollback = Arc::new(rollback_service);
 
     let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
+        SqliteStore::connect_with_pool_size("sqlite::memory:", 1)
             .await
             .expect("connect to sqlite"),
     );
@@ -1688,7 +1688,7 @@ async fn test_lineage_chain_sqlite_adapter_compensate() {
     let rollback = Arc::new(rollback_service);
 
     let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
+        SqliteStore::connect_with_pool_size("sqlite::memory:", 1)
             .await
             .expect("connect to sqlite"),
     );
@@ -2085,7 +2085,7 @@ async fn test_lineage_chain_maildraft_adapter_compensate() {
     let rollback = Arc::new(rollback_service);
 
     let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
+        SqliteStore::connect_with_pool_size("sqlite::memory:", 1)
             .await
             .expect("connect to sqlite"),
     );
@@ -2446,7 +2446,7 @@ async fn test_lineage_chain_git_adapter_compensate() {
     let rollback = Arc::new(rollback_service);
 
     let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
+        SqliteStore::connect_with_pool_size("sqlite::memory:", 1)
             .await
             .expect("connect to sqlite"),
     );

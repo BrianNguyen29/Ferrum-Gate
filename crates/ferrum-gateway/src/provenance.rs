@@ -72,6 +72,10 @@ pub(crate) async fn append_governance_event(
 ) -> ferrum_store::Result<()> {
     let mut inferred_edges = Vec::new();
     if let Some((parent_kind, edge_type)) = lineage_parent_spec(&event.kind) {
+        // Causal eligibility is determined by persisted visibility, matching kind,
+        // and same-context validation; `occurred_at` is observational only and
+        // must not gate parent resolution because parent/child wall-clock order can
+        // invert under fast scheduling.
         let candidates = store
             .provenance()
             .query(&ProvenanceQueryRequest {
@@ -80,7 +84,7 @@ pub(crate) async fn append_governance_event(
                 capability_id: None,
                 event_kind: Some(parent_kind.clone()),
                 since: None,
-                until: Some(event.occurred_at),
+                until: None,
                 edge_types: Vec::new(),
             })
             .await?;
@@ -928,5 +932,111 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.contains("Deny"));
+    }
+
+    #[tokio::test]
+    async fn append_governance_event_uses_persisted_parent_with_later_timestamp() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+        let base = Utc::now();
+
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::PolicyEvaluated,
+                base,
+                &execution,
+                None,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::CapabilityMinted,
+                base + Duration::milliseconds(1),
+                &execution,
+                None,
+                Some(execution.capability_id),
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::ActionProposalSubmitted,
+                base + Duration::milliseconds(2),
+                &execution,
+                Some(execution.execution_id),
+                Some(execution.capability_id),
+            ),
+        )
+        .await
+        .unwrap();
+        append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::SideEffectPrepared,
+                base + Duration::milliseconds(3),
+                &execution,
+                Some(execution.execution_id),
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        let prepared = test_event(
+            ProvenanceEventKind::ToolCallPrepared,
+            base + Duration::milliseconds(5),
+            &execution,
+            Some(execution.execution_id),
+            None,
+        );
+        let prepared_id = prepared.event_id;
+        append_governance_event(&store, prepared).await.unwrap();
+
+        let executed = test_event(
+            ProvenanceEventKind::ToolCallExecuted,
+            base + Duration::milliseconds(4),
+            &execution,
+            Some(execution.execution_id),
+            None,
+        );
+        let executed_id = executed.event_id;
+        append_governance_event(&store, executed).await.unwrap();
+
+        let edges = store.provenance().get_edges_to(executed_id).await.unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].edge_type, ProvenanceEdgeType::Caused);
+        assert_eq!(edges[0].from_event_id, prepared_id);
+    }
+
+    #[tokio::test]
+    async fn append_governance_event_rejects_tool_call_executed_without_parent() {
+        let store = Arc::new(SqliteStore::connect("sqlite::memory:").await.unwrap());
+        store.apply_embedded_migrations().await.unwrap();
+        let store: Arc<dyn StoreFacade> = store;
+        let execution = test_execution();
+        let base = Utc::now();
+
+        let error = append_governance_event(
+            &store,
+            test_event(
+                ProvenanceEventKind::ToolCallExecuted,
+                base,
+                &execution,
+                Some(execution.execution_id),
+                None,
+            ),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("ToolCallPrepared"));
     }
 }

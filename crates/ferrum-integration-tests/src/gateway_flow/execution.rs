@@ -266,11 +266,11 @@ async fn compensate_execution_flow() {
 
     let response = tower::ServiceExt::oneshot(router.clone(), request)
         .await
-        .expect("evaluate request should succeed");
+        .expect("execute request should succeed");
     assert_eq!(
         response.status(),
         axum::http::StatusCode::OK,
-        "evaluate endpoint should return 200"
+        "execute endpoint should return 200"
     );
 
     // Intent was pre-inserted before evaluate to satisfy FK constraint.
@@ -508,7 +508,7 @@ async fn test_get_execution_returns_rollback_contract_with_fs_first_data() {
     let rollback = Arc::new(rollback_service);
 
     let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
+        SqliteStore::connect_with_pool_size("sqlite::memory:", 1)
             .await
             .expect("connect to sqlite"),
     );
@@ -745,10 +745,15 @@ async fn test_get_execution_returns_rollback_contract_with_fs_first_data() {
     let response = tower::ServiceExt::oneshot(router.clone(), request)
         .await
         .expect("execute request should succeed");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read execute response body");
     assert_eq!(
-        response.status(),
+        status,
         axum::http::StatusCode::OK,
-        "execute endpoint should return 200"
+        "execute endpoint should return 200, got status={status} body={}",
+        String::from_utf8_lossy(&body)
     );
 
     // Step 3: Inspect execution via GET /v1/executions/{id}
