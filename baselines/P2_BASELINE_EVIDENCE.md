@@ -9,16 +9,45 @@
 
 ## Repository state
 
-- Current commit: `95a70b864772b3aac4aea5b68b041faca9f3b843` (`95a70b8`)
-- Historical commit: `a14150e3a1956d4244b0fda551486d3fc3d47209` (`a14150e`)
+- Current commit: `30d2c9e3b6eb17bd52e19874b71f7005c64f8650` (`30d2c9e`)
+- Historical commit: `95a70b864772b3aac4aea5b68b041faca9f3b843` (`95a70b8`) — succeeded on retry after MFA wall-clock flake
+- Historical commit: `a14150e3a1956d4244b0fda551486d3fc3d47209` (`a14150e`) — library-only capture
 - Branch: `roadmap/p0-p2-governance-stack`
-- Captured at: 2026-07-16T13:19:21+00:00
+- Captured at: 2026-07-16T14:26:53+00:00
 - Runner: local uncontrolled development environment (Linux, single host)
 - Operator: automated coverage refresh task
 
 ## Coverage baseline
 
-### Full-workspace refresh (95a70b8)
+### Full-workspace first-attempt-stable capture (30d2c9e)
+
+#### Commands
+
+1. Captured full-workspace coverage on the first attempt: `cargo llvm-cov --workspace`
+2. Derived evidence: `python3` (parsed the `cargo llvm-cov` summary table, computed per-crate weighted line coverage)
+3. Validated JSON and totals: `python3` (reloaded the JSON evidence, checked per-crate sums, and verified coverage percent)
+
+#### Scope and constraints
+
+- **Full-workspace**: Includes library crates, binary crates (`ferrumd`, `ferrumctl`, `ferrum-stress`, `ferrum-migrate`, `ferrum-tui`), and integration tests in `ferrum-integration-tests`.
+- This capture succeeded on the first full-workspace attempt; the previous `95a70b8` capture required a retry after an MFA wall-clock test flake.
+- PostgreSQL live tests and S3 MinIO live tests are excluded from this local capture; they remain CI-owned and require external services.
+- The `ferrum-stress` binary crate has no test coverage in this run (0.0%).
+- Only the concise JSON evidence is retained here. No giant raw LCOV or `--text` summary was generated or committed in this task.
+
+#### Result status
+
+- Workspace total (full-workspace): **81.94%** line coverage (77,703 total lines, 63,668 hit).
+- All suites passed on the first attempt; 0 failed tests.
+- All critical library crates that have coverage meet their soft thresholds.
+- One advisory threshold warning remains: `ferrumd` has no coverage data in the synthetic `crates/` summary (expected; it is a binary crate and the advisory script only parses `crates/` prefixes). Its actual full-workspace coverage is **73.07%** in the JSON evidence.
+- Soft mode completed with warnings only; no hard gate claimed.
+
+#### Artifacts
+
+- `baselines/coverage/coverage-evidence-30d2c9e.json` — parsed per-crate summary with provenance
+
+### Previous full-workspace refresh (95a70b8)
 
 #### Commands
 
@@ -122,21 +151,18 @@
 
 ## Validation performed
 
-- `python3 -m json.tool` validated the 95a70b8 JSON evidence file.
-- `scripts/check_coverage_threshold.py` parsed the 95a70b8 synthetic coverage summary
-  and produced the expected soft-mode warnings (advisory/non-blocking).
-- The historical a14150e artifacts remain intact and were not overwritten.
+- `python3 -m json.tool` validated the 30d2c9e JSON evidence file.
+- A custom Python check reloaded the 30d2c9e JSON evidence, confirmed per-crate line totals sum to the workspace totals, and verified coverage percent.
+- The 30d2c9e evidence carries exact commit, scope, non-authoritative, and provenance fields.
+- The historical 95a70b8 and a14150e artifacts remain intact and were not overwritten.
+- No raw LCOV or `--text` summary was generated or committed for 30d2c9e; only the concise JSON evidence is retained.
 
 ## Known limitations
 
 - This is a single uncontrolled runner; variance is expected.
-- The 95a70b8 capture is local/non-authoritative and not promotion eligible.
-- PostgreSQL live tests and S3 MinIO live tests are excluded from this local run
-  (they remain CI-owned and require external services).
-- One flaky unit test (`test_mfa_credential_lockout_recovery_one_strike_relock` in
-  `ferrum-store`) failed on the first full-workspace coverage attempt due to a
-  wall-clock race; it passed on retry and in isolation. This is a pre-existing
-  timing sensitivity, not related to the integration fixes being verified.
+- The 30d2c9e capture is local/non-authoritative and not promotion eligible.
+- The 30d2c9e capture succeeded on the first full-workspace attempt; the previous 95a70b8 capture required a retry after an MFA wall-clock test flake. Both are retained for history.
+- PostgreSQL live tests and S3 MinIO live tests are excluded from this local run (they remain CI-owned and require external services).
 - No hard threshold or SLO claim is made.
-- The advisory threshold script only parses `crates/` paths in the synthetic
-  summary; binary crates (`ferrumd`, `ferrumctl`, etc.) are reported via JSON.
+- The advisory threshold ratchet remains blocked unless separate canonical criteria (controlled runner, ADR 011 promotion, validated release profile) are met.
+- The advisory threshold script only parses `crates/` paths in the synthetic summary; binary crates (`ferrumd`, `ferrumctl`, etc.) are reported via JSON.
