@@ -208,14 +208,6 @@ jobs:
             exit 1
           fi
 
-      - name: Clean up test lifecycle outbox records
-        shell: bash
-        run: |
-          set -euo pipefail
-          PGPASSWORD=ferrumgate_dev_password psql \
-            -h localhost -U ferrumgate_dev -d ferrumgate_p2_test \
-            -c "DELETE FROM lifecycle_outbox WHERE status = 'NeedsOperatorReview';"
-
       - name: Boot ferrumd with PostgreSQL and probe health/readiness
         shell: bash
         run: |
@@ -224,6 +216,12 @@ jobs:
           trap 'rm -f "$LOG_FILE"; kill "$FERRUMD_PID" 2>/dev/null || true' EXIT
 
           cargo build --features postgres --package ferrumd
+
+          # Clear test lifecycle outbox records so the daemon boot does not
+          # observe pre-existing NeedsOperatorReview rows from the test phase.
+          PGPASSWORD=ferrumgate_dev_password psql \
+            -h localhost -U ferrumgate_dev -d ferrumgate_p2_test \
+            -c "DELETE FROM lifecycle_outbox;"
 
           FERRUMD_BIN="./target/debug/ferrumd"
           BIND_ADDR="127.0.0.1:8080"
