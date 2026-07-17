@@ -5,6 +5,7 @@ help:
 	@echo "make fmt       - cargo fmt --all"
 	@echo "make lint      - cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "make test      - cargo test --workspace"
+	@echo "make invariant-smoke - run safety-kernel invariant smoke gate"
 	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
 	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools)"
@@ -54,6 +55,10 @@ lint:
 
 test:
 	cargo test --workspace
+
+invariant-smoke:
+	@echo "Running invariant smoke gate..."
+	@bash scripts/run_invariant_smoke.sh
 
 docs:
 	@echo "Running docs validation..."
