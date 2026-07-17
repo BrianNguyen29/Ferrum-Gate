@@ -17,7 +17,8 @@
     "compensation_plan",
     "auto_commit",
     "state",
-    "created_at"
+    "created_at",
+    "metadata"
   ],
   "properties": {
     "contract_id": {
@@ -152,11 +153,13 @@
     },
     "state": {
       "type": "string",
+      "description": "Rollback contract lifecycle state. RecoveryRequired is a non-terminal owner-review state used when the side-effect outcome is ambiguous; the gateway does not auto-commit, auto-compensate, or replay.",
       "enum": [
         "PendingPrepare",
         "Prepared",
         "ExecutedAwaitingVerify",
         "Verified",
+        "RecoveryRequired",
         "Committed",
         "CompensationPending",
         "Compensated",

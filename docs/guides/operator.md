@@ -85,6 +85,10 @@ This config auto-loads if no `--config` is specified and the file exists. **Neve
 
 ## Deployment checklist
 
+- [ ] Enable `lifecycle_reconciliation_enabled` for production-like deployments.
+- [ ] Enable `approval_timeout_enabled` for production-like deployments.
+- [ ] Enable `audit_fail_closed` for production-like deployments.
+- [ ] Enable `ha_reconciler_enabled` for production-like deployments so stale side-effect pairs are recoverable on restart.
 - [ ] Choose store backend (SQLite for local use; PostgreSQL for higher throughput).
 - [ ] Generate bearer token with `openssl rand -hex 32`.
 - [ ] Set `fs_workdir` / `FERRUMD_FS_WORKDIR` for any non-loopback production-like deployment.
@@ -212,6 +216,48 @@ curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/v1/metrics | 
 ```
 
 Expected after remediation: `ferrumgate_lifecycle_outbox_operator_review` returns to `0`, expired leases do not grow, and deep readiness no longer reports lifecycle outbox degradation.
+
+## Recovery-required review
+
+Executions or rollback contracts in the `RecoveryRequired` state are ambiguous and require operator review before they can terminalize. This state is non-terminal: the gateway will not auto-commit, auto-compensate, or auto-fail the side effect.
+
+Common causes:
+- The adapter reported a recoverable error during execution.
+- Verification checks returned an indeterminate outcome.
+- The HA reconciler found a stale `Running + Prepared` pair after a crash or restart.
+- An HTTP or SQLite mutation side effect was attempted without the required R3 classification.
+
+HTTP and SQLite mutation adapters are permanently R2-rejected. Only explicit policy-approved R3 actions (`auto_commit=false`) with manual verification and commit are permitted.
+
+### Inspect records
+
+```bash
+ferrumctl admin lifecycle-outbox list --status needs_operator_review --limit 50
+ferrumctl admin lifecycle-outbox get <outbox-id>
+ferrumctl executions get <execution-id>
+ferrumctl rollback-contracts get <contract-id>
+```
+
+### Resolve
+
+After externally verifying the side-effect state, choose the appropriate terminal path:
+
+```bash
+# If the side effect succeeded and should be kept:
+ferrumctl executions commit <execution-id> --actor-id <operator-id> --reason "verified externally"
+
+# If the side effect can be safely undone by the configured compensation plan:
+ferrumctl executions compensate <execution-id> --actor-id <operator-id> --reason "undone via rollback plan"
+
+# If the side effect cannot be recovered and must be marked failed:
+ferrumctl executions fail <execution-id> --actor-id <operator-id> --reason "external recovery impossible"
+```
+
+Each resolution requires a non-empty reason and emits an audit trail with the operator actor.
+
+### Downgrade safety
+
+Do not downgrade to a gateway version that does not understand `RecoveryRequired` while rows in that state remain in the store. Resolve every `RecoveryRequired` execution to a terminal state before downgrading, or migrate the rows to a state the older version understands.
 
 ---
 

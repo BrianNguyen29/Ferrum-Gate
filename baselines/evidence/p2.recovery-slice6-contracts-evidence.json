@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0.0",
+  "baseline": "P2-recovery-slice6-contracts",
+  "commit": "db92f0a1bc23fac5bed68f0e54a15aa97e93bcf4",
+  "recorded_at": "2026-07-17T00:00:00Z",
+  "command": "make validate && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "notes": [
+    "Evidence captures the publication of recovery semantics in OpenAPI, JSON schemas, agent/integrator contracts, ADRs, and production docs/config messaging.",
+    "Recovery runtime mechanics were implemented in earlier slices; this evidence covers contracts and documentation only.",
+    "HTTP/SQLite mutation adapters are documented as R2-rejected and R3-only; no config flag restores legacy R2 execution.",
+    "Startup warning for registered HTTP/SQLite mutation adapters is implemented and logged at WARN level.",
+    "Validation and consistency checks now cover RecoveryRequired terms across contracts, schemas, and OpenAPI.",
+    "All changes are uncommitted at the time of this evidence capture; operator review is required before any release signoff."
+  ],
+  "results": [
+    {
+      "name": "contract_consistency_validation",
+      "domain": "contracts",
+      "outcome": "PASSED",
+      "diagnostic_class": null,
+      "raw_output": "VALIDATION PASSED"
+    },
+    {
+      "name": "make_validate",
+      "domain": "repo_validation",
+      "outcome": "PASSED",
+      "diagnostic_class": null,
+      "raw_output": "make validate exited 0"
+    },
+    {
+      "name": "cargo_test_workspace",
+      "domain": "tests",
+      "outcome": "PASSED",
+      "diagnostic_class": null,
+      "raw_output": "cargo test --workspace exited 0"
+    },
+    {
+      "name": "cargo_clippy_workspace",
+      "domain": "lint",
+      "outcome": "PASSED",
+      "diagnostic_class": null,
+      "raw_output": "cargo clippy --workspace --all-targets -- -D warnings finished with no warnings"
+    }
+  ]
+}

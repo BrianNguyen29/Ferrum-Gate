@@ -7,9 +7,10 @@ use axum::{
 };
 use chrono::Utc;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, HashChainRef, ObjectRef, ObjectType, ProvenanceEvent,
-    ProvenanceEventKind, RollbackClass,
+    ActorRef, ActorType, ApiErrorCode, ExecutionState, HashChainRef, ObjectRef, ObjectType,
+    ProvenanceEvent, ProvenanceEventKind, RollbackClass,
 };
+use ferrum_rollback::VerifyOutcome;
 
 use crate::AuthActor;
 use crate::auth_actor::enforce_object_owner_guard;
@@ -44,7 +45,7 @@ pub(crate) async fn verify_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
     auth_actor: Option<Extension<AuthActor>>,
-) -> Result<Json<ferrum_proto::VerifyExecutionResponse>, ApiProblem> {
+) -> Result<(StatusCode, Json<ferrum_proto::VerifyExecutionResponse>), ApiProblem> {
     let execution_id = match parse_execution_id(&execution_id) {
         Ok(id) => id,
         Err(e) => {
@@ -184,8 +185,13 @@ pub(crate) async fn verify_execution(
         }
     }
 
-    let verified = match state.runtime.rollback.verify(&verify_contract).await {
-        Ok(verified) => verified,
+    let outcome_receipt = match state
+        .runtime
+        .rollback
+        .verify_with_outcome(&verify_contract)
+        .await
+    {
+        Ok(receipt) => receipt,
         Err(e) => {
             return governance_err!(
                 state,
@@ -195,12 +201,140 @@ pub(crate) async fn verify_execution(
         }
     };
 
-    // Update contract state based on verification result.
+    // Update contract state based on tri-state verification outcome.
     // Persist verify_contract (not the original contract) so that verify-time
     // mutations (expected_hash on FileHashMatches checks, after_hash on target)
     // are stored for future inspection.
     let previous_contract = contract.clone();
     let mut updated_contract = verify_contract;
+    updated_contract.metadata.insert(
+        "verify_outcome_receipt".to_string(),
+        serde_json::json!(outcome_receipt.adapter_metadata),
+    );
+
+    let previous_execution = execution.clone();
+    let mut updated_execution = execution;
+
+    let (verified, recovery_required) = match outcome_receipt.outcome {
+        VerifyOutcome::Applied => (true, false),
+        VerifyOutcome::NotApplied => (false, false),
+        VerifyOutcome::Indeterminate => {
+            updated_contract.state = ferrum_proto::RollbackState::RecoveryRequired;
+            updated_contract
+                .metadata
+                .insert("recovery_required".to_string(), serde_json::json!(true));
+            updated_contract.metadata.insert(
+                "verify_outcome".to_string(),
+                serde_json::json!("indeterminate"),
+            );
+            updated_execution.state = ExecutionState::RecoveryRequired;
+
+            let outbox = match record_lifecycle_transition_outbox_with_obligations(
+                &state.runtime.store,
+                "verify-recovery",
+                &previous_execution,
+                &updated_execution,
+                Some(&previous_contract),
+                Some(&updated_contract),
+                vec![ProvenanceEventKind::ErrorRaised],
+            )
+            .await
+            {
+                Ok(outbox) => outbox,
+                Err(e) => {
+                    return governance_err!(
+                        state,
+                        GovernanceRoute::ExecutionsVerify,
+                        ApiProblem::internal(anyhow::Error::from(e))
+                    );
+                }
+            };
+
+            let recovery_event = ProvenanceEvent {
+                event_id: ferrum_proto::EventId::new(),
+                kind: ferrum_proto::ProvenanceEventKind::ErrorRaised,
+                occurred_at: Utc::now(),
+                actor: ActorRef {
+                    actor_type: ActorType::Gateway,
+                    actor_id: "ferrum-gateway".to_string(),
+                    display_name: Some("FerrumGate Gateway".to_string()),
+                },
+                object: ObjectRef {
+                    object_type: ObjectType::RollbackContract,
+                    object_id: updated_contract.contract_id.to_string(),
+                    summary: Some("Verify outcome indeterminate; recovery required".to_string()),
+                },
+                intent_id: Some(updated_execution.intent_id),
+                proposal_id: Some(updated_execution.proposal_id),
+                execution_id: Some(execution_id),
+                capability_id: Some(updated_execution.capability_id),
+                rollback_contract_id: Some(updated_contract.contract_id),
+                policy_bundle_id: None,
+                trust_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                parent_edges: Vec::new(),
+                hash_chain: HashChainRef {
+                    content_hash: None,
+                    manifest_hash: None,
+                    policy_bundle_hash: None,
+                    previous_ledger_hash: None,
+                },
+                metadata: {
+                    let mut m = ferrum_proto::JsonMap::new();
+                    m.insert("recovery_required".to_string(), serde_json::json!(true));
+                    m.insert(
+                        "bounded_reason".to_string(),
+                        serde_json::json!(
+                            "verification outcome is indeterminate; execution requires manual review"
+                        ),
+                    );
+                    lifecycle_event_metadata(&outbox, m)
+                },
+                source_runtime_id: None,
+            };
+            let recovery_event_id = recovery_event.event_id;
+            if let Err(e) = append_governance_event(&state.runtime.store, recovery_event).await {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ExecutionsVerify,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
+            if let Err(e) = mark_lifecycle_obligation_written(
+                &state.runtime.store,
+                &outbox,
+                ProvenanceEventKind::ErrorRaised,
+                recovery_event_id,
+            )
+            .await
+            {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ExecutionsVerify,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
+
+            return governance_ok!(
+                state,
+                GovernanceRoute::ExecutionsVerify,
+                Ok((
+                    StatusCode::ACCEPTED,
+                    Json(ferrum_proto::VerifyExecutionResponse {
+                        execution_id,
+                        verified: false,
+                        recovery_required: true,
+                        rollback_contract: Some(updated_contract),
+                        warnings: vec![
+                            "verification outcome is indeterminate; execution requires manual review"
+                                .to_string(),
+                        ],
+                    }),
+                ))
+            );
+        }
+    };
+
     updated_contract.state = if verified {
         ferrum_proto::RollbackState::Verified
     } else {
@@ -212,8 +346,6 @@ pub(crate) async fn verify_execution(
     // This preserves the verified result in contract state while respecting rollback semantics.
     // R3 (irreversible-high-consequence) is normalized to auto_commit=false before verify;
     // explicit commit is required even if a malformed contract was inserted directly.
-    let previous_execution = execution.clone();
-    let mut updated_execution = execution;
     if verified {
         if updated_contract.auto_commit {
             // auto_commit=true: normal path - execution becomes Committed
@@ -410,11 +542,15 @@ pub(crate) async fn verify_execution(
     governance_ok!(
         state,
         GovernanceRoute::ExecutionsVerify,
-        Ok(Json(ferrum_proto::VerifyExecutionResponse {
-            execution_id,
-            verified,
-            rollback_contract: Some(updated_contract),
-            warnings: Vec::new(),
-        }))
+        Ok((
+            StatusCode::OK,
+            Json(ferrum_proto::VerifyExecutionResponse {
+                execution_id,
+                verified,
+                recovery_required,
+                rollback_contract: Some(updated_contract),
+                warnings: Vec::new(),
+            }),
+        ))
     )
 }

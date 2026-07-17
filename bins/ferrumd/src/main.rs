@@ -193,6 +193,15 @@ async fn main() -> Result<()> {
              set FERRUMD_SQLITE_DB_ROOTS or server.sqlite_db_roots to enable bounded SQLite mutations"
         );
     }
+
+    if http_egress_enabled(&config) || sqlite_adapter_enabled {
+        tracing::warn!(
+            "HTTP/SQLite mutation adapter(s) are registered. R2 automatic compensation/replay is \
+             permanently rejected for these adapters; only explicit policy-approved R3 actions \
+             with auto_commit=false and manual verification/commit are permitted."
+        );
+    }
+
     register_maildraft_adapter(&mut registry);
     #[cfg(feature = "s3")]
     {
@@ -482,5 +491,25 @@ mod tests {
         config.http_egress =
             Some(HttpEgressConfig::from_hosts(vec!["example.com".to_string()]).unwrap());
         assert!(http_egress_enabled(&config));
+    }
+
+    #[test]
+    fn test_r2_rejected_warning_matches_adapter_registration() {
+        let mut config = ferrum_gateway::ServerConfig::default();
+
+        // Neither adapter enabled -> no R2-rejected warning condition.
+        assert!(!http_egress_enabled(&config));
+        assert!(config.sqlite_db_roots.is_empty());
+
+        // HTTP adapter enabled -> warning condition is true.
+        config.http_egress =
+            Some(HttpEgressConfig::from_hosts(vec!["example.com".to_string()]).unwrap());
+        assert!(http_egress_enabled(&config));
+
+        // SQLite adapter enabled -> warning condition is true even if HTTP is disabled.
+        config.http_egress = None;
+        config.sqlite_db_roots = vec![std::path::PathBuf::from("/tmp/fg")];
+        assert!(!http_egress_enabled(&config));
+        assert!(!config.sqlite_db_roots.is_empty());
     }
 }

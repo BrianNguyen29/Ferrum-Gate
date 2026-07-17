@@ -1,12 +1,17 @@
+use async_trait::async_trait;
 use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
 use ferrum_gateway::GatewayRuntime;
 use ferrum_gateway::build_router;
 use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
-    ApprovalMode, Decision, ExecutionId, ExecutionRecord, ExecutionState, IntentStatus, RiskTier,
-    RollbackClass, TimeBudget,
+    ApprovalMode, CompensateExecutionResponse, Decision, ExecutionId, ExecutionRecord,
+    ExecutionState, IntentStatus, RiskTier, RollbackClass, RollbackState, TimeBudget,
 };
-use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
+use ferrum_rollback::{
+    AdapterError, AdapterRegistry, ExecuteReceipt, NoopRollbackAdapter, PrepareReceipt,
+    RecoveryReceipt, RollbackAdapter, RollbackService, VerifyOutcome, VerifyOutcomeReceipt,
+    VerifyReceipt,
+};
 use ferrum_store::{
     CapabilityRepo, ExecutionRepo, IntentRepo, ProposalRepo, RollbackRepo, SqliteStore, StoreFacade,
 };
@@ -3186,8 +3191,8 @@ async fn test_verify_auto_commit_false_suppresses_committed() {
         .expect("execution not found");
     assert_eq!(
         execution_record.state,
-        ExecutionState::Running,
-        "execution state should be Running when auto_commit=false (not Committed)"
+        ExecutionState::AwaitingVerification,
+        "execution state should be AwaitingVerification when auto_commit=false (not Committed)"
     );
 
     // Clean up
@@ -3494,8 +3499,8 @@ pub async fn setup_verified_auto_commit_false_execution(
         .expect("execution exists");
     assert_eq!(
         execution_record.state,
-        ExecutionState::Running,
-        "precondition for r3 commit: execution must still be Running"
+        ExecutionState::AwaitingVerification,
+        "precondition for r3 commit: execution must still be AwaitingVerification"
     );
 
     (
@@ -4833,3 +4838,678 @@ async fn test_verify_after_compensate_returns_409() {
 // ---------------------------------------------------------------------------
 // Compensate state guard tests (WS-Compensate)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Recovery Slice 3: end-to-end SQLite RecoveryRequired flow tests
+// ---------------------------------------------------------------------------
+
+fn faulty_binding_metadata(adapter_key: &str) -> ferrum_proto::JsonMap {
+    let mut m = noop_binding_metadata();
+    m.insert("adapter_key".to_string(), serde_json::json!(adapter_key));
+    m
+}
+
+/// Adapter that accepts prepare but always fails execute, so the gateway can
+/// exercise the post-invocation adapter-error recovery path.
+struct FaultyExecuteAdapter {
+    key: &'static str,
+}
+
+impl FaultyExecuteAdapter {
+    fn new(key: &'static str) -> Self {
+        Self { key }
+    }
+}
+
+#[async_trait]
+impl RollbackAdapter for FaultyExecuteAdapter {
+    fn key(&self) -> &'static str {
+        self.key
+    }
+
+    async fn prepare(
+        &self,
+        _request: &ferrum_proto::RollbackPrepareRequest,
+    ) -> Result<PrepareReceipt, AdapterError> {
+        Ok(PrepareReceipt {
+            accepted: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn execute(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+        _payload: &serde_json::Value,
+    ) -> Result<ExecuteReceipt, AdapterError> {
+        Err(AdapterError::Internal("injected execute fault".to_string()))
+    }
+
+    async fn verify(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<VerifyReceipt, AdapterError> {
+        Ok(VerifyReceipt {
+            verified: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn compensate(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn rollback(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+}
+
+async fn setup_prepared_execution_with_adapter(
+    adapter_key: &str,
+    adapter: Arc<dyn RollbackAdapter>,
+) -> (
+    Arc<SqliteStore>,
+    axum::Router,
+    ferrum_proto::ExecutionId,
+    ferrum_proto::RollbackContractId,
+) {
+    let pdp = Arc::new(StaticPdpEngine);
+    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
+
+    let mut registry = AdapterRegistry::default();
+    registry.register(adapter);
+    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
+
+    let store = Arc::new(
+        SqliteStore::connect("sqlite::memory:")
+            .await
+            .expect("connect to sqlite"),
+    );
+    store
+        .apply_embedded_migrations()
+        .await
+        .expect("apply migrations");
+
+    let runtime = GatewayRuntime::new(
+        pdp,
+        cap.clone(),
+        rollback,
+        store.clone() as Arc<dyn StoreFacade>,
+        vec![],
+    );
+    let router = build_router(runtime);
+
+    let intent_id = ferrum_proto::IntentId::new();
+    let proposal_id = ferrum_proto::ProposalId::new();
+
+    let intent = make_test_intent(intent_id);
+    store
+        .intents()
+        .insert(&intent)
+        .await
+        .expect("insert intent");
+
+    let mut proposal =
+        make_test_proposal_with_class(intent_id, proposal_id, RollbackClass::R0NativeReversible);
+    proposal.metadata = faulty_binding_metadata(adapter_key);
+    store
+        .proposals()
+        .insert(&proposal)
+        .await
+        .expect("insert proposal");
+    seed_policy_evaluated(&store, &proposal).await;
+
+    let cap_request = ferrum_proto::CapabilityMintRequest {
+        intent_id,
+        proposal_id,
+        tool_binding: ferrum_proto::ToolBinding {
+            server_name: "test-server".to_string(),
+            tool_name: "test-tool".to_string(),
+            tool_version: None,
+        },
+        resource_bindings: Vec::new(),
+        argument_constraints: Vec::new(),
+        taint_budget: ferrum_proto::TaintBudget {
+            max_taint_score: 0,
+            allow_external_tool_output: false,
+            allow_external_metadata: false,
+            allow_untrusted_text: false,
+        },
+        approval_binding: None,
+        requested_ttl_secs: 60,
+        metadata: ferrum_proto::JsonMap::new(),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/capabilities/mint")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&cap_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("mint request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read mint body");
+    let cap_response: ferrum_proto::CapabilityMintResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let capability_id = cap_response.lease.capability_id;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let auth_request = ferrum_proto::AuthorizeExecutionRequest {
+        proposal_id,
+        capability_id,
+        dry_run: false,
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/executions/authorize")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&auth_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("authorize request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read authorize body");
+    let auth_response: ferrum_proto::AuthorizeExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let execution_id = auth_response.execution.execution_id;
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/prepare", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("prepare request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read prepare body");
+    let prepare_response: ferrum_proto::PrepareExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    let contract_id = prepare_response
+        .rollback_contract
+        .expect("rollback contract present")
+        .contract_id;
+
+    (store, router, execution_id, contract_id)
+}
+
+/// When the adapter returns an error after execute has claimed the Running
+/// state, the SQLite gateway must atomically persist paired RecoveryRequired
+/// transitions, emit an ErrorRaised obligation, and return a bounded 202
+/// response without leaking the raw adapter error.
+#[tokio::test]
+async fn test_execute_adapter_error_enters_recovery_required() {
+    let adapter_key = "faulty";
+    let (store, router, execution_id, contract_id) = setup_prepared_execution_with_adapter(
+        adapter_key,
+        Arc::new(FaultyExecuteAdapter::new(adapter_key)),
+    )
+    .await;
+
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({}),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&execute_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read execute response body");
+    if status == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+        eprintln!("execute returned 500: {}", String::from_utf8_lossy(&body));
+    }
+    assert_eq!(
+        status,
+        axum::http::StatusCode::ACCEPTED,
+        "execute adapter error should return 202, got {:?}",
+        status
+    );
+
+    let execute_response: ferrum_proto::ExecuteExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(
+        !execute_response.executed,
+        "executed should be false when recovery is required"
+    );
+    assert!(
+        execute_response.recovery_required,
+        "recovery_required should be true"
+    );
+    assert!(
+        execute_response.result_digest.is_none(),
+        "result_digest should be absent when execute failed"
+    );
+    assert!(
+        !execute_response.warnings.is_empty(),
+        "warnings should describe the recovery condition"
+    );
+
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup ok")
+        .expect("contract exists");
+    assert_eq!(
+        contract.state,
+        RollbackState::RecoveryRequired,
+        "contract should be in RecoveryRequired"
+    );
+
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("store lookup ok")
+        .expect("execution exists");
+    assert_eq!(
+        execution_record.state,
+        ExecutionState::RecoveryRequired,
+        "execution should be in RecoveryRequired"
+    );
+
+    // Lineage must contain an ErrorRaised obligation with recovery metadata and
+    // must not leak the raw adapter error string.
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::GET)
+        .uri(format!("/v1/provenance/lineage/{}", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router, request)
+        .await
+        .expect("lineage request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read lineage body");
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(
+        !body_str.contains("injected execute fault"),
+        "raw adapter error must not leak into response"
+    );
+
+    #[derive(serde::Deserialize)]
+    struct LineageResponse {
+        #[allow(dead_code)]
+        execution_id: ferrum_proto::ExecutionId,
+        events: Vec<ferrum_proto::ProvenanceEvent>,
+    }
+    let lineage: LineageResponse = serde_json::from_slice(&body).expect("valid json");
+    let error_event = lineage
+        .events
+        .iter()
+        .find(|e| matches!(e.kind, ferrum_proto::ProvenanceEventKind::ErrorRaised))
+        .expect("ErrorRaised provenance event should be present");
+    assert_eq!(
+        error_event.metadata.get("recovery_required"),
+        Some(&serde_json::json!(true)),
+        "ErrorRaised metadata should flag recovery_required"
+    );
+}
+
+/// Adapter that succeeds on execute but reports an indeterminate verification
+/// outcome, so the gateway can exercise the verify-time recovery path.
+struct IndeterminateVerifyAdapter {
+    key: &'static str,
+}
+
+impl IndeterminateVerifyAdapter {
+    fn new(key: &'static str) -> Self {
+        Self { key }
+    }
+}
+
+#[async_trait]
+impl RollbackAdapter for IndeterminateVerifyAdapter {
+    fn key(&self) -> &'static str {
+        self.key
+    }
+
+    async fn prepare(
+        &self,
+        _request: &ferrum_proto::RollbackPrepareRequest,
+    ) -> Result<PrepareReceipt, AdapterError> {
+        Ok(PrepareReceipt {
+            accepted: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn execute(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+        _payload: &serde_json::Value,
+    ) -> Result<ExecuteReceipt, AdapterError> {
+        Ok(ExecuteReceipt {
+            external_id: None,
+            result_digest: Some("indeterminate-execute".to_string()),
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn verify(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<VerifyReceipt, AdapterError> {
+        Ok(VerifyReceipt {
+            verified: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn verify_with_outcome(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<VerifyOutcomeReceipt, AdapterError> {
+        Ok(VerifyOutcomeReceipt {
+            outcome: VerifyOutcome::Indeterminate,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn compensate(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+
+    async fn rollback(
+        &self,
+        _contract: &ferrum_proto::RollbackContract,
+    ) -> Result<RecoveryReceipt, AdapterError> {
+        Ok(RecoveryReceipt {
+            recovered: true,
+            adapter_metadata: ferrum_proto::JsonMap::new(),
+        })
+    }
+}
+
+/// When the adapter cannot determine whether the side effect was applied, the
+/// SQLite gateway must persist paired RecoveryRequired transitions and return
+/// a bounded 202 response.
+#[tokio::test]
+async fn test_verify_indeterminate_enters_recovery_required() {
+    let adapter_key = "indeterminate";
+    let (store, router, execution_id, contract_id) = setup_prepared_execution_with_adapter(
+        adapter_key,
+        Arc::new(IndeterminateVerifyAdapter::new(adapter_key)),
+    )
+    .await;
+
+    // Execute succeeds and leaves the contract awaiting verification.
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({}),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&execute_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read execute response body");
+    if status == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+        eprintln!("execute returned 500: {}", String::from_utf8_lossy(&body));
+    }
+    assert_eq!(
+        status,
+        axum::http::StatusCode::OK,
+        "execute should return 200, got {:?}",
+        status
+    );
+    let execute_response: ferrum_proto::ExecuteExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(execute_response.executed);
+    assert!(!execute_response.recovery_required);
+
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup ok")
+        .expect("contract exists");
+    assert_eq!(
+        contract.state,
+        RollbackState::ExecutedAwaitingVerify,
+        "contract should be ExecutedAwaitingVerify after execute"
+    );
+
+    // Verify cannot determine the outcome and enters recovery.
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/verify", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("verify request should succeed");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read verify response body");
+    if status == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+        eprintln!("verify returned 500: {}", String::from_utf8_lossy(&body));
+    }
+    assert_eq!(
+        status,
+        axum::http::StatusCode::ACCEPTED,
+        "verify indeterminate should return 202, got {:?}",
+        status
+    );
+
+    let verify_response: ferrum_proto::VerifyExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(
+        !verify_response.verified,
+        "verified should be false when outcome is indeterminate"
+    );
+    assert!(
+        verify_response.recovery_required,
+        "recovery_required should be true"
+    );
+    assert!(
+        !verify_response.warnings.is_empty(),
+        "warnings should describe the recovery condition"
+    );
+
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup ok")
+        .expect("contract exists");
+    assert_eq!(
+        contract.state,
+        RollbackState::RecoveryRequired,
+        "contract should be in RecoveryRequired"
+    );
+
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("store lookup ok")
+        .expect("execution exists");
+    assert_eq!(
+        execution_record.state,
+        ExecutionState::RecoveryRequired,
+        "execution should be in RecoveryRequired"
+    );
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::GET)
+        .uri(format!("/v1/provenance/lineage/{}", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router, request)
+        .await
+        .expect("lineage request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read lineage body");
+    #[derive(serde::Deserialize)]
+    struct LineageResponse {
+        #[allow(dead_code)]
+        execution_id: ferrum_proto::ExecutionId,
+        events: Vec<ferrum_proto::ProvenanceEvent>,
+    }
+    let lineage: LineageResponse = serde_json::from_slice(&body).expect("valid json");
+    let error_event = lineage
+        .events
+        .iter()
+        .find(|e| matches!(e.kind, ferrum_proto::ProvenanceEventKind::ErrorRaised))
+        .expect("ErrorRaised provenance event should be present");
+    assert_eq!(
+        error_event.metadata.get("recovery_required"),
+        Some(&serde_json::json!(true)),
+        "ErrorRaised metadata should flag recovery_required"
+    );
+}
+
+/// After execute has entered RecoveryRequired, a successful compensation must
+/// move the contract and execution to Compensated.
+#[tokio::test]
+async fn test_compensate_from_recovery_required_to_compensated() {
+    let adapter_key = "faulty";
+    let (store, router, execution_id, contract_id) = setup_prepared_execution_with_adapter(
+        adapter_key,
+        Arc::new(FaultyExecuteAdapter::new(adapter_key)),
+    )
+    .await;
+
+    // Execute fails and leaves the execution in RecoveryRequired.
+    let execute_request = ferrum_proto::ExecuteExecutionRequest {
+        payload: serde_json::json!({}),
+    };
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/execute", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&execute_request).unwrap(),
+        ))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("execute request should succeed");
+    assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
+
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("store lookup ok")
+        .expect("execution exists");
+    assert_eq!(execution_record.state, ExecutionState::RecoveryRequired);
+
+    // Compensate succeeds and resolves the execution.
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri(format!("/v1/executions/{}/compensate", execution_id))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router.clone(), request)
+        .await
+        .expect("compensate request should succeed");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read compensate response body");
+    if status == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+        eprintln!(
+            "compensate returned 500: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    assert_eq!(
+        status,
+        axum::http::StatusCode::OK,
+        "compensate from recovery should return 200 when recovered, got {:?}",
+        status
+    );
+
+    let compensate_response: CompensateExecutionResponse =
+        serde_json::from_slice(&body).expect("valid json");
+    assert!(
+        compensate_response.compensated,
+        "compensated should be true when adapter reports recovered"
+    );
+    assert!(
+        !compensate_response.recovery_required,
+        "recovery_required should be false after successful compensate"
+    );
+
+    let contract = store
+        .rollback_contracts()
+        .get(contract_id)
+        .await
+        .expect("store lookup ok")
+        .expect("contract exists");
+    assert_eq!(
+        contract.state,
+        RollbackState::Compensated,
+        "contract should be Compensated after successful recovery compensation"
+    );
+
+    let execution_record = store
+        .executions()
+        .get(execution_id)
+        .await
+        .expect("store lookup ok")
+        .expect("execution exists");
+    assert_eq!(
+        execution_record.state,
+        ExecutionState::Compensated,
+        "execution should be Compensated after successful recovery compensation"
+    );
+}

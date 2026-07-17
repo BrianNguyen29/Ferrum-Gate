@@ -7,6 +7,8 @@ integration_rules:
   - "Sanitize output before returning to agent or user plane."
   - "Persist lineage for every meaningful decision and side effect."
   - "Do not bypass rollback preparation for mutating actions."
+  - "Do not attempt automatic compensation or replay for HTTP or SQLite mutation side effects; these are R3-only."
+  - "Escalate ambiguous side-effect outcomes to the operator RecoveryRequired workflow rather than guessing."
 
 required_bindings:
   - intent_id
@@ -21,8 +23,29 @@ required_checks:
   - policy_decision_check
   - manifest_integrity_check
   - rollback_prepared_if_needed
+  - r3_classification_for_http_sqlite_mutations
 
 operator_expectations:
   - "Approval requests must bind to action digest."
   - "Quarantined executions must be inspectable."
   - "Lineage query must explain why an action was allowed or blocked."
+  - "RecoveryRequired executions require owner-level review; no non-owner auto-commit, auto-compensate, or auto-terminalize."
+  - "HTTP and SQLite mutation adapters are permanently R2-rejected; only explicit policy-approved R3 actions with manual verification/commit are supported."
+
+recovery_behavior:
+  RecoveryRequired:
+    meaning: "The gateway detected an ambiguous or stale side-effect state and stopped before terminalizing."
+    owner_only: true
+    not_terminal: true
+    no_auto_commit: true
+    no_auto_compensate: true
+    no_adapter_replay: true
+    required_next_step: "Operator reviews provenance, external state, and decides commit/compensate/rollback/fail."
+
+side_effect_classification:
+  HttpMutation:
+    rollback_class: "R3IrreversibleHighConsequence"
+    rationale: "External HTTP effects are not safely undoable by the gateway; R2 compensation/replay is rejected."
+  SqlMutation:
+    rollback_class: "R3IrreversibleHighConsequence"
+    rationale: "Database mutations outside the gateway's transactional scope are not safely undoable; R2 compensation/replay is rejected."

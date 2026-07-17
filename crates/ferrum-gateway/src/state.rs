@@ -942,6 +942,13 @@ impl ServerConfig {
                     .to_string(),
             );
         }
+        if production_like && !self.ha_reconciler_enabled {
+            return Err(
+                "ha_reconciler_enabled must be true for production-like non-loopback deployments; \
+                 stale Running+Prepared side-effect pairs must be recoverable on restart"
+                    .to_string(),
+            );
+        }
         if production_like && !self.audit_fail_closed {
             return Err(
                 "audit_fail_closed must be true for production-like non-loopback deployments"

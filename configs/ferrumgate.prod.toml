@@ -25,7 +25,11 @@ git_repo_roots = ["/var/lib/ferrumgate/repos"]
 sqlite_db_roots = ["/var/lib/ferrumgate/databases"]
 
 # Authentication mode: "disabled", "bearer", "scoped", or "oidc"
-# WARNING: Never use "disabled" in production with a non-loopback bind address
+# WARNING: Never use "disabled" in production with a non-loopback bind address.
+# "bearer" is a single-principal trust domain: it validates this global token
+# but does not provide per-request AuthActor identity or object ownership. Use
+# "scoped", "oidc", or "agent" for multi-actor authorization.
+# Monitoring endpoints /v1/readyz/deep and /v1/metrics require auth when auth is enabled.
 auth_mode = "bearer"
 
 # Bearer token for authentication (required when auth_mode is "bearer")
@@ -59,8 +63,9 @@ approval_timeout_enabled = true
 # Audit fail-closed mode (required in production)
 audit_fail_closed = true
 
-# HA reconciler for stale in-flight executions (opt-in; default false)
-# ha_reconciler_enabled = false
+# HA reconciler for stale in-flight executions (required in production so that
+# stale Running+Prepared side-effect pairs are recoverable on restart).
+ha_reconciler_enabled = true
 # ha_reconciler_interval_secs = 60
 # ha_reconciler_stale_threshold_secs = 1800
 # ha_reconciler_batch_size = 100

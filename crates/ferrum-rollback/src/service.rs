@@ -1,12 +1,15 @@
 use anyhow::Context;
 use chrono::Utc;
 use ferrum_proto::{
-    ExecutionId, RollbackContract, RollbackContractId, RollbackPrepareRequest,
-    RollbackPrepareResponse, RollbackState,
+    ActionType, ExecutionId, RollbackClass, RollbackContract, RollbackContractId,
+    RollbackPrepareRequest, RollbackPrepareResponse, RollbackState,
 };
 use std::sync::Arc;
 
-use crate::{AdapterError, AdapterRegistry, ExecuteReceipt, PlannableAdapter, RecoveryReceipt};
+use crate::{
+    AdapterError, AdapterRegistry, ExecuteReceipt, PlannableAdapter, RecoveryReceipt,
+    VerifyOutcomeReceipt,
+};
 
 pub struct RollbackService {
     registry: Arc<AdapterRegistry>,
@@ -34,6 +37,19 @@ impl RollbackService {
             ferrum_proto::RollbackClass::R3IrreversibleHighConsequence
         ) {
             request.auto_commit = false;
+        }
+
+        // Slice 1 safety gate: R2Compensatable is not supported for HttpMutation or
+        // SqlMutation because a safe generic compensation plan cannot be derived.
+        // Reject before invoking any adapter or planner so no unsafe contract is
+        // persisted or executed.
+        if matches!(request.rollback_class, RollbackClass::R2Compensatable)
+            && matches!(
+                request.action_type,
+                ActionType::HttpMutation | ActionType::SqlMutation
+            )
+        {
+            anyhow::bail!("R2Compensatable is not supported for HttpMutation or SqlMutation");
         }
 
         let adapter = self
@@ -146,6 +162,25 @@ impl RollbackService {
             .context("adapter not registered")?;
         let receipt = adapter.verify(contract).await.map_err(map_adapter_err)?;
         Ok(receipt.verified)
+    }
+
+    /// Tri-state verification that preserves adapter-specific outcome detail.
+    /// Legacy adapters that only implement `verify` are mapped through the
+    /// default `verify_with_outcome` trait method (`true` -> `Applied`,
+    /// `false` -> `Indeterminate`).
+    pub async fn verify_with_outcome(
+        &self,
+        contract: &RollbackContract,
+    ) -> anyhow::Result<VerifyOutcomeReceipt> {
+        let adapter = self
+            .registry
+            .get(&contract.adapter_key)
+            .context("adapter not registered")?;
+        let receipt = adapter
+            .verify_with_outcome(contract)
+            .await
+            .map_err(map_adapter_err)?;
+        Ok(receipt)
     }
 
     /// Execute the contract action with the given payload.
@@ -355,6 +390,8 @@ mod tests {
     fn make_test_service_with_adapter() -> (RollbackService, Arc<AdapterRegistry>) {
         let mut registry = AdapterRegistry::default();
         registry.register(Arc::new(crate::NoopRollbackAdapter::new("noop")));
+        registry.register(Arc::new(crate::NoopRollbackAdapter::new("http")));
+        registry.register(Arc::new(crate::NoopRollbackAdapter::new("sqlite")));
         let registry = Arc::new(registry);
         let service = RollbackService::new(registry.clone());
         (service, registry)
@@ -563,6 +600,86 @@ mod tests {
 
         let mut request = make_request_with_empty_plan();
         request.rollback_class = ferrum_proto::RollbackClass::R3IrreversibleHighConsequence;
+
+        let response = service.prepare(request).await.unwrap();
+        assert!(!response.contract.auto_commit);
+    }
+
+    /// Slice 1: R2Compensatable for HttpMutation must be rejected before the
+    /// adapter is invoked and before any contract is persisted.
+    #[tokio::test]
+    async fn test_r2_http_mutation_rejected_before_adapter() {
+        let (service, _registry) = make_test_service_with_adapter();
+
+        let mut request = make_request_with_empty_plan();
+        request.rollback_class = RollbackClass::R2Compensatable;
+        request.action_type = ActionType::HttpMutation;
+        request.adapter_key = "http".to_string();
+        request.target = RollbackTarget::HttpRequest {
+            method: ferrum_proto::HttpMethod::Post,
+            url: "https://example.com".to_string(),
+            request_digest: String::new(),
+        };
+
+        let err = service.prepare(request).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("R2Compensatable is not supported"),
+            "unexpected error: {}",
+            msg
+        );
+        assert!(
+            msg.contains("HttpMutation") || msg.contains("SqlMutation"),
+            "error should name the unsupported action types: {}",
+            msg
+        );
+    }
+
+    /// Slice 1: R2Compensatable for SqlMutation must be rejected before the
+    /// adapter is invoked and before any contract is persisted.
+    #[tokio::test]
+    async fn test_r2_sql_mutation_rejected_before_adapter() {
+        let (service, _registry) = make_test_service_with_adapter();
+
+        let mut request = make_request_with_empty_plan();
+        request.rollback_class = RollbackClass::R2Compensatable;
+        request.action_type = ActionType::SqlMutation;
+        request.adapter_key = "sqlite".to_string();
+        request.target = RollbackTarget::SqliteTxn {
+            db_path: "/tmp/test.db".to_string(),
+            tx_id: "tx-1".to_string(),
+        };
+
+        let err = service.prepare(request).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("R2Compensatable is not supported"),
+            "unexpected error: {}",
+            msg
+        );
+        assert!(
+            msg.contains("HttpMutation") || msg.contains("SqlMutation"),
+            "error should name the unsupported action types: {}",
+            msg
+        );
+    }
+
+    /// Slice 1: R3 HttpMutation should still be accepted (R3 is not
+    /// compensatable; it is gated by auto_commit=false). This ensures we only
+    /// reject R2, not all HTTP/SQLite mutations.
+    #[tokio::test]
+    async fn test_r3_http_mutation_not_rejected() {
+        let (service, _registry) = make_test_service_with_adapter();
+
+        let mut request = make_request_with_empty_plan();
+        request.rollback_class = RollbackClass::R3IrreversibleHighConsequence;
+        request.action_type = ActionType::HttpMutation;
+        request.adapter_key = "http".to_string();
+        request.target = RollbackTarget::HttpRequest {
+            method: ferrum_proto::HttpMethod::Post,
+            url: "https://example.com".to_string(),
+            request_digest: String::new(),
+        };
 
         let response = service.prepare(request).await.unwrap();
         assert!(!response.contract.auto_commit);

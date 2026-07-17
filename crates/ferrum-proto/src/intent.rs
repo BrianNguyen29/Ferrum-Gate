@@ -218,6 +218,7 @@ impl IntentEnvelope {
     ///     status: IntentStatus::Active,
     ///     created_at: now,
     ///     expires_at: now + chrono::Duration::minutes(5),
+    ///     owner_actor_id: None,
     /// };
     /// assert!(intent.validate().is_ok());
     /// ```

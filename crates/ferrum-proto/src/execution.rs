@@ -130,6 +130,7 @@ impl ActionProposal {
     ///     taint_inputs: vec![],
     ///     metadata: JsonMap::new(),
     ///     created_at: Utc::now(),
+    ///     owner_actor_id: None,
     /// };
     /// let digest = proposal.canonical_action_digest();
     /// assert_eq!(digest.len(), 64);
@@ -202,6 +203,7 @@ pub enum ExecutionState {
     Running,
     AwaitingApproval,
     AwaitingVerification,
+    RecoveryRequired,
     Committed,
     Compensated,
     RolledBack,

@@ -299,9 +299,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .ha_reconciler_canceled_total
         .load(Ordering::Relaxed);
-    let ha_reconciler_failed_total = state
+    let ha_reconciler_recovery_required_total = state
         .metrics
-        .ha_reconciler_failed_total
+        .ha_reconciler_recovery_required_total
         .load(Ordering::Relaxed);
     let ha_reconciler_errors_total = state
         .metrics
@@ -1085,11 +1085,11 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         "ferrumgate_ha_reconciler_canceled_total {}\n",
         ha_reconciler_canceled_total
     ));
-    body.push_str("# HELP ferrumgate_ha_reconciler_failed_total Number of stale post-side-effect executions transitioned to Failed by the HA reconciler\n");
-    body.push_str("# TYPE ferrumgate_ha_reconciler_failed_total counter\n");
+    body.push_str("# HELP ferrumgate_ha_reconciler_recovery_required_total Number of stale paired Running+Prepared executions transitioned to RecoveryRequired by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_recovery_required_total counter\n");
     body.push_str(&format!(
-        "ferrumgate_ha_reconciler_failed_total {}\n",
-        ha_reconciler_failed_total
+        "ferrumgate_ha_reconciler_recovery_required_total {}\n",
+        ha_reconciler_recovery_required_total
     ));
     body.push_str("# HELP ferrumgate_ha_reconciler_errors_total Number of errors encountered by the HA reconciler\n");
     body.push_str("# TYPE ferrumgate_ha_reconciler_errors_total counter\n");

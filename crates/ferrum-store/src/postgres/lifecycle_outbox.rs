@@ -57,6 +57,19 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
                 expected_execution_state, execution.state
             )));
         }
+        if let Some(contract) = rollback_contract {
+            if let Some(expected_rollback_state) = outbox.previous_rollback_state.as_ref() {
+                if !crate::transitions::is_valid_rollback_transition(
+                    expected_rollback_state,
+                    &contract.state,
+                ) {
+                    return Err(crate::StoreError::InvalidState(format!(
+                        "invalid rollback transition from {:?} to {:?}",
+                        expected_rollback_state, contract.state
+                    )));
+                }
+            }
+        }
         let execution_raw = to_json(execution)?;
         let execution_update = sqlx::query(
             "UPDATE executions

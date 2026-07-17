@@ -7,16 +7,17 @@ use axum::{
 };
 use chrono::Utc;
 use ferrum_proto::{
-    ActorRef, ActorType, ApiErrorCode, ApprovalMode, EventId, ExecutionState, ObjectRef,
-    ObjectType, ProvenanceEvent, ProvenanceEventKind,
+    ActionType, ActorRef, ActorType, ApiErrorCode, ApprovalMode, EventId, ExecutionState,
+    ObjectRef, ObjectType, ProvenanceEvent, ProvenanceEventKind, RollbackClass,
 };
 
 use crate::AuthActor;
 use crate::auth_actor::enforce_object_owner_guard;
 use crate::execution::{
     lifecycle_event_metadata, mark_lifecycle_transition_reconciled, parse_execution_id,
-    record_lifecycle_transition_outbox, validate_argument_constraints,
-    validate_capability_proposal_binding, validate_minimum_lineage_chain,
+    record_lifecycle_transition_outbox, record_lifecycle_transition_outbox_with_obligations,
+    validate_argument_constraints, validate_capability_proposal_binding,
+    validate_minimum_lineage_chain,
 };
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
@@ -29,7 +30,7 @@ pub(crate) async fn execute_execution(
     Path(execution_id): Path<String>,
     auth_actor: Option<Extension<AuthActor>>,
     Json(request): Json<ferrum_proto::ExecuteExecutionRequest>,
-) -> Result<Json<ferrum_proto::ExecuteExecutionResponse>, ApiProblem> {
+) -> Result<(StatusCode, Json<ferrum_proto::ExecuteExecutionResponse>), ApiProblem> {
     let execution_id = match parse_execution_id(&execution_id) {
         Ok(id) => id,
         Err(e) => {
@@ -189,6 +190,27 @@ pub(crate) async fn execute_execution(
         );
     }
 
+    // Slice 1 safety gate: legacy persisted R2Compensatable contracts for
+    // HttpMutation or SqlMutation are unsafe to execute (no safe generic
+    // compensation exists). Reject before capability/lineage checks and before
+    // the state transition to Running would hand off to the adapter.
+    if matches!(contract.rollback_class, RollbackClass::R2Compensatable)
+        && matches!(
+            contract.action_type,
+            ActionType::HttpMutation | ActionType::SqlMutation
+        )
+    {
+        return governance_err!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "R2Compensatable executions for HTTP/SQLite mutations are not supported",
+            )
+        );
+    }
+
     let capability = match state
         .runtime
         .store
@@ -326,22 +348,137 @@ pub(crate) async fn execute_execution(
         }
     }
 
-    // Call execute on the adapter via the rollback service
-    let receipt = match state
+    // Call execute on the adapter via the rollback service.
+    let adapter_result = state
         .runtime
         .rollback
         .execute(&contract, &adapter_payload)
+        .await;
+
+    if let Err(_adapter_error) = adapter_result {
+        // Adapter error after Running: the effect is ambiguous. Atomically persist
+        // paired RecoveryRequired states and an ErrorRaised obligation, then return
+        // a bounded 202 recovery-required response. No raw adapter error is leaked.
+        let previous_contract = contract.clone();
+        let mut updated_contract = contract.clone();
+        updated_contract.state = ferrum_proto::RollbackState::RecoveryRequired;
+        updated_contract
+            .metadata
+            .insert("recovery_required".to_string(), serde_json::json!(true));
+        updated_contract
+            .metadata
+            .insert("execute_payload".to_string(), adapter_payload.clone());
+
+        let previous_execution = execution.clone();
+        let mut updated_execution = execution;
+        updated_execution.state = ferrum_proto::ExecutionState::RecoveryRequired;
+
+        let mut previous_execution = previous_execution;
+        previous_execution.state = ferrum_proto::ExecutionState::Running;
+
+        let outbox = match record_lifecycle_transition_outbox_with_obligations(
+            &state.runtime.store,
+            "execute-recovery",
+            &previous_execution,
+            &updated_execution,
+            Some(&previous_contract),
+            Some(&updated_contract),
+            vec![ProvenanceEventKind::ErrorRaised],
+        )
         .await
-    {
-        Ok(receipt) => receipt,
-        Err(e) => {
+        {
+            Ok(outbox) => outbox,
+            Err(e) => {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ExecutionsExecute,
+                    ApiProblem::internal(anyhow::Error::from(e))
+                );
+            }
+        };
+
+        let recovery_event = ProvenanceEvent {
+            event_id: EventId::new(),
+            kind: ferrum_proto::ProvenanceEventKind::ErrorRaised,
+            occurred_at: Utc::now(),
+            actor: ActorRef {
+                actor_type: ActorType::Gateway,
+                actor_id: "ferrum-gateway".to_string(),
+                display_name: Some("FerrumGate Gateway".to_string()),
+            },
+            object: ObjectRef {
+                object_type: ObjectType::SideEffect,
+                object_id: execution_id.to_string(),
+                summary: Some("Adapter error after Running; recovery required".to_string()),
+            },
+            intent_id: Some(updated_execution.intent_id),
+            proposal_id: Some(updated_execution.proposal_id),
+            execution_id: Some(execution_id),
+            capability_id: Some(updated_execution.capability_id),
+            rollback_contract_id: updated_execution.rollback_contract_id,
+            policy_bundle_id: None,
+            trust_labels: Vec::new(),
+            sensitivity_labels: Vec::new(),
+            parent_edges: Vec::new(),
+            hash_chain: ferrum_proto::HashChainRef {
+                content_hash: None,
+                manifest_hash: None,
+                policy_bundle_hash: None,
+                previous_ledger_hash: None,
+            },
+            metadata: {
+                let mut m = ferrum_proto::JsonMap::new();
+                m.insert("recovery_required".to_string(), serde_json::json!(true));
+                m.insert(
+                    "bounded_reason".to_string(),
+                    serde_json::json!(
+                        "adapter reported a recoverable error; execution requires manual review"
+                    ),
+                );
+                lifecycle_event_metadata(&outbox, m)
+            },
+            source_runtime_id: None,
+        };
+        let recovery_event_id = recovery_event.event_id;
+        if let Err(e) = append_governance_event(&state.runtime.store, recovery_event).await {
             return governance_err!(
                 state,
                 GovernanceRoute::ExecutionsExecute,
-                ApiProblem::internal(e)
+                ApiProblem::internal(anyhow::Error::from(e))
             );
         }
-    };
+        if let Err(e) =
+            mark_lifecycle_transition_reconciled(&state.runtime.store, &outbox, recovery_event_id)
+                .await
+        {
+            return governance_err!(
+                state,
+                GovernanceRoute::ExecutionsExecute,
+                ApiProblem::internal(anyhow::Error::from(e))
+            );
+        }
+
+        return governance_ok!(
+            state,
+            GovernanceRoute::ExecutionsExecute,
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(ferrum_proto::ExecuteExecutionResponse {
+                    execution_id,
+                    executed: false,
+                    recovery_required: true,
+                    result_digest: None,
+                    rollback_contract: Some(updated_contract),
+                    warnings: vec![
+                        "adapter reported a recoverable error; execution requires manual review"
+                            .to_string(),
+                    ],
+                }),
+            ))
+        );
+    }
+
+    let receipt = adapter_result.unwrap();
 
     // Update contract state to ExecutedAwaitingVerify and capture after_hash from
     // the execute receipt so after_hash is available for inspection immediately
@@ -379,13 +516,14 @@ pub(crate) async fn execute_execution(
     updated_contract
         .metadata
         .insert("execute_payload".to_string(), adapter_payload.clone());
+
     // The execution was atomically claimed as Running before the adapter call.
-    // Finalize result metadata with a CAS from that claimed state so a stale
-    // completion cannot overwrite a concurrent lifecycle transition.
+    // On success, transition to AwaitingVerification so the verify step can
+    // later commit, fail, or enter recovery as a distinct lifecycle phase.
     let mut previous_execution = execution.clone();
     previous_execution.state = ferrum_proto::ExecutionState::Running;
     let mut updated_execution = execution;
-    updated_execution.state = ferrum_proto::ExecutionState::Running;
+    updated_execution.state = ferrum_proto::ExecutionState::AwaitingVerification;
     updated_execution.result_digest = receipt.result_digest.clone();
     let outbox = match record_lifecycle_transition_outbox(
         &state.runtime.store,
@@ -463,12 +601,16 @@ pub(crate) async fn execute_execution(
     governance_ok!(
         state,
         GovernanceRoute::ExecutionsExecute,
-        Ok(Json(ferrum_proto::ExecuteExecutionResponse {
-            execution_id,
-            executed: true,
-            result_digest: receipt.result_digest,
-            rollback_contract: Some(updated_contract),
-            warnings: Vec::new(),
-        }))
+        Ok((
+            StatusCode::OK,
+            Json(ferrum_proto::ExecuteExecutionResponse {
+                execution_id,
+                executed: true,
+                recovery_required: false,
+                result_digest: receipt.result_digest,
+                rollback_contract: Some(updated_contract),
+                warnings: Vec::new(),
+            }),
+        ))
     )
 }

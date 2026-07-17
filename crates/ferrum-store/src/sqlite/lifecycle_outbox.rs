@@ -82,6 +82,19 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
                 expected_execution_state, execution.state
             )));
         }
+        if let Some(contract) = rollback_contract {
+            if let Some(expected_rollback_state) = outbox.previous_rollback_state.as_ref() {
+                if !crate::transitions::is_valid_rollback_transition(
+                    expected_rollback_state,
+                    &contract.state,
+                ) {
+                    return Err(crate::StoreError::InvalidState(format!(
+                        "invalid rollback transition from {:?} to {:?}",
+                        expected_rollback_state, contract.state
+                    )));
+                }
+            }
+        }
         let execution_raw = to_json(execution)?;
         let execution_update = sqlx::query(
             "UPDATE executions
@@ -1538,6 +1551,16 @@ mod tests {
 
         store
             .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Prepared)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::ExecutedAwaitingVerify)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
             .update_state(contract.contract_id, RollbackState::Verified)
             .await
             .unwrap();
@@ -1567,6 +1590,60 @@ mod tests {
             ferrum_proto::ExecutionState::Authorized
         );
         assert_eq!(stored_contract.state, RollbackState::Verified);
+        assert!(
+            repo.list_pending_reconciliation(10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Slice 2: a lifecycle transition must be rejected if the rollback state
+    /// transition is illegal, before either paired record is written.
+    #[tokio::test]
+    async fn record_lifecycle_transition_rejects_invalid_rollback_transition() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let (mut execution, mut contract) = seed_execution(&store).await;
+        let repo = store.lifecycle_outbox();
+        let mut outbox = outbox_for(&execution, &contract);
+
+        // Make the rollback transition illegal (Prepared -> Verified is not
+        // allowed; Verified must come from ExecutedAwaitingVerify). Keep the
+        // execution transition legal (Authorized -> Running).
+        outbox.previous_rollback_state = Some(RollbackState::Prepared);
+        outbox.new_rollback_state = Some(RollbackState::Verified);
+        execution.state = ferrum_proto::ExecutionState::Running;
+        contract.state = RollbackState::Verified;
+
+        let err = repo
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid rollback transition"),
+            "unexpected error: {}",
+            err
+        );
+
+        // Neither paired record should be written.
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored_execution.state,
+            ferrum_proto::ExecutionState::Authorized
+        );
+        assert_eq!(stored_contract.state, RollbackState::PendingPrepare);
         assert!(
             repo.list_pending_reconciliation(10)
                 .await

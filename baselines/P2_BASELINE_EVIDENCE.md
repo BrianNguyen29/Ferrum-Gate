@@ -9,7 +9,8 @@
 
 ## Repository state
 
-- Current commit: `30d2c9e3b6eb17bd52e19874b71f7005c64f8650` (`30d2c9e`)
+- Current documentation/source HEAD: `db92f0a1bc23fac5bed68f0e54a15aa97e93bcf4` (`db92f0a`)
+- Retained full-workspace coverage capture commit: `30d2c9e3b6eb17bd52e19874b71f7005c64f8650` (`30d2c9e`) — local/non-authoritative; not relabeled as current
 - Historical commit: `95a70b864772b3aac4aea5b68b041faca9f3b843` (`95a70b8`) — succeeded on retry after MFA wall-clock flake
 - Historical commit: `a14150e3a1956d4244b0fda551486d3fc3d47209` (`a14150e`) — library-only capture
 - Branch: `roadmap/p0-p2-governance-stack`
@@ -180,3 +181,37 @@ The 30d2c9e evidence is retained for local visibility and historical comparison 
 - No hard threshold or SLO claim is made.
 - The advisory threshold ratchet remains blocked unless separate canonical criteria (controlled runner, ADR 011 promotion, validated release profile) are met.
 - The advisory threshold script only parses `crates/` paths in the synthetic summary; binary crates (`ferrumd`, `ferrumctl`, etc.) are reported via JSON.
+
+## Current program state
+
+- A private, GitHub-hosted, `workflow_dispatch`-only advisory workflow exists in `BrianNguyen29/ferrumgate-evidence-control` and was dispatched once for source SHA `db92f0a`.
+- Run completion and artifact review are still pending; the dispatch is recorded but it is **not** outcome evidence.
+- The GCP pilot project `ferrumgate-ce-497801` was torn down (`DELETE_REQUESTED`, billing detached) and local physical runner work is stopped; no active controlled runner exists.
+- Controlled-runner prerequisite and evidence promotion remain required; no bypass or promotion is claimed.
+
+## Recovery contracts publication (Recovery Slice 6)
+
+### Scope
+
+Publication of recovery semantics in public contracts, schemas, API documentation, operator docs, config examples, and ADRs. No recovery runtime mechanics were changed in this slice.
+
+### Key decisions captured
+
+- `RecoveryRequired` is a non-terminal, owner-review state for executions and rollback contracts.
+- HTTP/SQLite mutation adapters are R2-rejected; only explicit policy-approved R3 actions (`auto_commit=false`) with manual verification and commit are permitted.
+- The HA reconciler transitions stale `Running + Prepared` pairs to `RecoveryRequired` with `ErrorRaised` provenance, not to a terminal state.
+- Once `RecoveryRequired` rows are persisted, no downgrade to a version that does not understand the state is allowed without first resolving those rows to a terminal state.
+
+### Artifacts
+
+- `baselines/evidence/p2.recovery-slice6-contracts-evidence.json` — validation evidence for contract/schema/API publication.
+- Updated contracts: `contracts/ferrumgate-agent-contract.v1.yaml`, `contracts/ferrumgate-integrator-contract.v1.yaml`.
+- Updated docs: `docs/adr/019-ambiguous-side-effect-recovery.md`, `docs/adr/016-ha-reconciler.md`, `docs/adr/README.md`, `docs/PRODUCTION_NOTES.md`, `docs/guides/operator.md`.
+- Updated config examples: `configs/ferrumgate.prod.toml`, `configs/examples/ferrumd.env.example`, `configs/examples/nonprod-ferrumgate.toml`.
+- Updated API/schema: `openapi/ferrumgate-control-api.v1.yaml`, `schemas/jsonschema/rollback-contract.json`.
+- Updated validator: `scripts/check_contract_consistency.py`.
+- Updated startup warning: `bins/ferrumd/src/main.rs`.
+
+### Status
+
+SAMPLE / NON-AUTHORITATIVE. This evidence documents the contract publication slice but does not claim controlled-runner or production signoff.

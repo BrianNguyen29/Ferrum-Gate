@@ -35,7 +35,7 @@ license = "Apache-2.0"
 repository = "https://github.com/BrianNguyen29/Ferrum-Gate"
 
 [workspace.dependencies]
-anyhow = "1"
+anyhow = "1.0.103"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_derive = "1"

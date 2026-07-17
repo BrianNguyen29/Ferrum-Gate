@@ -37,7 +37,7 @@ pub(crate) async fn compensate_execution(
     State(state): State<Arc<AppState>>,
     Path(execution_id): Path<String>,
     auth_actor: Option<Extension<AuthActor>>,
-) -> Result<Json<CompensateExecutionResponse>, ApiProblem> {
+) -> Result<(StatusCode, Json<CompensateExecutionResponse>), ApiProblem> {
     let execution_id = match parse_execution_id(&execution_id) {
         Ok(id) => id,
         Err(e) => {
@@ -122,10 +122,14 @@ pub(crate) async fn compensate_execution(
         }
     };
 
-    // WS-Compensate state guard
+    // WS-Compensate state guard. RecoveryRequired is accepted so an operator can
+    // attempt compensation after an ambiguous execute/verify. On success the
+    // contract/execution become Compensated; on failure they remain in
+    // RecoveryRequired.
     match (&contract.state, &execution.state) {
         (RollbackState::ExecutedAwaitingVerify, ExecutionState::Running)
-        | (RollbackState::ExecutedAwaitingVerify, ExecutionState::AwaitingVerification) => {}
+        | (RollbackState::ExecutedAwaitingVerify, ExecutionState::AwaitingVerification)
+        | (RollbackState::RecoveryRequired, ExecutionState::RecoveryRequired) => {}
         _ => {
             return governance_err!(
                 state,
@@ -162,11 +166,26 @@ pub(crate) async fn compensate_execution(
 
     let recovery_incomplete = !recovery_receipt.recovered;
 
-    // Update contract state to Compensated only after recovered=true.
+    // Update contract state to Compensated only after recovered=true. If the
+    // execution entered compensation already in RecoveryRequired, an incomplete
+    // result must keep it in RecoveryRequired rather than falling back to Failed.
     let previous_contract = contract.clone();
     let mut updated_contract = contract.clone();
+    let previous_execution = execution.clone();
+    let mut updated_execution = execution;
+    let from_recovery = matches!(
+        (updated_contract.state, updated_execution.state),
+        (
+            RollbackState::RecoveryRequired,
+            ExecutionState::RecoveryRequired
+        )
+    );
     updated_contract.state = if recovery_incomplete {
-        RollbackState::Failed
+        if from_recovery {
+            RollbackState::RecoveryRequired
+        } else {
+            RollbackState::Failed
+        }
     } else {
         RollbackState::Compensated
     };
@@ -182,6 +201,11 @@ pub(crate) async fn compensate_execution(
         updated_contract
             .metadata
             .insert("recovery_incomplete".to_string(), serde_json::json!(true));
+        if from_recovery {
+            updated_contract
+                .metadata
+                .insert("recovery_required".to_string(), serde_json::json!(true));
+        }
     }
     if !recovery_receipt.adapter_metadata.is_empty() {
         updated_contract.metadata.insert(
@@ -190,10 +214,12 @@ pub(crate) async fn compensate_execution(
         );
     }
     // Update execution state to Compensated only after recovered=true.
-    let previous_execution = execution.clone();
-    let mut updated_execution = execution;
     updated_execution.state = if recovery_incomplete {
-        ExecutionState::Failed
+        if from_recovery {
+            ExecutionState::RecoveryRequired
+        } else {
+            ExecutionState::Failed
+        }
     } else {
         ExecutionState::Compensated
     };
@@ -277,6 +303,15 @@ pub(crate) async fn compensate_execution(
                     serde_json::json!("incomplete"),
                 );
             }
+            if !recovery_incomplete && from_recovery {
+                // RecoveryRequired compensation may not have a ToolCallExecuted
+                // parent because the original execute failed ambiguously; mark the
+                // lineage parent optional rather than failing the provenance append.
+                metadata.insert(
+                    "lineage_parent_optional".to_string(),
+                    serde_json::json!(true),
+                );
+            }
             if !recovery_receipt.adapter_metadata.is_empty() {
                 metadata.insert(
                     "recovery_adapter_metadata".to_string(),
@@ -308,18 +343,33 @@ pub(crate) async fn compensate_execution(
     governance_ok!(
         state,
         GovernanceRoute::ExecutionsCompensate,
-        Ok(Json(CompensateExecutionResponse {
-            execution_id,
-            compensated: !recovery_incomplete,
-            rollback_contract: Some(updated_contract),
-            warnings: if recovery_incomplete {
-                vec![
-                    "recovery-incomplete: compensation adapter did not report recovered=true"
-                        .to_string(),
-                ]
+        Ok((
+            if recovery_incomplete && from_recovery {
+                StatusCode::ACCEPTED
             } else {
-                Vec::new()
+                StatusCode::OK
             },
-        }))
+            Json(CompensateExecutionResponse {
+                execution_id,
+                compensated: !recovery_incomplete,
+                recovery_required: recovery_incomplete && from_recovery,
+                rollback_contract: Some(updated_contract),
+                warnings: if recovery_incomplete {
+                    if from_recovery {
+                        vec![
+                            "recovery-required: compensation adapter did not report recovered=true; execution remains in recovery"
+                                .to_string(),
+                        ]
+                    } else {
+                        vec![
+                            "recovery-incomplete: compensation adapter did not report recovered=true"
+                                .to_string(),
+                        ]
+                    }
+                } else {
+                    Vec::new()
+                },
+            }),
+        ))
     )
 }

@@ -117,7 +117,7 @@ pub(crate) struct Metrics {
     pub(crate) quarantine_timeouts_total: AtomicU64,
     // HA reconciler counters
     pub(crate) ha_reconciler_canceled_total: AtomicU64,
-    pub(crate) ha_reconciler_failed_total: AtomicU64,
+    pub(crate) ha_reconciler_recovery_required_total: AtomicU64,
     pub(crate) ha_reconciler_errors_total: AtomicU64,
     // Behavioral anomaly advisory counters
     pub(crate) behavioral_anomaly_warnings_total: AtomicU64,
@@ -250,7 +250,7 @@ impl Metrics {
             approval_timeouts_total: AtomicU64::new(0),
             quarantine_timeouts_total: AtomicU64::new(0),
             ha_reconciler_canceled_total: AtomicU64::new(0),
-            ha_reconciler_failed_total: AtomicU64::new(0),
+            ha_reconciler_recovery_required_total: AtomicU64::new(0),
             ha_reconciler_errors_total: AtomicU64::new(0),
             behavioral_anomaly_warnings_total: AtomicU64::new(0),
             behavioral_anomaly_critical_total: AtomicU64::new(0),

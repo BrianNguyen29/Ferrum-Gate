@@ -3,8 +3,8 @@
   "p2_4_version": "P2.4-pre-migration",
   "source_file": "crates/ferrum-integration-tests/src/gateway_flow/",
   "commit": "ac0c8073b5f3d574ad3caca89786e2858a04fbc2",
-  "note": "Inferred target domains from current file structure. The validator assumes immediately adjacent #[tokio::test] and async fn markers and does not perform AST parsing. The original monolith contained 74 async #[tokio::test] functions; after the split, the 74 functions are distributed across src/gateway_flow/*.rs.",
-  "total_tests": 74,
+  "note": "Inferred target domains from current file structure. The validator assumes immediately adjacent #[tokio::test] and async fn markers and does not perform AST parsing. The original monolith contained 77 async #[tokio::test] functions; after the split, the 77 functions are distributed across src/gateway_flow/*.rs.",
+  "total_tests": 77,
   "targets": [
     "capability",
     "rollback",
@@ -88,12 +88,15 @@
     { "name": "test_resolve_approval_forbidden_expired", "line": 12633, "domain": "approvals" },
     { "name": "test_resolve_approval_provenance_event_emitted", "line": 12739, "domain": "approvals" },
     { "name": "test_policy_bundle_active_switch_emits_provenance", "line": 12886, "domain": "provenance" },
-    { "name": "test_gateway_rejects_capability_ttl_over_300", "line": 13106, "domain": "capability" }
+    { "name": "test_gateway_rejects_capability_ttl_over_300", "line": 13106, "domain": "capability" },
+    { "name": "test_execute_adapter_error_enters_recovery_required", "line": 5066, "domain": "execution" },
+    { "name": "test_verify_indeterminate_enters_recovery_required", "line": 5270, "domain": "execution" },
+    { "name": "test_compensate_from_recovery_required_to_compensated", "line": 5421, "domain": "execution" }
   ],
   "domain_counts": {
     "capability": 6,
     "rollback": 6,
-    "execution": 20,
+    "execution": 23,
     "approvals": 16,
     "policy": 17,
     "provenance": 3,

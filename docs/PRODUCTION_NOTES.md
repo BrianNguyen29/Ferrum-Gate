@@ -2,15 +2,16 @@
 
 ## Production-Required Controls
 
-P0-1 introduced runtime fail-closed behavior for the production-required controls below. The static validation gate (`scripts/validate_toml_configs.py`) enforces that `configs/ferrumgate.prod.toml` explicitly enables all three. Dev and nonprod configs should keep them absent or disabled unless they are intentionally testing production-like behavior.
+P0-1 introduced runtime fail-closed behavior for the production-required controls below. The static validation gate (`scripts/validate_toml_configs.py`) enforces that `configs/ferrumgate.prod.toml` explicitly enables all four. Dev and nonprod configs should keep them absent or disabled unless they are intentionally testing production-like behavior.
 
 | Control | Config key (under `[server]`) | Environment variable | Purpose |
 |---------|--------------------------------|---------------------|---------|
 | Lifecycle reconciliation | `lifecycle_reconciliation_enabled` | `FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED` | Reconcile lifecycle outbox work so orphaned side effects do not accumulate. |
 | Approval timeout | `approval_timeout_enabled` | `FERRUMD_APPROVAL_TIMEOUT_ENABLED` | Time out stale approval requests rather than leaving them pending indefinitely. |
 | Audit fail-closed | `audit_fail_closed` | `FERRUMD_AUDIT_FAIL_CLOSED` | Block operations when audit logging cannot be persisted, preventing silent loss of lineage. |
+| HA reconciler | `ha_reconciler_enabled` | `FERRUMD_HA_RECONCILER_ENABLED` | Transition stale in-flight side-effect pairs to `RecoveryRequired` so they are recoverable on restart. |
 
-All three values are TOML booleans and map to `FERRUMD_<UPPER_SNAKE_KEY>` environment variables. Config precedence is CLI > env > config file > defaults.
+All four values are TOML booleans and map to `FERRUMD_<UPPER_SNAKE_KEY>` environment variables. Config precedence is CLI > env > config file > defaults.
 
 Example `ferrumd.env.example` stanzas:
 
@@ -19,7 +20,17 @@ Example `ferrumd.env.example` stanzas:
 # FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED=true
 # FERRUMD_APPROVAL_TIMEOUT_ENABLED=true
 # FERRUMD_AUDIT_FAIL_CLOSED=true
+# FERRUMD_HA_RECONCILER_ENABLED=true
 ```
+
+## Recovery-Required Downgrade Safety
+
+Once a store has persisted rows in the `RecoveryRequired` state, do not downgrade to a gateway version that does not understand that state. Older binaries may fail to read or reconcile those rows, leaving ambiguous side effects in an unreadable state. Before any downgrade, either:
+
+- Resolve every `RecoveryRequired` execution to a terminal state (`Committed`, `Compensated`, `RolledBack`, or `Failed`), or
+- Migrate the rows to a state the target version understands.
+
+This constraint applies to both SQLite and PostgreSQL stores. Mixed-version clusters that share a store must also share the recovery state machine.
 
 ## Container Image & Compose (Local Demo Only)
 
@@ -183,10 +194,10 @@ To promote a performance baseline from SAMPLE/advisory to authoritative:
 6. **Coverage gate parity**: Only promote perf baselines to blocking after the critical-crate coverage gate (`make coverage-threshold-hard`) has been stable for at least two release cycles.
 
 ## Authentication
-- **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
-- Tokens are validated with constant-time comparison (timing-attack resistant)
-- `/v1/healthz` and `/v1/readyz` are always unauthenticated. `/v1/readyz/deep`
-  and `/v1/metrics` require auth when auth mode is enabled.
+- **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config.
+- Tokens are validated with constant-time comparison (timing-attack resistant).
+- **Bearer mode is a single-principal trust domain**: it validates the configured global token but does not create per-request `AuthActor` identities or object ownership. It is suitable for pilot/single-operator deployments where the whole gateway is treated as one principal. Multi-actor authorization, scoped ownership, and per-object access control require `scoped`, `oidc`, or `agent` auth mode.
+- `/v1/healthz` and `/v1/readyz` are always unauthenticated. `/v1/readyz/deep` and `/v1/metrics` require auth when auth mode is enabled.
 
 ## Health and Readiness Endpoints
 

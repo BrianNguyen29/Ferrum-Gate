@@ -3776,6 +3776,7 @@ fs_workdir = "/tmp/ferrumgate"
 approval_timeout_enabled = true
 audit_fail_closed = true
 lifecycle_reconciliation_enabled = false
+ha_reconciler_enabled = true
 "#,
     );
 
@@ -3807,6 +3808,7 @@ lifecycle_reconciliation_enabled = false
         approval_timeout_enabled: true,
         audit_fail_closed: true,
         approval_mfa_required: false,
+        ha_reconciler_enabled: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
@@ -3836,6 +3838,7 @@ fs_workdir = "/tmp/ferrumgate"
 lifecycle_reconciliation_enabled = true
 audit_fail_closed = true
 approval_timeout_enabled = false
+ha_reconciler_enabled = true
 "#,
     );
 
@@ -3867,6 +3870,7 @@ approval_timeout_enabled = false
         approval_timeout_enabled: false,
         audit_fail_closed: true,
         approval_mfa_required: false,
+        ha_reconciler_enabled: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
@@ -3896,6 +3900,7 @@ fs_workdir = "/tmp/ferrumgate"
 lifecycle_reconciliation_enabled = true
 approval_timeout_enabled = true
 audit_fail_closed = false
+ha_reconciler_enabled = true
 "#,
     );
 
@@ -3927,6 +3932,7 @@ audit_fail_closed = false
         approval_timeout_enabled: true,
         audit_fail_closed: false,
         approval_mfa_required: false,
+        ha_reconciler_enabled: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
