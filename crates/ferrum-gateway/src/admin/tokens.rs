@@ -23,6 +23,7 @@ use crate::{
 
 pub(crate) async fn create_token(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<CreateTokenRequest>,
 ) -> Response {
     // Validate TTL <= 90 days
@@ -42,7 +43,45 @@ pub(crate) async fn create_token(
         );
     }
 
+    // Scope attenuation: issuance must be a subset of the issuer's scopes.
+    // Fail closed when the caller's identity/scopes cannot be established.
+    let Some(issuer) = auth_actor.as_deref() else {
+        let error = ApiError {
+            code: ApiErrorCode::Forbidden,
+            message: "caller identity and scopes could not be established".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    };
+    if req.role == ferrum_proto::TokenRole::Admin && !issuer.scopes.iter().any(|s| s == "*") {
+        let error = ApiError {
+            code: ApiErrorCode::Forbidden,
+            message: "Admin role issuance requires issuer wildcard authority".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    }
     let scopes = req.scopes.unwrap_or_else(|| req.role.default_scopes());
+    if let Err(error) = crate::admin::scope_attenuation::check_scope_attenuation(issuer, &scopes) {
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    }
+
     let token_value = generate_token_value();
     let token_salt = generate_token_salt();
     let token_lookup_hash = hash_token_value(&token_value);
@@ -78,6 +117,7 @@ pub(crate) async fn create_token(
                 "success",
                 Some(serde_json::json!({
                     "role": format!("{:?}", req.role),
+                    "issuer": issuer.actor_id,
                 })),
                 Some(crate::monitoring::GovernanceRoute::AgentsCreate),
             )
@@ -227,6 +267,7 @@ pub(crate) async fn revoke_token(
 pub(crate) async fn rotate_token(
     State(state): State<Arc<AppState>>,
     Path(token_id): Path<String>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<RotateTokenRequest>,
 ) -> Response {
     // Get the old token
@@ -296,6 +337,46 @@ pub(crate) async fn rotate_token(
         }
     }
 
+    // Scope attenuation for rotation: the rotated token inherits the old token's
+    // role and scopes, so the issuer must be able to issue those scopes.
+    let Some(issuer) = auth_actor.as_deref() else {
+        let error = ApiError {
+            code: ApiErrorCode::Forbidden,
+            message: "caller identity and scopes could not be established".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    };
+    if old_token.role == ferrum_proto::TokenRole::Admin && !issuer.scopes.iter().any(|s| s == "*") {
+        let error = ApiError {
+            code: ApiErrorCode::Forbidden,
+            message: "Admin role token rotation requires issuer wildcard authority".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    }
+    if let Err(error) =
+        crate::admin::scope_attenuation::check_scope_attenuation(issuer, &old_token.scopes)
+    {
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    }
+
     // Revoke the old token
     let _ = state
         .runtime
@@ -341,6 +422,7 @@ pub(crate) async fn rotate_token(
                 Some(serde_json::json!({
                     "old_token_id": token_id,
                     "reason": req.reason,
+                    "issuer": issuer.actor_id,
                 })),
                 Some(crate::monitoring::GovernanceRoute::AgentsCreate),
             )

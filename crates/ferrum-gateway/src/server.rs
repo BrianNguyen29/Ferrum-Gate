@@ -5077,7 +5077,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     use ferrum_proto::{
-        ActionType, RollbackContract, RollbackContractId, RollbackState, RollbackTarget,
+        ActionType, HttpMethod, RollbackContract, RollbackContractId, RollbackState, RollbackTarget,
     };
 
     /// Helper: create intent + proposal + capability + execution in a specific state.
@@ -5258,6 +5258,173 @@ mod tests {
         runtime.store.executions().update(&execution).await.unwrap();
 
         contract_id
+    }
+
+    /// Helper: link an R2Compensatable contract with the given action type to
+    /// an execution. Used by Slice 1 execute-gate negative tests.
+    async fn link_r2_rollback_contract(
+        runtime: &GatewayRuntime,
+        execution_id: ExecutionId,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ProposalId,
+        action_type: ActionType,
+        target: RollbackTarget,
+    ) -> RollbackContractId {
+        let adapter_key = match action_type {
+            ActionType::HttpMutation => "http".to_string(),
+            ActionType::SqlMutation => "sqlite".to_string(),
+            _ => "noop".to_string(),
+        };
+        let contract_id = RollbackContractId::new();
+        let contract = RollbackContract {
+            contract_id,
+            intent_id,
+            proposal_id,
+            execution_id,
+            action_type,
+            rollback_class: RollbackClass::R2Compensatable,
+            adapter_key,
+            target,
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .rollback_contracts()
+            .insert(&contract)
+            .await
+            .unwrap();
+
+        let mut execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        execution.rollback_contract_id = Some(contract_id);
+        runtime.store.executions().update(&execution).await.unwrap();
+
+        contract_id
+    }
+
+    /// R-2 Slice 1: execute_execution rejects legacy persisted R2Compensatable
+    /// contracts for HttpMutation before the adapter or state transition is
+    /// attempted.
+    #[tokio::test]
+    async fn test_execute_rejects_legacy_r2_http_mutation_contract() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Prepared).await;
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        link_r2_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            ActionType::HttpMutation,
+            RollbackTarget::HttpRequest {
+                method: HttpMethod::Post,
+                url: "https://example.com".to_string(),
+                request_digest: String::new(),
+            },
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/execute", execution_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"payload": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "legacy R2 HttpMutation contract execute should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("R2Compensatable"),
+            "Error should name R2Compensatable: {}",
+            body_str
+        );
+    }
+
+    /// R-2 Slice 1: execute_execution rejects legacy persisted R2Compensatable
+    /// contracts for SqlMutation before the adapter or state transition is
+    /// attempted.
+    #[tokio::test]
+    async fn test_execute_rejects_legacy_r2_sql_mutation_contract() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Prepared).await;
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        link_r2_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            ActionType::SqlMutation,
+            RollbackTarget::SqliteTxn {
+                db_path: "/tmp/test.db".to_string(),
+                tx_id: "tx-1".to_string(),
+            },
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/execute", execution_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"payload": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "legacy R2 SqlMutation contract execute should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("R2Compensatable"),
+            "Error should name R2Compensatable: {}",
+            body_str
+        );
     }
 
     /// D-1 Slice 4: prepare_execution on Proposed execution returns 409.
@@ -9075,6 +9242,411 @@ rules:
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    // ── Scope Attenuation Tests ──
+
+    #[tokio::test]
+    async fn test_admin_token_create_scope_subset_success() {
+        let mut issuer_scopes = ferrum_proto::TokenRole::Operator.default_scopes();
+        issuer_scopes.push("admin:tokens".to_string());
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "reader".to_string(),
+            role: ferrum_proto::TokenRole::ReadOnly,
+            scopes: None,
+            description: Some("subset success".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let create_resp: ferrum_proto::CreateTokenResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            create_resp.token.scopes,
+            ferrum_proto::TokenRole::ReadOnly.default_scopes()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_scope_overbroad_denied() {
+        let issuer_scopes = vec!["admin:tokens".to_string(), "policy:read".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "overbroad".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: None,
+            description: Some("overbroad test".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_admin_role_denied_for_non_root() {
+        let issuer_scopes = vec!["admin:tokens".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "pseudo-admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: None,
+            description: Some("admin escalation".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_wildcard_success_for_root() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "root".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: None,
+            description: Some("wildcard success".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_no_auth_context_fail_closed() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "unknown".to_string(),
+            role: ferrum_proto::TokenRole::ReadOnly,
+            scopes: None,
+            description: Some("no auth context".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_scope_subset_success() {
+        let issuer_scopes = vec![
+            "admin:agents".to_string(),
+            "intent:submit".to_string(),
+            "proposal:evaluate".to_string(),
+        ];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_subset_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["intent:submit".to_string()]),
+            description: Some("subset success".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let register_resp: ferrum_proto::RegisterAgentResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            register_resp.agent.allowed_scopes,
+            vec!["intent:submit".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_scope_overbroad_denied() {
+        let issuer_scopes = vec!["admin:agents".to_string(), "intent:submit".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_overbroad_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec![
+                "intent:submit".to_string(),
+                "proposal:evaluate".to_string(),
+            ]),
+            description: Some("overbroad test".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_wildcard_denied_for_non_root() {
+        let issuer_scopes = vec!["admin:agents".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_wildcard_denied_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["*".to_string()]),
+            description: Some("wildcard escalation".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_wildcard_success_for_root() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_wildcard_ok_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["*".to_string()]),
+            description: Some("wildcard success".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_no_auth_context_fail_closed() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_no_auth_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["intent:submit".to_string()]),
+            description: Some("no auth context".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_rotate_scope_attenuation_denied() {
+        let issuer_scopes = vec!["admin:tokens".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Insert a token with broader scopes than the issuer holds.
+        let target_token_value = generate_token_value();
+        let target_token_salt = generate_token_salt();
+        let target_token_lookup_hash = hash_token_value(&target_token_value);
+        let target_token_hash = hash_token_with_salt(&target_token_value, &target_token_salt);
+        let target_token = ferrum_proto::ScopedToken {
+            token_id: "tok_rotate_overbroad".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: ferrum_proto::TokenRole::Operator.default_scopes(),
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: target_token_lookup_hash,
+            token_hash: target_token_hash,
+            token_salt: target_token_salt,
+        };
+        runtime.store.tokens().insert(&target_token).await.unwrap();
+
+        let rotate_req = ferrum_proto::RotateTokenRequest {
+            expires_at: None,
+            reason: Some("rotate with overbroad inherited scopes".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens/tok_rotate_overbroad/rotate")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // The original token should remain active (not revoked by a failed rotate).
+        let original = runtime
+            .store
+            .tokens()
+            .get("tok_rotate_overbroad")
+            .await
+            .unwrap()
+            .expect("original token still exists");
+        assert!(original.revoked_at.is_none());
+    }
+
     // ── Audit Export Tests ──
 
     async fn setup_audit_entries(runtime: &GatewayRuntime) {
@@ -11499,7 +12071,7 @@ rules:
                 &base64::engine::general_purpose::STANDARD,
                 vec![0u8; 32],
             ),
-            scopes: None,
+            scopes: Some(vec!["admin:agents".to_string()]),
             description: None,
         };
         let body_bytes = serde_json::to_vec(&create_req).unwrap();
