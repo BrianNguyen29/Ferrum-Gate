@@ -16,6 +16,8 @@ jobs:
         run: bash scripts/run_secret_scan.sh
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Install cargo security audit tools
         run: |
           cargo install --locked cargo-deny
@@ -77,6 +79,8 @@ jobs:
           fi
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
       - name: Cargo check
@@ -179,6 +183,8 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Cargo test (PostgreSQL live, no skips)
         shell: bash
         run: |
@@ -299,6 +305,8 @@ jobs:
             --versioning-configuration Status=Enabled
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Cargo test (S3 MinIO live, ignored tests)
         shell: bash
         run: |
@@ -315,6 +323,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: stable
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3

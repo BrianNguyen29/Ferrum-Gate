@@ -9,10 +9,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTE_SOURCES = [
+    ROOT / "crates" / "ferrum-gateway" / "src" / "auth.rs",
     ROOT / "crates" / "ferrum-gateway" / "src" / "routes.rs",
     ROOT / "crates" / "ferrum-gateway" / "src" / "server.rs",
 ]
 DOC = ROOT / "docs" / "security" / "scoped-tokens-rbac.md"
+
+
+ISOLATED_SOURCES = {"auth.rs", "server.rs"}
 
 
 def main() -> int:
@@ -21,11 +25,11 @@ def main() -> int:
         print("No gateway route scope source found", file=sys.stderr)
         return 1
     route_text = route_source.read_text(encoding="utf-8")
-    if route_source.name == "server.rs":
+    if route_source.name in ISOLATED_SOURCES:
         start = route_text.find("fn required_scope_for_path")
         end = route_text.find("// ---------------------------------------------------------------------------", start)
         if start == -1 or end == -1:
-            print("Could not isolate required_scope_for_path in server.rs", file=sys.stderr)
+            print(f"Could not isolate required_scope_for_path in {route_source}", file=sys.stderr)
             return 1
         route_text = route_text[start:end]
     doc_text = DOC.read_text(encoding="utf-8")
