@@ -7,7 +7,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
 };
 use chrono::Utc;
@@ -19,6 +19,7 @@ use ferrum_proto::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::AuthActor;
 use crate::macros::{governance_err, governance_ok};
 use crate::mfa::{TotpVerifyResult, check_agent_mfa_lockout, reset_mfa_lockout_after_success};
 use crate::monitoring::GovernanceRoute;
@@ -203,6 +204,7 @@ fn totp_verify_result_to_problem(result: TotpVerifyResult) -> ApiProblem {
 async fn verify_mfa_factor(
     state: &AppState,
     request: &QuarantineResolveRequest,
+    effective_actor_id: &str,
 ) -> Result<(), ApiProblem> {
     let mfa_factor = match request.mfa_factor {
         Some(ref f) => f,
@@ -249,12 +251,7 @@ async fn verify_mfa_factor(
     };
 
     // Check agent-level lockout before fetching the factor.
-    match check_agent_mfa_lockout(
-        state.runtime.store.mfa_credentials(),
-        &request.actor.actor_id,
-    )
-    .await
-    {
+    match check_agent_mfa_lockout(state.runtime.store.mfa_credentials(), effective_actor_id).await {
         Ok(Some(retry_after_secs)) => return Err(mfa_locked_problem(retry_after_secs)),
         Ok(None) => {}
         Err(e) => return Err(ApiProblem::internal(anyhow::Error::from(e))),
@@ -280,7 +277,7 @@ async fn verify_mfa_factor(
         }
     };
 
-    if record.agent_id != request.actor.actor_id {
+    if record.agent_id != effective_actor_id {
         return Err(ApiProblem::new(
             StatusCode::FORBIDDEN,
             ApiErrorCode::MfaInvalid,
@@ -350,6 +347,7 @@ async fn verify_mfa_factor(
 
 pub(crate) async fn resolve_quarantine_hold(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Path(hold_id): Path<String>,
     Json(request): Json<QuarantineResolveRequest>,
 ) -> Result<Json<ferrum_proto::QuarantineHold>, ApiProblem> {
@@ -359,8 +357,44 @@ pub(crate) async fn resolve_quarantine_hold(
             .record_governance_error(GovernanceRoute::QuarantinesResolve, e)
     })?;
 
+    // Authenticated actor binding: when an AuthActor is present (Scoped/OIDC/Agent),
+    // it is authoritative. Reject any request-body actor asserting a different
+    // identity before MFA or state mutation (fail closed). When no AuthActor is
+    // present (Bearer/Disabled), retain the request-body actor for compatibility.
+    //
+    // The authenticated ActorRef is fully server-derived: actor_type is mapped from
+    // the auth source and display_name is cleared, so a forged request body cannot
+    // persist or provenance an attacker-controlled actor_type/display_name. An empty
+    // body actor_id is treated as omitted for compatibility.
+    let effective_actor = match &auth_actor {
+        Some(Extension(actor)) => {
+            if !request.actor.actor_id.is_empty() && request.actor.actor_id != actor.actor_id {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::QuarantinesResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::Forbidden,
+                        "request actor does not match authenticated actor",
+                    )
+                );
+            }
+            let actor_type = if actor.source == "agent" {
+                ferrum_proto::ActorType::Agent
+            } else {
+                ferrum_proto::ActorType::Operator
+            };
+            ferrum_proto::ActorRef {
+                actor_type,
+                actor_id: actor.actor_id.clone(),
+                display_name: None,
+            }
+        }
+        None => request.actor.clone(),
+    };
+
     if state.server_config.approval_mfa_required {
-        if let Err(problem) = verify_mfa_factor(&state, &request).await {
+        if let Err(problem) = verify_mfa_factor(&state, &request, &effective_actor.actor_id).await {
             return governance_err!(state, GovernanceRoute::QuarantinesResolve, problem);
         }
     }
@@ -423,7 +457,7 @@ pub(crate) async fn resolve_quarantine_hold(
         .resolve(
             hold_id,
             request.allow,
-            &request.actor,
+            &effective_actor,
             request.reason.as_deref(),
             resolved_at,
         )
@@ -449,7 +483,7 @@ pub(crate) async fn resolve_quarantine_hold(
 
     if let Err(problem) = crate::audit::append_audit_checked(
         &state,
-        &request.actor.actor_id,
+        &effective_actor.actor_id,
         AuditAction::QuarantineResolve,
         AuditResourceType::QuarantineHold,
         &hold_id.to_string(),
@@ -492,7 +526,7 @@ pub(crate) async fn resolve_quarantine_hold(
     let mut metadata = ferrum_proto::JsonMap::new();
     metadata.insert(
         "actor_id".to_string(),
-        serde_json::json!(request.actor.actor_id),
+        serde_json::json!(&effective_actor.actor_id),
     );
     metadata.insert("allowed".to_string(), serde_json::json!(request.allow));
     if let Some(reason) = &request.reason {
@@ -503,7 +537,7 @@ pub(crate) async fn resolve_quarantine_hold(
         event_id: EventId::new(),
         kind: event_kind,
         occurred_at: Utc::now(),
-        actor: request.actor.clone(),
+        actor: effective_actor.clone(),
         object: ObjectRef {
             object_type: ObjectType::QuarantineHold,
             object_id: hold_id.to_string(),

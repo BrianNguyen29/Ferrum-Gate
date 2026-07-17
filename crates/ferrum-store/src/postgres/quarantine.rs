@@ -27,8 +27,8 @@ impl QuarantineHoldRepo for PostgresQuarantineHoldRepo {
         sqlx::query(
             "INSERT INTO quarantine_holds (
                 hold_id, intent_id, proposal_id, state, reason, matched_rule_ids,
-                policy_bundle_id, expires_at, created_at, raw_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                policy_bundle_id, expires_at, created_at, owner_actor_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(hold.hold_id.to_string())
         .bind(hold.intent_id.to_string())
@@ -39,6 +39,7 @@ impl QuarantineHoldRepo for PostgresQuarantineHoldRepo {
         .bind(hold.policy_bundle_id.as_ref())
         .bind(hold.expires_at.to_rfc3339())
         .bind(hold.created_at.to_rfc3339())
+        .bind(&hold.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;

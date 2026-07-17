@@ -69,6 +69,16 @@ Or use `prometheus --config.file` to load directly.
    ```
 3. Reload Prometheus
 
+> **Runbook URLs are repo-relative defaults.** Each alert's `runbook_url`
+> annotation points to `../../docs/operations/runbook.md#<alert-id>` so the link
+> resolves when the rules file is viewed inside the FerrumGate repository. For
+> standalone Prometheus deployments without a repo checkout next to the rules,
+> replace these with an absolute URL to your hosted runbook, or copy
+> `docs/operations/runbook.md` alongside the rules file.
+> `scripts/validate_monitoring_metrics.py` emits non-failing warnings for any
+> alert missing a `runbook_url` or still using the `docs.example.com`
+> placeholder.
+
 ### Grafana Dashboard
 
 1. Copy `ferrumgate-grafana-dashboard.json` to your Grafana provisioning directory or import via the UI:
@@ -86,6 +96,22 @@ python3 scripts/validate_monitoring_metrics.py
 ```
 
 The validator checks alert-rule and dashboard `ferrumgate_*` references against the metrics emitted by `crates/ferrum-gateway/src/monitoring.rs`. Metrics supplied by external exporters, such as `node_*` or `pg_*`, remain outside this application contract.
+
+### Template validation
+
+Monitoring configs in this directory are templates. Use structural validation to confirm each file retains an approved header marker:
+
+```bash
+python3 scripts/validate_monitoring_templates.py
+```
+
+Run the explicit production drift gate only against real production-rendered configs (not these templates):
+
+```bash
+make validate-prod-monitoring
+```
+
+In `--production` mode the validator fails on active (uncommented) unsafe placeholder values such as `insecure_skip_verify: true`, `localhost:9093`, `nip.io`, and `REPLACE_WITH_*`. Case variants of these values (for example `TRUE`, `LocalHost`, or `NIP.IO`) are also detected, while commented examples are ignored.
 
 #### PostgreSQL Alert Rules
 

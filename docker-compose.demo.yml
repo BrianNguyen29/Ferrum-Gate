@@ -34,6 +34,11 @@ services:
       start_period: 5s
     # Restart policy for local dev only — NOT for production
     restart: "no"
+    # Container hardening (local demo only — not a production-ready claim)
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
     # Resource limits — adjust for local testing
     deploy:
       resources:

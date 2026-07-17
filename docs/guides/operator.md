@@ -26,8 +26,11 @@ CLI args > env vars > config file > defaults
 | `FERRUMD_SQLITE_DB_ROOTS` | Comma-separated SQLite database parent roots | `/var/lib/ferrumgate/databases` |
 | `FERRUMD_LOG_FILTER` | Log filter | `info` |
 | `FERRUMD_LOG_FORMAT` | Log format | `json` |
-| `FERRUMD_RATE_LIMIT_PER_SECOND` | Rate limit | `2` |
-| `FERRUMD_RATE_LIMIT_BURST` | Rate limit burst | `50` |
+| `FERRUMD_RATE_LIMIT_PER_SECOND` | Inner authenticated rate limit | `2` |
+| `FERRUMD_RATE_LIMIT_BURST` | Inner authenticated rate limit burst | `50` |
+| `FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND` | Outer pre-auth rate limit (inherits rate limit if unset) | `2` |
+| `FERRUMD_PRE_AUTH_RATE_LIMIT_BURST` | Outer pre-auth burst (inherits rate limit burst if unset) | `50` |
+| `FERRUMD_TRUSTED_PROXY_CIDRS` | Comma-separated CIDRs of trusted immediate peers | `10.0.0.0/8,172.16.0.0/12` |
 | `FERRUMD_ALLOW_INSECURE_NONLOCAL_BIND` | Allow non-local bind without TLS | `false` (default) |
 | `FERRUMD_STORE_SYNCHRONOUS` | SQLite synchronous pragma | `NORMAL` |
 | `FERRUMD_STORE_WAL_AUTOCHECKPOINT` | SQLite WAL autocheckpoint pages | `1000` |
@@ -60,6 +63,9 @@ sqlite_db_roots = ["/var/lib/ferrumgate/databases"]
 log_format = "json"
 rate_limit_per_second = 2
 rate_limit_burst = 50
+# trusted_proxy_cidrs = []   # safest default; only peers in these CIDRs may supply X-Real-IP
+# pre_auth_rate_limit_per_second = 2
+# pre_auth_rate_limit_burst = 50
 store_dsn = "sqlite:///var/lib/ferrumgate/ferrumgate.db"
 ```
 
@@ -79,11 +85,16 @@ This config auto-loads if no `--config` is specified and the file exists. **Neve
 
 ## Deployment checklist
 
+- [ ] Enable `lifecycle_reconciliation_enabled` for production-like deployments.
+- [ ] Enable `approval_timeout_enabled` for production-like deployments.
+- [ ] Enable `audit_fail_closed` for production-like deployments.
+- [ ] Enable `ha_reconciler_enabled` for production-like deployments so stale side-effect pairs are recoverable on restart.
 - [ ] Choose store backend (SQLite for local use; PostgreSQL for higher throughput).
 - [ ] Generate bearer token with `openssl rand -hex 32`.
 - [ ] Set `fs_workdir` / `FERRUMD_FS_WORKDIR` for any non-loopback production-like deployment.
 - [ ] Set Git and SQLite root allowlists before enabling their mutation adapters.
 - [ ] Configure reverse proxy with TLS termination (nginx/Caddy).
+- [ ] If ferrumd sits behind a reverse proxy, configure `trusted_proxy_cidrs` and ensure the proxy sets a single `X-Real-IP` header; otherwise leave it empty to bucket by peer IP.
 - [ ] Set up systemd service with env file.
 - [ ] Enable backup timer/cron.
 - [ ] Configure AlertManager for off-VM alerting.
@@ -205,6 +216,48 @@ curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/v1/metrics | 
 ```
 
 Expected after remediation: `ferrumgate_lifecycle_outbox_operator_review` returns to `0`, expired leases do not grow, and deep readiness no longer reports lifecycle outbox degradation.
+
+## Recovery-required review
+
+Executions or rollback contracts in the `RecoveryRequired` state are ambiguous and require operator review before they can terminalize. This state is non-terminal: the gateway will not auto-commit, auto-compensate, or auto-fail the side effect.
+
+Common causes:
+- The adapter reported a recoverable error during execution.
+- Verification checks returned an indeterminate outcome.
+- The HA reconciler found a stale `Running + Prepared` pair after a crash or restart.
+- An HTTP or SQLite mutation side effect was attempted without the required R3 classification.
+
+HTTP and SQLite mutation adapters are permanently R2-rejected. Only explicit policy-approved R3 actions (`auto_commit=false`) with manual verification and commit are permitted.
+
+### Inspect records
+
+```bash
+ferrumctl admin lifecycle-outbox list --status needs_operator_review --limit 50
+ferrumctl admin lifecycle-outbox get <outbox-id>
+ferrumctl executions get <execution-id>
+ferrumctl rollback-contracts get <contract-id>
+```
+
+### Resolve
+
+After externally verifying the side-effect state, choose the appropriate terminal path:
+
+```bash
+# If the side effect succeeded and should be kept:
+ferrumctl executions commit <execution-id> --actor-id <operator-id> --reason "verified externally"
+
+# If the side effect can be safely undone by the configured compensation plan:
+ferrumctl executions compensate <execution-id> --actor-id <operator-id> --reason "undone via rollback plan"
+
+# If the side effect cannot be recovered and must be marked failed:
+ferrumctl executions fail <execution-id> --actor-id <operator-id> --reason "external recovery impossible"
+```
+
+Each resolution requires a non-empty reason and emits an audit trail with the operator actor.
+
+### Downgrade safety
+
+Do not downgrade to a gateway version that does not understand `RecoveryRequired` while rows in that state remain in the store. Resolve every `RecoveryRequired` execution to a terminal state before downgrading, or migrate the rows to a state the older version understands.
 
 ---
 

@@ -259,12 +259,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn threshold_profiler_prunes_stale_events() {
+    #[tokio::test]
+    async fn threshold_profiler_prunes_stale_events_without_wall_clock_sleep() {
+        tokio::time::pause();
         let profiler = ThresholdBehavioralProfiler::new(Duration::from_millis(10), 2, 3, 10);
         let (risk, rollback) = high_risk_proposal();
 
-        // Two events are within the window; the second triggers a warning.
+        // Two events within the window; the second triggers a warning.
         assert!(
             profiler
                 .inspect_proposal("p", risk.clone(), rollback.clone())
@@ -276,12 +277,65 @@ mod tests {
             Some(BehavioralSeverity::Warning)
         );
 
-        // Wait for the window to elapse; the next event should be the only one.
-        std::thread::sleep(Duration::from_millis(15));
+        // Advance time past the window; the next event should be the only one.
+        tokio::time::advance(Duration::from_millis(15)).await;
         assert!(
             profiler
                 .inspect_proposal("p", risk.clone(), rollback.clone())
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn threshold_profiler_critical_risk_tier_triggers_at_threshold() {
+        let profiler = ThresholdBehavioralProfiler::new(Duration::from_secs(60), 2, 3, 10);
+        let rollback = RollbackClass::R0NativeReversible;
+
+        for i in 1..=3 {
+            let finding = profiler.inspect_proposal("p", RiskTier::Critical, rollback.clone());
+            if i < 2 {
+                assert!(finding.is_none(), "expected no finding at count {}", i);
+            } else if i < 3 {
+                assert_eq!(
+                    finding.map(|f| f.severity),
+                    Some(BehavioralSeverity::Warning),
+                    "expected warning at count {}",
+                    i
+                );
+            } else {
+                assert_eq!(
+                    finding.map(|f| f.severity),
+                    Some(BehavioralSeverity::Critical),
+                    "expected critical at count {}",
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn threshold_profiler_principal_isolation_maintains_independent_windows() {
+        let profiler = ThresholdBehavioralProfiler::new(Duration::from_secs(60), 2, 3, 10);
+        let (risk, rollback) = high_risk_proposal();
+
+        // One principal crosses the warning threshold.
+        profiler.inspect_proposal("principal-a", risk.clone(), rollback.clone());
+        let finding = profiler.inspect_proposal("principal-a", risk.clone(), rollback.clone());
+        assert_eq!(
+            finding.map(|f| f.severity),
+            Some(BehavioralSeverity::Warning)
+        );
+
+        // Another principal must start from zero even after the first has a finding.
+        assert!(
+            profiler
+                .inspect_proposal("principal-b", risk.clone(), rollback.clone())
+                .is_none()
+        );
+        let finding = profiler.inspect_proposal("principal-b", risk.clone(), rollback.clone());
+        assert_eq!(
+            finding.map(|f| f.severity),
+            Some(BehavioralSeverity::Warning)
         );
     }
 

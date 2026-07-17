@@ -186,6 +186,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -204,6 +205,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 

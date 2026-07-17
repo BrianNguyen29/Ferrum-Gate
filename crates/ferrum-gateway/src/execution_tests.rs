@@ -1,5 +1,10 @@
 use super::*;
-use ferrum_proto::{ResourceBinding, ResourceMode};
+use chrono::Utc;
+use ferrum_cap::CapabilityService;
+use ferrum_proto::{
+    ActionProposal, ArgumentConstraint, ExecutionState, ResourceBinding, ResourceMode,
+    ResourceSelector, RollbackClass,
+};
 
 #[test]
 fn cancel_only_allows_pre_side_effect_states() {
@@ -215,6 +220,7 @@ async fn capability_binding_rejects_tool_mismatch() {
         taint_inputs: Vec::new(),
         metadata: ferrum_proto::JsonMap::new(),
         created_at: Utc::now(),
+        owner_actor_id: None,
     };
     assert!(validate_capability_proposal_binding(&lease, &proposal).is_err());
 }

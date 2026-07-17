@@ -1,0 +1,116 @@
+{
+  "format_version": "1.0",
+  "kind": "coverage-baseline",
+  "authoritative": false,
+  "note": "SAMPLE / NON-AUTHORITATIVE library-only coverage baseline for CI scaffolding.",
+  "commit": "a14150e3a1956d4244b0fda551486d3fc3d47209",
+  "short_commit": "a14150e",
+  "branch": "roadmap/p0-p2-governance-stack",
+  "captured_at": "2026-07-15T00:07:29.915205Z",
+  "command": "cargo llvm-cov test --lib --workspace --ignore-run-fail",
+  "lcov_command": "cargo llvm-cov report --lcov --summary-only --output-path coverage-lcov.info",
+  "runner": "local uncontrolled development environment",
+  "scope": "library-only (binary crates omitted)",
+  "total": {
+    "lines_total": 51334,
+    "lines_hit": 42440,
+    "coverage_percent": 82.67
+  },
+  "crates": {
+    "ferrum-adapter-fs": {
+      "lines_total": 790,
+      "lines_hit": 521,
+      "coverage_percent": 65.95
+    },
+    "ferrum-adapter-gcs": {
+      "lines_total": 897,
+      "lines_hit": 765,
+      "coverage_percent": 85.28
+    },
+    "ferrum-adapter-git": {
+      "lines_total": 553,
+      "lines_hit": 398,
+      "coverage_percent": 71.97
+    },
+    "ferrum-adapter-http": {
+      "lines_total": 1040,
+      "lines_hit": 736,
+      "coverage_percent": 70.77
+    },
+    "ferrum-adapter-maildraft": {
+      "lines_total": 898,
+      "lines_hit": 772,
+      "coverage_percent": 85.97
+    },
+    "ferrum-adapter-s3": {
+      "lines_total": 993,
+      "lines_hit": 891,
+      "coverage_percent": 89.73
+    },
+    "ferrum-adapter-sqlite": {
+      "lines_total": 1506,
+      "lines_hit": 1389,
+      "coverage_percent": 92.23
+    },
+    "ferrum-audit-bundle": {
+      "lines_total": 473,
+      "lines_hit": 420,
+      "coverage_percent": 88.79
+    },
+    "ferrum-cap": {
+      "lines_total": 182,
+      "lines_hit": 179,
+      "coverage_percent": 98.35
+    },
+    "ferrum-firewall": {
+      "lines_total": 583,
+      "lines_hit": 548,
+      "coverage_percent": 94.0
+    },
+    "ferrum-gateway": {
+      "lines_total": 24770,
+      "lines_hit": 18879,
+      "coverage_percent": 76.22
+    },
+    "ferrum-graph": {
+      "lines_total": 261,
+      "lines_hit": 261,
+      "coverage_percent": 100.0
+    },
+    "ferrum-integrations-mcp": {
+      "lines_total": 6648,
+      "lines_hit": 6105,
+      "coverage_percent": 91.83
+    },
+    "ferrum-pdp": {
+      "lines_total": 1650,
+      "lines_hit": 1625,
+      "coverage_percent": 98.48
+    },
+    "ferrum-proto": {
+      "lines_total": 914,
+      "lines_hit": 816,
+      "coverage_percent": 89.28
+    },
+    "ferrum-rollback": {
+      "lines_total": 483,
+      "lines_hit": 359,
+      "coverage_percent": 74.33
+    },
+    "ferrum-store": {
+      "lines_total": 7584,
+      "lines_hit": 6777,
+      "coverage_percent": 89.36
+    },
+    "ferrum-sync": {
+      "lines_total": 1011,
+      "lines_hit": 901,
+      "coverage_percent": 89.12
+    },
+    "ferrum-testkit": {
+      "lines_total": 98,
+      "lines_hit": 98,
+      "coverage_percent": 100.0
+    }
+  }
+}

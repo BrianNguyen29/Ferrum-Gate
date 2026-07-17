@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -27,6 +27,7 @@ use ferrum_proto::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::AuthActor;
 use crate::macros::{governance_err, governance_ok};
 use crate::mfa::{TotpVerifyResult, check_agent_mfa_lockout, reset_mfa_lockout_after_success};
 use crate::monitoring::GovernanceRoute;
@@ -328,6 +329,7 @@ pub(crate) async fn get_approval(
 
 pub(crate) async fn resolve_approval(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Path(approval_id): Path<String>,
     Json(request): Json<ApprovalResolveRequest>,
 ) -> Result<Json<ferrum_proto::ApprovalRequest>, ApiProblem> {
@@ -336,6 +338,28 @@ pub(crate) async fn resolve_approval(
             .metrics
             .record_governance_error(GovernanceRoute::ApprovalsResolve, e)
     })?;
+
+    // Authenticated actor binding: when an AuthActor is present (Scoped/OIDC/Agent),
+    // it is authoritative. Reject any request-body actor asserting a different
+    // identity before MFA or state mutation (fail closed). When no AuthActor is
+    // present (Bearer/Disabled), retain the request-body actor for compatibility.
+    let effective_actor_id = match &auth_actor {
+        Some(Extension(actor)) => {
+            if !request.actor.actor_id.is_empty() && request.actor.actor_id != actor.actor_id {
+                return governance_err!(
+                    state,
+                    GovernanceRoute::ApprovalsResolve,
+                    ApiProblem::new(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::Forbidden,
+                        "request actor does not match authenticated actor",
+                    )
+                );
+            }
+            actor.actor_id.clone()
+        }
+        None => request.actor.actor_id.clone(),
+    };
 
     // ADR008 Phase 2: MFA verification for approval resolve.
     // When enabled, require a valid active TOTP factor from the resolver.
@@ -383,11 +407,8 @@ pub(crate) async fn resolve_approval(
 
         // Check agent-level lockout before fetching the factor to avoid leaking
         // factor existence while the agent is locked.
-        match check_agent_mfa_lockout(
-            state.runtime.store.mfa_credentials(),
-            &request.actor.actor_id,
-        )
-        .await
+        match check_agent_mfa_lockout(state.runtime.store.mfa_credentials(), &effective_actor_id)
+            .await
         {
             Ok(Some(retry_after_secs)) => {
                 return governance_err!(
@@ -434,7 +455,7 @@ pub(crate) async fn resolve_approval(
             }
         };
 
-        if record.agent_id != request.actor.actor_id {
+        if record.agent_id != effective_actor_id {
             return governance_err!(
                 state,
                 GovernanceRoute::ApprovalsResolve,
@@ -585,8 +606,12 @@ pub(crate) async fn resolve_approval(
         );
     }
 
+    // Single timestamp used for the expiry fast-path and the atomic CAS write so
+    // the store's compare-and-swap predicate evaluates a consistent `now`.
+    let now = Utc::now();
+
     // Check if approval has expired
-    if approval.expires_at < Utc::now() {
+    if approval.expires_at < now {
         return governance_err!(
             state,
             GovernanceRoute::ApprovalsResolve,
@@ -605,12 +630,15 @@ pub(crate) async fn resolve_approval(
         ApprovalState::Denied
     };
 
-    // Call store to resolve the approval (validates transition)
-    state
+    // Atomically resolve the approval. The store's compare-and-swap predicate
+    // requires the row to still be `Pending` and unexpired at write time, so
+    // only one concurrent resolver can win. A lost race (already terminal or
+    // expired at write time) is a client conflict, never a server error.
+    let won = state
         .runtime
         .store
         .approvals()
-        .resolve(approval_id, target_state.clone())
+        .resolve(approval_id, target_state.clone(), now)
         .await
         .map_err(|e| {
             state.metrics.record_governance_error(
@@ -619,10 +647,22 @@ pub(crate) async fn resolve_approval(
             )
         })?;
 
+    if !won {
+        return governance_err!(
+            state,
+            GovernanceRoute::ApprovalsResolve,
+            ApiProblem::new(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "approval could not be resolved: it is no longer pending or has expired",
+            )
+        );
+    }
+
     // Audit log: approval resolved
     if let Err(problem) = crate::audit::append_audit_checked(
         &state,
-        &request.actor.actor_id,
+        &effective_actor_id,
         AuditAction::ApprovalResolve,
         AuditResourceType::Approval,
         &approval_id.to_string(),
@@ -670,11 +710,47 @@ pub(crate) async fn resolve_approval(
     };
     let event_kind_for_summary = event_kind.clone();
 
+    // Resolver evidence metadata (P0 role binding):
+    // - Authenticated resolvers (Scoped/OIDC/Agent) are recorded with
+    //   actor_authenticated=true plus their auth source and role (when the auth
+    //   mode carries one), so I6 approver_roles checks bind to authenticated
+    //   evidence rather than request-body claims.
+    // - Bearer/Disabled resolvers have no authenticated identity: record the
+    //   request-body actor explicitly as unauthenticated legacy evidence
+    //   (actor_authenticated=false, actor_source=request_body_legacy) so it can
+    //   never satisfy role-bound approval bindings.
     let mut metadata = ferrum_proto::JsonMap::new();
     metadata.insert(
-        "actor_id".to_string(),
-        serde_json::json!(request.actor.actor_id),
+        "approval_id".to_string(),
+        serde_json::json!(approval_id.to_string()),
     );
+    metadata.insert(
+        "actor_id".to_string(),
+        serde_json::json!(&effective_actor_id),
+    );
+    match &auth_actor {
+        Some(Extension(actor)) => {
+            metadata.insert("actor_source".to_string(), serde_json::json!(actor.source));
+            metadata.insert("actor_authenticated".to_string(), serde_json::json!(true));
+            if let Some(role) = actor.role {
+                metadata.insert(
+                    "actor_role".to_string(),
+                    serde_json::json!(role.to_string()),
+                );
+            }
+        }
+        None => {
+            metadata.insert(
+                "actor_source".to_string(),
+                serde_json::json!("request_body_legacy"),
+            );
+            metadata.insert("actor_authenticated".to_string(), serde_json::json!(false));
+            metadata.insert(
+                "claimed_actor_type".to_string(),
+                serde_json::json!(format!("{:?}", request.actor.actor_type).to_ascii_lowercase()),
+            );
+        }
+    }
     if let Some(reason) = &request.reason {
         metadata.insert("reason".to_string(), serde_json::json!(reason));
     }

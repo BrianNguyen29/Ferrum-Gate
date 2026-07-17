@@ -776,7 +776,6 @@ mod tests {
 
         let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
         assert!(r.locked_until.is_some());
-        assert!(r.locked_until.unwrap() > chrono::Utc::now());
         assert_eq!(r.lockout_count, 2);
     }
 

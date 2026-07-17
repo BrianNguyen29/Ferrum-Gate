@@ -45,8 +45,8 @@ impl ExecutionRepo for SqliteExecutionRepo {
         sqlx::query(
             "INSERT INTO executions (
                 execution_id, intent_id, proposal_id, capability_id, rollback_contract_id,
-                decision, state, started_at, finished_at, result_digest, raw_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                decision, state, started_at, finished_at, result_digest, owner_actor_id, raw_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .bind(execution.execution_id.to_string())
         .bind(execution.intent_id.to_string())
@@ -58,6 +58,7 @@ impl ExecutionRepo for SqliteExecutionRepo {
         .bind(execution.started_at)
         .bind(execution.finished_at)
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -91,7 +92,8 @@ impl ExecutionRepo for SqliteExecutionRepo {
                  state = ?4,
                  finished_at = ?5,
                  result_digest = ?6,
-                 raw_json = ?7
+                 owner_actor_id = ?7,
+                 raw_json = ?8
              WHERE execution_id = ?1",
         )
         .bind(execution.execution_id.to_string())
@@ -100,6 +102,7 @@ impl ExecutionRepo for SqliteExecutionRepo {
         .bind(enum_text(&execution.state)?)
         .bind(execution.finished_at)
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -287,6 +290,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 
@@ -305,6 +309,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -339,6 +344,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -359,6 +365,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 

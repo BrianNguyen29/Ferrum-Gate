@@ -1,38 +1,120 @@
+# FerrumGate CODEOWNERS
+#
+# All structural ownership is assigned to the sole known owner/committer.
+# Global default catches any path not matched by an explicit rule below.
+
 # Global default
 * @BrianNguyen29
 
-# Core crates
-/crates/ferrum-gateway/ @BrianNguyen29
+# -----------------------------------------------------------------------------
+# Safety-kernel crates
+# -----------------------------------------------------------------------------
+/crates/ferrum-pdp/ @BrianNguyen29
+/crates/ferrum-cap/ @BrianNguyen29
 /crates/ferrum-rollback/ @BrianNguyen29
+/crates/ferrum-firewall/ @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# Gateway runtime
+# -----------------------------------------------------------------------------
+/crates/ferrum-gateway/ @BrianNguyen29
+/bins/ferrumd/ @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# Store and protocol crates
+# -----------------------------------------------------------------------------
 /crates/ferrum-store/ @BrianNguyen29
+/crates/ferrum-graph/ @BrianNguyen29
 /crates/ferrum-proto/ @BrianNguyen29
 
-# Adapters
+# -----------------------------------------------------------------------------
+# Adapters (object-store, filesystem, VCS, database, HTTP, email)
+# -----------------------------------------------------------------------------
 /crates/ferrum-adapter-fs/ @BrianNguyen29
 /crates/ferrum-adapter-git/ @BrianNguyen29
 /crates/ferrum-adapter-http/ @BrianNguyen29
 /crates/ferrum-adapter-maildraft/ @BrianNguyen29
 /crates/ferrum-adapter-s3/ @BrianNguyen29
+/crates/ferrum-adapter-gcs/ @BrianNguyen29
 /crates/ferrum-adapter-sqlite/ @BrianNguyen29
 
-# Contracts and schemas
+# -----------------------------------------------------------------------------
+# Operator / CLI / stress / migration / TUI binaries
+# -----------------------------------------------------------------------------
+/bins/ferrumctl/ @BrianNguyen29
+/bins/ferrum-stress/ @BrianNguyen29
+/bins/ferrum-migrate/ @BrianNguyen29
+/bins/ferrum-tui/ @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# MCP, sync, and integration support crates
+# -----------------------------------------------------------------------------
+/crates/ferrum-integrations-mcp/ @BrianNguyen29
+/crates/ferrum-sync/ @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# Audit, test, and quality crates
+# -----------------------------------------------------------------------------
+/crates/ferrum-audit-bundle/ @BrianNguyen29
+/crates/ferrum-testkit/ @BrianNguyen29
+/crates/ferrum-integration-tests/ @BrianNguyen29
+/coverage-thresholds.toml @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# Contracts, schemas, API specifications
+# -----------------------------------------------------------------------------
 /contracts/ @BrianNguyen29
 /schemas/ @BrianNguyen29
 /openapi/ @BrianNguyen29
 
-# Documentation
-docs/ @BrianNguyen29
+# -----------------------------------------------------------------------------
+# Documentation and README files
+# -----------------------------------------------------------------------------
+/docs/ @BrianNguyen29
+README* @BrianNguyen29
+CHANGELOG.md @BrianNguyen29
+CONTRIBUTING.md @BrianNguyen29
+RELEASE.md @BrianNguyen29
 
-# Security, configuration, and policy
+# -----------------------------------------------------------------------------
+# Security and policy
+# -----------------------------------------------------------------------------
 SECURITY.md @BrianNguyen29
-configs/ @BrianNguyen29
-.github/workflows/ @BrianNguyen29
+LICENSE @BrianNguyen29
 
-# Infrastructure
-Makefile @BrianNguyen29
-scripts/ @BrianNguyen29
+# -----------------------------------------------------------------------------
+# Configuration examples and monitoring templates
+# -----------------------------------------------------------------------------
+/configs/ @BrianNguyen29
+/configs/examples/ @BrianNguyen29
+/configs/monitoring/ @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# GitHub repository configuration (workflows, issue templates, bots)
+# -----------------------------------------------------------------------------
+.github/workflows/ @BrianNguyen29
+.github/dependabot.yml @BrianNguyen29
+.github/copilot-instructions.md @BrianNguyen29
+.github/ISSUE_TEMPLATE/ @BrianNguyen29
+.github/CODEOWNERS @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# Packaging and deployment artifacts
+# -----------------------------------------------------------------------------
+/deploy/helm/ @BrianNguyen29
+/deploy/terraform/ @BrianNguyen29
+Dockerfile @BrianNguyen29
+.dockerignore @BrianNguyen29
+docker-compose*.yml @BrianNguyen29
+
+# -----------------------------------------------------------------------------
+# Repository toolchain and build orchestration
+# -----------------------------------------------------------------------------
+AGENTS.md @BrianNguyen29
 Cargo.toml @BrianNguyen29
 Cargo.lock @BrianNguyen29
-
-# Helm chart
-deploy/helm/ @BrianNguyen29
+Makefile @BrianNguyen29
+rust-toolchain.toml @BrianNguyen29
+rustfmt.toml @BrianNguyen29
+clippy.toml @BrianNguyen29
+scripts/ @BrianNguyen29

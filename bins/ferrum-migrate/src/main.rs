@@ -1444,6 +1444,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         sqlite_store.intents().insert(&intent).await.unwrap();
 
@@ -1568,6 +1569,7 @@ mod tests {
                 status: ferrum_proto::IntentStatus::Active,
                 created_at: chrono::Utc::now(),
                 expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+                owner_actor_id: None,
             };
             sqlite_store.intents().insert(&intent).await.unwrap();
         }
@@ -1710,6 +1712,7 @@ mod tests {
                 status: ferrum_proto::IntentStatus::Active,
                 created_at: chrono::Utc::now(),
                 expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+                owner_actor_id: None,
             };
             sqlite_store.intents().insert(&intent).await.unwrap();
         }

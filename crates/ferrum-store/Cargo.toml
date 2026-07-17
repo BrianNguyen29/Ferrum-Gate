@@ -3,6 +3,7 @@ publish = false
 name = "ferrum-store"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [features]
 default = []
@@ -28,4 +29,5 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 
 [dev-dependencies]
+ferrum-testkit = { path = "../ferrum-testkit" }
 tempfile = { workspace = true }

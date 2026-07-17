@@ -2,10 +2,11 @@
 //!
 //! The shallow `/v1/healthz` and `/v1/readyz` routes remain public when gateway auth
 //! is enabled; deep readiness and metrics are protected by the top-level auth
-//! middleware. This module owns the `Metrics` aggregate, the governance
-//! route catalog (`GovernanceRoute`), the per-endpoint latency routing (`PublicRoute`),
-//! and the Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`) used by both
-//! the handlers and `Metrics::record_latency`.
+//! middleware. This module owns the monitoring endpoint handlers and the
+//! Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`). The `Metrics`
+//! aggregate, governance route catalog (`GovernanceRoute`), and per-endpoint
+//! latency routing (`PublicRoute`) live in `crate::metrics` and are re-exported
+//! here for handler use.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -30,7 +31,7 @@ pub(crate) const HISTOGRAM_BOUNDARIES: &[f64] = &[
 ];
 const LIFECYCLE_OUTBOX_METRIC_LIMIT: u32 = 10_000;
 
-pub(crate) use crate::server::{GovernanceRoute, PublicRoute};
+pub(crate) use crate::metrics::{GovernanceRoute, PublicRoute};
 
 pub(crate) async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     let start = Instant::now();
@@ -298,9 +299,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .metrics
         .ha_reconciler_canceled_total
         .load(Ordering::Relaxed);
-    let ha_reconciler_failed_total = state
+    let ha_reconciler_recovery_required_total = state
         .metrics
-        .ha_reconciler_failed_total
+        .ha_reconciler_recovery_required_total
         .load(Ordering::Relaxed);
     let ha_reconciler_errors_total = state
         .metrics
@@ -1084,11 +1085,11 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         "ferrumgate_ha_reconciler_canceled_total {}\n",
         ha_reconciler_canceled_total
     ));
-    body.push_str("# HELP ferrumgate_ha_reconciler_failed_total Number of stale post-side-effect executions transitioned to Failed by the HA reconciler\n");
-    body.push_str("# TYPE ferrumgate_ha_reconciler_failed_total counter\n");
+    body.push_str("# HELP ferrumgate_ha_reconciler_recovery_required_total Number of stale paired Running+Prepared executions transitioned to RecoveryRequired by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_recovery_required_total counter\n");
     body.push_str(&format!(
-        "ferrumgate_ha_reconciler_failed_total {}\n",
-        ha_reconciler_failed_total
+        "ferrumgate_ha_reconciler_recovery_required_total {}\n",
+        ha_reconciler_recovery_required_total
     ));
     body.push_str("# HELP ferrumgate_ha_reconciler_errors_total Number of errors encountered by the HA reconciler\n");
     body.push_str("# TYPE ferrumgate_ha_reconciler_errors_total counter\n");

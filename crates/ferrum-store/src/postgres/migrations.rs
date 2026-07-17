@@ -1,7 +1,8 @@
 //! PostgreSQL embedded migration parity.
 //!
 //! `MIGRATIONS` is the ordered list of forward-only schema changes.
-//! `CURRENT_SCHEMA_VERSION` is **16** after adding the per-agent MFA lockout table.
+//! `CURRENT_SCHEMA_VERSION` is **17** after adding `owner_actor_id` to the core
+//! workflow tables.
 //!
 //! # SQLite-only migrations intentionally skipped
 //!
@@ -162,12 +163,20 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/016_add_mfa_agent_lockouts.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 17,
+        name: "017_add_owner_actor_id",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/017_add_owner_actor_id.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 16;
+pub const CURRENT_SCHEMA_VERSION: i64 = 17;
 
 #[cfg(test)]
 mod tests {

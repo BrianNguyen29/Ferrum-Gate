@@ -132,6 +132,11 @@ pub(crate) async fn evaluate_proposal(
         }
     };
 
+    // Bind proposal ownership to the persisted intent's owner. This is server-
+    // derived and never taken from the request body or principal metadata.
+    let mut proposal = proposal;
+    proposal.owner_actor_id = intent.owner_actor_id.clone();
+
     // Persist the proposal so foreign-key constraints in executions table are satisfied.
     // Synchronous write: must complete before response to guarantee FK constraints.
     if let Err(e) = state.runtime.store.proposals().insert(&proposal).await {
@@ -258,6 +263,7 @@ async fn create_quarantine_hold(
         resolved_by: None,
         resolution_reason: None,
         metadata: ferrum_proto::JsonMap::new(),
+        owner_actor_id: proposal.owner_actor_id.clone(),
     };
 
     if let Err(e) = state.runtime.store.quarantine_holds().insert(&hold).await {
@@ -353,6 +359,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -394,6 +401,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 

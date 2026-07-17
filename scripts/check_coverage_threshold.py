@@ -8,29 +8,96 @@
 # evidence that the thresholds are stable.
 #
 # Usage:
-#   python3 scripts/check_coverage_threshold.py <coverage.txt> [--hard] [--crate CRATE] [--threshold PERCENT]
+#   python3 scripts/check_coverage_threshold.py <coverage.txt> [OPTIONS]
 #
-#   --hard        Exit non-zero if any threshold is missed (default: warn only)
-#   --crate       Check a specific crate (default: all configured critical crates)
-#   --threshold   Override the default threshold for the specified crate
+# Options:
+#   --config PATH  Path to a TOML config file (default: coverage-thresholds.toml)
+#   --hard         Exit non-zero if any threshold is missed (default: warn only)
+#   --crate CRATE  Check a specific crate (overrides config to that crate)
+#   --threshold PERCENT
+#                  Override the threshold for the specified crate (requires --crate)
 #
 # Example:
 #   cargo llvm-cov --workspace --text --output-path coverage.txt
 #   python3 scripts/check_coverage_threshold.py coverage.txt
-#   python3 scripts/check_coverage_threshold.py coverage.txt --hard --crate ferrum-pdp --threshold 60.0
+#   python3 scripts/check_coverage_threshold.py coverage.txt --hard
+#   python3 scripts/check_coverage_threshold.py coverage.txt --crate ferrum-pdp --threshold 60.0
 
 import argparse
 import re
 import sys
+from pathlib import Path
 
 # Critical crates and their aspirational thresholds.
-# These are conservative starting points. Adjust based on evidence.
+# Used only when the TOML config cannot be loaded or no config is supplied.
 DEFAULT_CRITICAL_CRATES = {
     "ferrum-pdp": 50.0,
     "ferrum-gateway": 45.0,
     "ferrum-store": 45.0,
     "ferrumd": 40.0,
 }
+
+DEFAULT_CONFIG_PATH = Path("coverage-thresholds.toml")
+
+
+def load_config(path: Path | None) -> dict[str, float]:
+    """Load crate thresholds from a TOML file.
+
+    The file is expected to contain a ``[thresholds]`` table where each key is a
+    crate name and each value is a coverage percentage. A value of 0.0 marks
+    the crate as monitor-only (no warning/failure on low coverage). If the file
+    is missing or cannot be parsed, fall back to the hard-coded defaults.
+    """
+
+    if path is None:
+        return dict(DEFAULT_CRITICAL_CRATES)
+
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - Python <3.11 fallback
+        print(
+            "[WARN] tomllib unavailable (Python <3.11) and no external TOML parser "
+            "configured; falling back to default thresholds.",
+            file=sys.stderr,
+        )
+        return dict(DEFAULT_CRITICAL_CRATES)
+
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except FileNotFoundError:
+        if path == DEFAULT_CONFIG_PATH:
+            # Config not committed yet or not in cwd; keep going with defaults.
+            print(
+                f"[WARN] Config not found: {path}; using default thresholds.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"[WARN] Config not found: {path}; using default thresholds.", file=sys.stderr)
+        return dict(DEFAULT_CRITICAL_CRATES)
+    except Exception as exc:
+        print(f"[WARN] Could not parse config {path}: {exc}; using default thresholds.", file=sys.stderr)
+        return dict(DEFAULT_CRITICAL_CRATES)
+
+    thresholds = data.get("thresholds", {})
+    if not isinstance(thresholds, dict):
+        print(
+            "[WARN] Config missing [thresholds] table; using default thresholds.",
+            file=sys.stderr,
+        )
+        return dict(DEFAULT_CRITICAL_CRATES)
+
+    result: dict[str, float] = {}
+    for crate, value in thresholds.items():
+        try:
+            result[crate] = float(value)
+        except (TypeError, ValueError):
+            print(
+                f"[WARN] Ignoring non-numeric threshold for '{crate}': {value!r}",
+                file=sys.stderr,
+            )
+
+    return result
 
 
 def parse_coverage_text(path: str) -> dict[str, float]:
@@ -83,6 +150,11 @@ def main():
     )
     parser.add_argument("coverage_file", help="Path to cargo-llvm-cov text output")
     parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to TOML coverage thresholds config (default: coverage-thresholds.toml)",
+    )
+    parser.add_argument(
         "--hard", action="store_true", help="Exit non-zero on threshold miss"
     )
     parser.add_argument("--crate", help="Specific crate to check")
@@ -91,23 +163,38 @@ def main():
     )
     args = parser.parse_args()
 
-    coverage = parse_coverage_text(args.coverage_file)
+    config_path = args.config
+    if config_path is None:
+        # Only use the default config file if it exists, otherwise fall back to
+        # built-in defaults without printing a noisy warning. Explicit --config
+        # still triggers a warning in load_config.
+        config_path = DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else None
 
-    thresholds = dict(DEFAULT_CRITICAL_CRATES)
+    thresholds = load_config(config_path)
+
     if args.crate and args.threshold is not None:
         thresholds = {args.crate: args.threshold}
     elif args.crate:
         if args.crate not in thresholds:
-            print(f"[WARN] Crate {args.crate} not in default critical list; no threshold configured.")
+            print(f"[WARN] Crate {args.crate} not in config; no threshold configured.")
             thresholds = {}
         else:
             thresholds = {args.crate: thresholds[args.crate]}
 
+    coverage = parse_coverage_text(args.coverage_file)
+
     total_warnings = 0
     total_passes = 0
+    monitor_only = {crate for crate, threshold in thresholds.items() if threshold <= 0.0}
 
     for crate, threshold in thresholds.items():
         actual = coverage.get(crate)
+        if threshold <= 0.0:
+            # Monitor-only: report observed coverage if present but never warn/fail.
+            if actual is not None:
+                print(f"[INFO] {crate}: {actual:.2f}% (monitor-only, no threshold)")
+            continue
+
         if actual is None:
             print(f"[WARN] No coverage data found for crate '{crate}'")
             total_warnings += 1
@@ -121,6 +208,9 @@ def main():
             else:
                 print(f"[WARN] {crate}: {actual:.2f}% < {threshold:.2f}% (soft mode)")
             total_warnings += 1
+
+    if monitor_only:
+        print(f"[INFO] {len(monitor_only)} crate(s) configured as monitor-only (threshold 0.0).")
 
     total = coverage.get("TOTAL")
     if total is not None:

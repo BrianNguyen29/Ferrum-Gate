@@ -81,6 +81,7 @@ fn make_test_intent(intent_id: IntentId, status: IntentStatus) -> IntentEnvelope
         status,
         created_at: now,
         expires_at: now + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     }
 }
 
@@ -733,6 +734,7 @@ fn make_test_proposal(
         taint_inputs: vec![],
         metadata: JsonMap::new(),
         created_at: ts_offset(0),
+        owner_actor_id: None,
     }
 }
 
@@ -818,6 +820,7 @@ fn make_test_execution(
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -1332,6 +1335,7 @@ fn make_test_capability(
         expires_at: ts_offset(3600),
         revoked_at: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -1592,6 +1596,7 @@ async fn seed_lifecycle_outbox_graph(store: &PostgresStore) -> (ExecutionRecord,
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
     store.executions().insert(&execution).await.unwrap();
 
@@ -1967,6 +1972,7 @@ async fn postgres_lifecycle_authorization_stores_rfc3339_and_is_stale_visible() 
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
 
     let outbox = LifecycleOutboxRecord::pending(
@@ -2051,6 +2057,161 @@ async fn postgres_lifecycle_authorization_stores_rfc3339_and_is_stale_visible() 
 }
 
 #[tokio::test]
+async fn postgres_record_authorization_rejects_expired_active_capability() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    // Active in status but already past its expires_at: the CAS must refuse it.
+    let mut capability = make_test_capability(
+        capability_id,
+        intent_id,
+        proposal_id,
+        CapabilityStatus::Active,
+    );
+    capability.expires_at = ts_offset(-60);
+    store.capabilities().insert(&capability).await.unwrap();
+
+    let execution_id = ExecutionId::new();
+    let execution = ExecutionRecord {
+        execution_id,
+        proposal_id,
+        intent_id,
+        capability_id,
+        rollback_contract_id: None,
+        decision: Decision::Allow,
+        state: ExecutionState::Prepared,
+        started_at: ts_offset(0),
+        finished_at: None,
+        result_digest: None,
+        metadata: JsonMap::new(),
+        owner_actor_id: None,
+    };
+    let outbox = LifecycleOutboxRecord::pending(
+        execution_id,
+        None,
+        None,
+        ExecutionState::Prepared,
+        None,
+        None,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        format!("authorize:{}", execution_id),
+    );
+
+    let repo = store.lifecycle_outbox();
+    let authorized = repo
+        .record_authorization(&capability, &execution, &outbox)
+        .await
+        .unwrap();
+    assert!(
+        !authorized,
+        "expired-but-active capability must not transition to Used"
+    );
+
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should still exist");
+    assert!(
+        matches!(stored.status, CapabilityStatus::Active),
+        "capability must remain Active after a lost expiry CAS"
+    );
+    assert!(
+        store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "no execution row must be inserted after expiry CAS loss"
+    );
+    assert!(
+        repo.get(outbox.outbox_id).await.unwrap().is_none(),
+        "no lifecycle outbox row must be inserted after expiry CAS loss"
+    );
+}
+
+/// Guards the same TEXT->timestamptz expiry predicate used by
+/// `update_status_if_active` (and shared by `revoke_if_active`). A non-macro
+/// `sqlx::query` cannot catch a `text > timestamptz` operator mismatch at
+/// compile time, so this live test proves the cast resolves to a true
+/// timestamp comparison and refuses an expired-but-Active capability.
+#[tokio::test]
+async fn postgres_update_status_if_active_rejects_expired_capability() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    // Active status but already past expires_at: the CAS predicate must compare
+    // instants (via the TEXT::timestamptz cast), not text, and refuse the row.
+    let mut capability = make_test_capability(
+        capability_id,
+        intent_id,
+        proposal_id,
+        CapabilityStatus::Active,
+    );
+    capability.expires_at = ts_offset(-60);
+    store.capabilities().insert(&capability).await.unwrap();
+
+    let updated = store
+        .capabilities()
+        .update_status_if_active(capability_id, CapabilityStatus::Used)
+        .await
+        .unwrap();
+    assert!(
+        !updated,
+        "expired-but-active capability must not transition via update_status_if_active"
+    );
+
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should still exist");
+    assert!(
+        matches!(stored.status, CapabilityStatus::Active),
+        "capability must remain Active after the expiry CAS refuses"
+    );
+}
+
+#[tokio::test]
 async fn postgres_rollback_insert_and_get_roundtrip() {
     let (store, _guard) = match setup().await {
         Some(s) => s,
@@ -2128,6 +2289,12 @@ async fn postgres_rollback_update_state() {
     let contract = make_test_rollback_contract(contract_id, exec_id);
 
     repo.insert(&contract).await.unwrap();
+
+    // Prepared -> Verified is not a legal rollback transition; step through
+    // ExecutedAwaitingVerify first.
+    repo.update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+        .await
+        .unwrap();
     repo.update_state(contract_id, RollbackState::Verified)
         .await
         .unwrap();
@@ -2241,6 +2408,8 @@ fn make_test_approval(
         expires_at: ts_offset(3600),
         state,
         created_at: ts_offset(0),
+        resolver_evidence_version: None,
+        owner_actor_id: None,
     }
 }
 
@@ -2316,9 +2485,11 @@ async fn postgres_approval_resolve_valid_transition() {
     let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
 
     repo.insert(&approval).await.unwrap();
-    repo.resolve(approval_id, ApprovalState::Granted)
+    let won = repo
+        .resolve(approval_id, ApprovalState::Granted, Utc::now())
         .await
         .unwrap();
+    assert!(won, "Pending->Granted resolve should win the CAS");
 
     let fetched = repo
         .get(approval_id)
@@ -2348,13 +2519,189 @@ async fn postgres_approval_resolve_invalid_transition() {
 
     repo.insert(&approval).await.unwrap();
     let err = repo
-        .resolve(approval_id, ApprovalState::Pending)
+        .resolve(approval_id, ApprovalState::Pending, Utc::now())
         .await
         .unwrap_err();
     assert!(
         matches!(err, ferrum_store::StoreError::InvalidState(_)),
         "expected InvalidState error for transition out of terminal state, got: {}",
         err
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_terminal_loser_returns_false() {
+    // An opposing resolver against an already-terminal approval must lose the
+    // CAS with Ok(false) (never Err) and must not overwrite the winning
+    // decision. This is what lets the gateway map a lost race to 409 on Postgres.
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Granted);
+
+    repo.insert(&approval).await.unwrap();
+
+    let lost = repo
+        .resolve(approval_id, ApprovalState::Denied, Utc::now())
+        .await;
+    assert!(
+        matches!(lost, Ok(false)),
+        "opposing resolve against a terminal approval must lose with Ok(false), got: {:?}",
+        lost
+    );
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    assert!(
+        matches!(fetched.state, ApprovalState::Granted),
+        "terminal Granted decision must not be overwritten, got: {:?}",
+        fetched.state
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_expired_pending_returns_false() {
+    // A Pending approval whose expires_at is already in the past must lose the
+    // CAS with Ok(false) (never Err), and its state must be preserved. The
+    // store's compare-and-swap predicate requires `expires_at > now` at write
+    // time, so an expired row can never be resolved even though it still reads
+    // Pending on the pre-write snapshot.
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    // Force the approval to be expired while still Pending.
+    approval.expires_at = ts_offset(-60);
+    repo.insert(&approval).await.unwrap();
+
+    let lost = repo
+        .resolve(approval_id, ApprovalState::Granted, Utc::now())
+        .await;
+    assert!(
+        matches!(lost, Ok(false)),
+        "expired Pending approval must lose the CAS with Ok(false), got: {:?}",
+        lost
+    );
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    assert!(
+        matches!(fetched.state, ApprovalState::Pending),
+        "expired approval state must remain Pending (preserved), got: {:?}",
+        fetched.state
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_concurrent_mixed_decisions_exactly_one_wins() {
+    // Concurrent resolvers issuing a mix of Grant/Deny decisions against the
+    // same Pending approval: exactly one must win the CAS with Ok(true), every
+    // other must lose with Ok(false), and none may error. The row must end in
+    // the single winning terminal decision. This is the Postgres parity proof
+    // for the SQLite single-winner guarantee (see approval_resolve_cas.rs).
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    repo.insert(&approval).await.unwrap();
+
+    let now = Utc::now();
+    let targets = [
+        ApprovalState::Granted,
+        ApprovalState::Denied,
+        ApprovalState::Granted,
+        ApprovalState::Denied,
+        ApprovalState::Granted,
+        ApprovalState::Denied,
+    ];
+    // A shared barrier forces every resolver to arrive before any of them is
+    // released into `resolve`, so the CAS races truly run concurrently rather
+    // than serially.
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(targets.len()));
+    let mut set = tokio::task::JoinSet::new();
+    for target in targets {
+        let repo = repo.clone();
+        let barrier = barrier.clone();
+        set.spawn(async move {
+            barrier.wait().await;
+            let outcome = repo.resolve(approval_id, target.clone(), now).await;
+            (target, outcome)
+        });
+    }
+
+    let mut winners = 0;
+    let mut losers = 0;
+    let mut winner_target: Option<ApprovalState> = None;
+    while let Some(res) = set.join_next().await {
+        let (target, outcome) = res.unwrap();
+        match outcome {
+            Ok(true) => {
+                winners += 1;
+                winner_target = Some(target);
+            }
+            Ok(false) => losers += 1,
+            Err(e) => panic!("concurrent resolver must not error on a lost CAS, got: {e:?}"),
+        }
+    }
+    assert_eq!(
+        winners, 1,
+        "exactly one concurrent resolver must win the CAS, got {}",
+        winners
+    );
+    assert_eq!(
+        losers, 5,
+        "every other concurrent resolver must lose with Ok(false), got {}",
+        losers
+    );
+    let winner_target = winner_target.expect("the single winner must record its target state");
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    // `ApprovalState` has no `PartialEq` derive, so compare via pattern
+    // match; only Grant/Deny are valid targets in this test.
+    assert!(
+        matches!(
+            (&fetched.state, &winner_target),
+            (ApprovalState::Granted, ApprovalState::Granted)
+                | (ApprovalState::Denied, ApprovalState::Denied)
+        ),
+        "approval must end in the unique winning resolver's terminal decision, \
+         got: persisted={:?} winner_target={:?}",
+        fetched.state,
+        winner_target
     );
 }
 

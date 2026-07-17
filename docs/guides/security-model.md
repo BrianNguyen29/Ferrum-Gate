@@ -145,6 +145,9 @@ threshold, the gateway emits:
 
 This is **advisory only**: it does not change the policy decision, auto-block,
 escalate to approval, or write to the lifecycle outbox.
+Future V2/V3 directions (persistence, operator escalation, cross-actor signals)
+are documented in [ADR 010](../adr/010-behavioral-anomaly-detection.md)
+but are not committed or implemented.
 
 Configuration (all `[server]`):
 

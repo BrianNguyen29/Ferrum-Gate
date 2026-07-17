@@ -10,6 +10,7 @@ if scripts_dir not in sys.path:
     sys.path.insert(0, scripts_dir)
 
 import validate_openapi_yaml as voy
+import check_contract_consistency as ccc
 
 
 class TestValidateOpenapiDict(unittest.TestCase):
@@ -60,6 +61,12 @@ class TestValidateOpenapiDict(unittest.TestCase):
         }
         errors = voy.validate_openapi_dict(data)
         self.assertTrue(any("'paths' is not a mapping" in e for e in errors))
+
+
+class TestMonitoringAuthDeclarations(unittest.TestCase):
+    def test_monitoring_endpoints_declared_correctly(self):
+        errors = ccc.check_monitoring_auth()
+        self.assertEqual(errors, [], f"monitoring auth validation failed: {errors}")
 
 
 if __name__ == "__main__":

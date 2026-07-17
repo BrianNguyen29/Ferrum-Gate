@@ -4,6 +4,7 @@ name = "ferrum-sync"
 description = "Read-only sync probe facade and fakeable transport adapter"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }

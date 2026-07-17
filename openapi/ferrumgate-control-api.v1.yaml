@@ -7,12 +7,16 @@ info:
 
     ## Authentication
 
-    When auth mode is set to "bearer", all endpoints except `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, and `/v1/metrics`
+    When auth mode is set to "bearer", all endpoints except `/v1/healthz` and `/v1/readyz`
     require a Bearer token in the Authorization header:
 
     ```
     Authorization: Bearer <token>
     ```
+
+    Bearer mode is a single-principal trust domain: it validates the configured token but does
+    not mint per-request `AuthActor` identities or object ownership. Multi-actor authorization,
+    scoped ownership, and per-object access control require `scoped`, `oidc`, or `agent` auth mode.
 
     ## TLS
 
@@ -54,14 +58,18 @@ paths:
 
   /v1/readyz/deep:
     get:
-      summary: Deep readiness check with component status (unauthenticated)
+      summary: Deep readiness check with component status (requires auth when auth is enabled)
       description: |
         Returns detailed component-level readiness including store health and write queue backpressure.
         The write_queue component provides bounded backpressure detection only; it does not
         indicate full dependency health, ledger scan status, adapter health, rollback health,
         connection pool saturation, or schema integrity.
+
+        Requires a valid bearer token when auth mode is enabled. Unauthenticated only when
+        `auth_mode` is `disabled` (local development).
       operationId: readyzDeep
-      security: []
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: All components healthy
@@ -78,7 +86,7 @@ paths:
 
   /v1/metrics:
     get:
-      summary: Bounded Prometheus-style metrics (unauthenticated)
+      summary: Bounded Prometheus-style metrics (requires auth when auth is enabled)
       operationId: metrics
       description: |
         Returns Prometheus text exposition format with the following metric families:
@@ -89,13 +97,18 @@ paths:
         - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
         - `ferrumgate_governance_errors_total` - Governance error counters by route and method
         - `ferrumgate_governance_success_total` - Governance success counters by route and method
-        - `ferrumgate_request_duration_seconds` - Latency histogram for public endpoints with bounded labels: route, method, status, le (bucket boundary). Emits _bucket, _sum, and _count lines per route/status combination.
+        - `ferrumgate_request_duration_seconds` - Latency histogram for monitoring endpoints with bounded labels: route, method, status, le (bucket boundary). Emits _bucket, _sum, and _count lines per route/status combination.
 
         **Note**: This endpoint is intentionally bounded. Latency histograms are
-        implemented for public endpoints only (healthz, readyz, readyz/deep, metrics).
-        Governance route latency instrumentation is out of scope. HTTP status labels
-        are implemented for public endpoints only (bounded change, per-handler instrumentation).
-      security: []
+        implemented for monitoring endpoints only (`/v1/healthz`, `/v1/readyz`,
+        `/v1/readyz/deep`, `/v1/metrics`). Governance route latency instrumentation
+        is out of scope. HTTP status labels are implemented for monitoring endpoints
+        only (bounded change, per-handler instrumentation).
+
+        Requires a valid bearer token when auth mode is enabled. Unauthenticated only when
+        `auth_mode` is `disabled` (local development).
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: Metrics in Prometheus text exposition format
@@ -294,6 +307,12 @@ paths:
         Executes the adapter operation for the given execution. The execution must be in
         Prepared or Authorized state and the rollback contract must be in Prepared state.
         Payload format is adapter-specific (e.g., `{"content": "..."}` for FileWrite).
+
+        On a recoverable adapter error, the execution transitions to `RecoveryRequired`.
+        `RecoveryRequired` is a non-terminal, owner-review state: the gateway does not
+        auto-commit, auto-compensate, or replay the side effect. Only explicit
+        policy-approved R3 actions may use HTTP/SQLite mutation adapters; R2 compensation
+        or replay is rejected for those adapters.
       operationId: executeExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
@@ -305,7 +324,13 @@ paths:
               $ref: '#/components/schemas/ExecuteExecutionRequest'
       responses:
         '200':
-          description: Execution completed
+          description: Execution completed and awaiting verification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteExecutionResponse'
+        '202':
+          description: Execution adapter reported a recoverable error; recovery required
           content:
             application/json:
               schema:
@@ -324,12 +349,23 @@ paths:
       description: |
         Runs verify checks on the rollback contract to confirm the side effect
         was applied correctly. Returns verified=true if all checks pass.
+
+        If the verification outcome is indeterminate, the execution transitions to
+        `RecoveryRequired`, a non-terminal owner-review state. HTTP/SQLite mutation
+        adapters are not eligible for automatic compensation or replay; only R3 actions
+        with explicit manual verification and commit are supported.
       operationId: verifyExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
       responses:
         '200':
           description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyExecutionResponse'
+        '202':
+          description: Verification outcome indeterminate; recovery required
           content:
             application/json:
               schema:
@@ -741,12 +777,27 @@ paths:
   /v1/executions/{execution_id}/compensate:
     post:
       summary: Compensate (rollback) an execution via its rollback contract
+      description: |
+        Runs the compensation plan defined in the rollback contract to undo a side effect.
+        Compensation is only available for rollback classes that support it; HTTP and
+        SQLite mutation adapters are R3-only and do not support automatic compensation
+        or replay.
+
+        If the side effect is already in `RecoveryRequired`, the endpoint may return 202
+        and the execution remains in that non-terminal owner-review state until the
+        operator resolves it.
       operationId: compensateExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
       responses:
         '200':
           description: Compensation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompensateExecutionResponse'
+        '202':
+          description: Compensation incomplete while in recovery; execution remains in recovery
           content:
             application/json:
               schema:
@@ -2030,6 +2081,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -2416,6 +2468,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -2423,6 +2476,12 @@ components:
             - Quarantined
             - Failed
             - Canceled
+          description: |
+            Execution lifecycle state. `RecoveryRequired` is a non-terminal
+            owner-review state: the gateway does not auto-commit,
+            auto-compensate, or auto-fail the side effect. HTTP and SQLite
+            mutation adapters must be R3-only and require manual verification
+            and commit.
         started_at:
           type: string
           format: date-time
@@ -2599,6 +2658,15 @@ components:
         created_at:
           type: string
           format: date-time
+        resolver_evidence_version:
+          type: integer
+          format: uint32
+          minimum: 0
+          description: >-
+            Durable resolution-evidence version stamped by the hardened resolver.
+            Absent on pre-hardening historical records; present on new-code
+            resolutions, which require authenticated resolver evidence for
+            role-bound approval binding. Omitted from responses when unset.
 
     ApprovalResolveRequest:
       type: object
@@ -3223,13 +3291,16 @@ components:
 
     CompensateExecutionResponse:
       type: object
-      required: [execution_id, compensated, warnings]
+      required: [execution_id, compensated, recovery_required, warnings]
       properties:
         execution_id:
           type: string
           format: uuid
         compensated:
           type: boolean
+        recovery_required:
+          type: boolean
+          description: True when compensation did not recover the side effect and the execution remains in RecoveryRequired.
         rollback_contract:
           $ref: '#/components/schemas/RollbackContract'
           nullable: true
@@ -3254,6 +3325,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -3271,6 +3343,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -3339,13 +3412,16 @@ components:
 
     ExecuteExecutionResponse:
       type: object
-      required: [execution_id, executed, warnings]
+      required: [execution_id, executed, recovery_required, warnings]
       properties:
         execution_id:
           type: string
           format: uuid
         executed:
           type: boolean
+        recovery_required:
+          type: boolean
+          description: True when the adapter reported a recoverable error and the execution requires manual recovery.
         result_digest:
           type: string
           nullable: true
@@ -3359,13 +3435,16 @@ components:
 
     VerifyExecutionResponse:
       type: object
-      required: [execution_id, verified, warnings]
+      required: [execution_id, verified, recovery_required, warnings]
       properties:
         execution_id:
           type: string
           format: uuid
         verified:
           type: boolean
+        recovery_required:
+          type: boolean
+          description: True when the verification outcome is indeterminate and the execution requires manual recovery.
         rollback_contract:
           $ref: '#/components/schemas/RollbackContract'
           nullable: true
@@ -4355,6 +4434,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -4372,6 +4452,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -4386,6 +4467,7 @@ components:
             - Prepared
             - ExecutedAwaitingVerify
             - Verified
+            - RecoveryRequired
             - Committed
             - CompensationPending
             - Compensated
@@ -4400,6 +4482,7 @@ components:
             - Prepared
             - ExecutedAwaitingVerify
             - Verified
+            - RecoveryRequired
             - Committed
             - CompensationPending
             - Compensated

@@ -249,6 +249,9 @@ impl SqliteStore {
     /// Idempotent: checks `_schema_version` before running SQL. If the recorded
     /// version is equal to [`migrations::CURRENT_SCHEMA_VERSION`], the call is a no-op.
     /// If the recorded version is greater, the call returns a [`StoreError::SchemaDrift`].
+    ///
+    /// The runner applies only migrations whose version is greater than the
+    /// recorded version, so historical `ALTER` statements are never replayed.
     pub async fn apply_embedded_migrations(&self) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
@@ -282,32 +285,19 @@ impl SqliteStore {
         }
 
         // Existing databases may be at schema v13. Ensure columns required by
-        // migration 014 exist before replaying the idempotent migration bundle.
+        // migration 014 exist before applying the forward-only migration list.
         ensure_lifecycle_outbox_reconciliation_lease_columns(&mut tx).await?;
 
-        let mut statement = String::new();
-
-        for line in migrations::INIT_MIGRATION.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("--") {
+        for migration in migrations::MIGRATIONS {
+            if migration.version <= current_version {
                 continue;
             }
-
-            statement.push_str(line);
-            statement.push('\n');
-
-            if trimmed.ends_with(';') {
-                let sql = statement.trim();
+            for sql in SqliteStore::split_sqlite_statements(migration.sql) {
+                let sql = sql.trim();
                 if !sql.is_empty() {
                     sqlx::query(sql).execute(&mut *tx).await?;
                 }
-                statement.clear();
             }
-        }
-
-        let sql = statement.trim();
-        if !sql.is_empty() {
-            sqlx::query(sql).execute(&mut *tx).await?;
         }
 
         ensure_lifecycle_outbox_reconciliation_lease_columns(&mut tx).await?;
@@ -324,6 +314,67 @@ impl SqliteStore {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    fn split_sqlite_statements(sql: &str) -> Vec<&str> {
+        let mut statements = Vec::new();
+        let mut start = 0usize;
+        let mut in_line_comment = false;
+        let mut in_single_quote = false;
+        let bytes = sql.as_bytes();
+        let mut i = 0usize;
+
+        while i < bytes.len() {
+            if in_line_comment {
+                if bytes[i] == b'\n' {
+                    in_line_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_single_quote {
+                if bytes[i] == b'\'' {
+                    if bytes.get(i + 1) == Some(&b'\'') {
+                        i += 2;
+                    } else {
+                        in_single_quote = false;
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+
+            if bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'-') {
+                in_line_comment = true;
+                i += 2;
+                continue;
+            }
+
+            if bytes[i] == b'\'' {
+                in_single_quote = true;
+                i += 1;
+                continue;
+            }
+
+            if bytes[i] == b';' {
+                let statement = sql[start..=i].trim();
+                if !statement.is_empty() {
+                    statements.push(statement);
+                }
+                start = i + 1;
+            }
+            i += 1;
+        }
+
+        let tail = sql[start..].trim();
+        if !tail.is_empty() {
+            statements.push(tail);
+        }
+
+        statements
     }
 
     pub fn intents(&self) -> SqliteIntentRepo {
@@ -1279,47 +1330,46 @@ mod tests {
     #[tokio::test]
     async fn test_migration_upgrades_v13_lifecycle_outbox_with_fencing_generation() {
         let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let mut conn = store.pool().acquire().await.unwrap();
+
         sqlx::query(
             "CREATE TABLE _schema_version (
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL
              )",
         )
-        .execute(store.pool())
+        .execute(&mut *conn)
         .await
         .unwrap();
+
+        // Apply migrations 1..=13 to bring the database to a real v13 state.
+        for migration in super::migrations::MIGRATIONS
+            .iter()
+            .filter(|m| m.version <= 13)
+        {
+            for sql in SqliteStore::split_sqlite_statements(migration.sql) {
+                let sql = sql.trim();
+                if !sql.is_empty() {
+                    sqlx::query(sql).execute(&mut *conn).await.unwrap();
+                }
+            }
+        }
+
+        // Drop the column added in migration 013 to simulate the pre-fencing
+        // v13 schema that the test originally exercised.
+        sqlx::query("ALTER TABLE lifecycle_outbox DROP COLUMN reconciliation_lease_generation")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
         sqlx::query(
             "INSERT INTO _schema_version(version, applied_at)
              VALUES (13, '2026-01-01T00:00:00Z')",
         )
-        .execute(store.pool())
+        .execute(&mut *conn)
         .await
         .unwrap();
-        sqlx::query(
-            "CREATE TABLE lifecycle_outbox (
-                outbox_id TEXT PRIMARY KEY,
-                execution_id TEXT NOT NULL,
-                rollback_contract_id TEXT,
-                previous_execution_state TEXT,
-                new_execution_state TEXT NOT NULL,
-                previous_rollback_state TEXT,
-                new_rollback_state TEXT,
-                intended_provenance_kind TEXT NOT NULL,
-                idempotency_key TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL,
-                provenance_event_id TEXT,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT,
-                reconciliation_lease_owner TEXT,
-                reconciliation_lease_expires_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                raw_json TEXT NOT NULL
-             )",
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
+        drop(conn);
 
         store.apply_embedded_migrations().await.unwrap();
 
@@ -1337,7 +1387,135 @@ mod tests {
                 .fetch_one(store.pool())
                 .await
                 .unwrap();
-        assert_eq!(version, 19);
+        assert_eq!(version, 20);
+    }
+
+    #[tokio::test]
+    async fn test_migration_v19_to_v20_applies_owner_columns_only() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        let mut conn = store.pool().acquire().await.unwrap();
+
+        // Create the version tracking table manually; the runner bootstraps it
+        // but we need it before the simulated historical sequence.
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        // Apply migrations 1..=19 to simulate an existing v19 database.
+        for migration in super::migrations::MIGRATIONS
+            .iter()
+            .filter(|m| m.version <= 19)
+        {
+            for sql in SqliteStore::split_sqlite_statements(migration.sql) {
+                let sql = sql.trim();
+                if !sql.is_empty() {
+                    sqlx::query(sql).execute(&mut *conn).await.unwrap();
+                }
+            }
+            sqlx::query("INSERT INTO _schema_version (version, applied_at) VALUES (?1, ?2)")
+                .bind(migration.version)
+                .bind("2026-01-01T00:00:00Z")
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+
+        // Insert a minimal capability row to verify data preservation.
+        let intent_id = uuid::Uuid::new_v4().to_string();
+        let proposal_id = uuid::Uuid::new_v4().to_string();
+        let capability_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO intents (intent_id, principal_id, normalized_goal, status, risk_tier, approval_mode, default_rollback_class, created_at, expires_at, raw_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .bind(&intent_id)
+        .bind("principal-1")
+        .bind("goal")
+        .bind("Active")
+        .bind("Low")
+        .bind("None")
+        .bind("R0NativeReversible")
+        .bind(&now)
+        .bind(&now)
+        .bind("{}")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO proposals (proposal_id, intent_id, step_index, server_name, tool_name, estimated_risk, requested_rollback_class, created_at, raw_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )
+        .bind(&proposal_id)
+        .bind(&intent_id)
+        .bind(0i64)
+        .bind("test-server")
+        .bind("test-tool")
+        .bind("Low")
+        .bind("R0NativeReversible")
+        .bind(&now)
+        .bind("{}")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO capabilities (capability_id, intent_id, proposal_id, server_name, tool_name, status, issued_at, expires_at, raw_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )
+        .bind(&capability_id)
+        .bind(&intent_id)
+        .bind(&proposal_id)
+        .bind("test-server")
+        .bind("test-tool")
+        .bind("Active")
+        .bind(&now)
+        .bind(&now)
+        .bind("{\"prior\": true}")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        drop(conn);
+
+        // Upgrading should apply only v020 and reach the current version.
+        store.apply_embedded_migrations().await.unwrap();
+
+        let version: i64 =
+            sqlx::query_scalar("SELECT version FROM _schema_version ORDER BY version DESC LIMIT 1")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(version, super::migrations::CURRENT_SCHEMA_VERSION);
+
+        let cap_columns = sqlx::query("PRAGMA table_info(capabilities)")
+            .fetch_all(store.pool())
+            .await
+            .unwrap();
+        assert!(
+            cap_columns
+                .iter()
+                .any(|row| row.get::<String, _>("name") == "owner_actor_id"),
+            "v020 must add owner_actor_id to capabilities"
+        );
+
+        let preserved: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM capabilities WHERE capability_id = ?1 AND raw_json = ?2",
+        )
+        .bind(&capability_id)
+        .bind("{\"prior\": true}")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            preserved, 1,
+            "v020 upgrade must preserve existing capability rows"
+        );
     }
 
     #[tokio::test]

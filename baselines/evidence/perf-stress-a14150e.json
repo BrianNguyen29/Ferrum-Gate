@@ -1,0 +1,49 @@
+{
+  "target": "http://127.0.0.1:35975",
+  "auth_enabled": false,
+  "rate_limit_enabled": false,
+  "scenarios": [
+    {
+      "scenario": "health",
+      "concurrency": 50,
+      "duration_secs": 5,
+      "total_requests": 19027,
+      "errors": 0,
+      "error_rate": 0.0,
+      "req_per_sec": 3805.4,
+      "p95_ms": 24.75594,
+      "p99_ms": 33.12234,
+      "status_histogram": {
+        "200": 19027
+      }
+    },
+    {
+      "scenario": "intent-compile",
+      "concurrency": 5,
+      "duration_secs": 5,
+      "total_requests": 926,
+      "errors": 0,
+      "error_rate": 0.0,
+      "req_per_sec": 185.2,
+      "p95_ms": 37.465379999999996,
+      "p99_ms": 473.20182,
+      "status_histogram": {
+        "200": 926
+      }
+    },
+    {
+      "scenario": "sqlite-contention",
+      "concurrency": 50,
+      "duration_secs": 5,
+      "total_requests": 794,
+      "errors": 0,
+      "error_rate": 0.0,
+      "req_per_sec": 158.8,
+      "p95_ms": 2207.0152799999996,
+      "p99_ms": 2217.5613900000003,
+      "status_histogram": {
+        "200": 794
+      }
+    }
+  ]
+}

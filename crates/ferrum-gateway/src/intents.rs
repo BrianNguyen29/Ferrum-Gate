@@ -14,7 +14,7 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Extension, Query, State},
     http::StatusCode,
 };
 use chrono::{Duration, Utc};
@@ -25,6 +25,7 @@ use ferrum_proto::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::AuthActor;
 use crate::execution::infer_rollback_class;
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
@@ -33,6 +34,7 @@ use crate::state::AppState;
 
 pub(crate) async fn compile_intent(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<IntentCompileRequest>,
 ) -> Result<Json<IntentCompileResponse>, ApiProblem> {
     let now = Utc::now();
@@ -90,6 +92,7 @@ pub(crate) async fn compile_intent(
         status: IntentStatus::Active,
         created_at: now,
         expires_at: now + Duration::minutes(15),
+        owner_actor_id: auth_actor.map(|Extension(actor)| actor.actor_id),
     };
 
     // I1: Validate envelope before persisting.

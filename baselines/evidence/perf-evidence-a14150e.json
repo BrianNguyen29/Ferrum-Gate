@@ -1,0 +1,50 @@
+{
+  "format_version": "1.0",
+  "kind": "perf-baseline",
+  "authoritative": false,
+  "note": "SAMPLE / NON-AUTHORITATIVE performance baseline for CI scaffolding.",
+  "commit": "a14150e3a1956d4244b0fda551486d3fc3d47209",
+  "short_commit": "a14150e",
+  "branch": "roadmap/p0-p2-governance-stack",
+  "captured_at": "2026-07-15T01:25:55Z",
+  "command": "make perf-baseline-update",
+  "runner": "local uncontrolled development environment",
+  "scenarios": [
+    {
+      "scenario": "health",
+      "concurrency": 50,
+      "duration_secs": 5,
+      "req_per_sec": 3805.4,
+      "p95_ms": 24.75594,
+      "p99_ms": 33.12234,
+      "error_rate": 0.0
+    },
+    {
+      "scenario": "intent-compile",
+      "concurrency": 5,
+      "duration_secs": 5,
+      "req_per_sec": 185.2,
+      "p95_ms": 37.465379999999996,
+      "p99_ms": 473.20182,
+      "error_rate": 0.0
+    },
+    {
+      "scenario": "sqlite-contention",
+      "concurrency": 50,
+      "duration_secs": 5,
+      "req_per_sec": 158.8,
+      "p95_ms": 2207.0152799999996,
+      "p99_ms": 2217.5613900000003,
+      "error_rate": 0.0
+    }
+  ],
+  "artifacts": {
+    "stress_json": "baselines/evidence/perf-stress-a14150e.json",
+    "sample_baselines": [
+      "baselines/sample_health_5s.json",
+      "baselines/sample_intent_compile_5s.json",
+      "baselines/sample_sqlite_contention_5s.json"
+    ]
+  },
+  "promotion_prerequisites": "Validated on a controlled runner, coverage gate in place, ADR 011 updated, and sample prefix removed before use for blocking gates."
+}

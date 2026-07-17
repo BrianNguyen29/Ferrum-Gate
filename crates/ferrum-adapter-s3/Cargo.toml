@@ -32,3 +32,7 @@ worm-sink = ["s3-client"]
 
 [dev-dependencies]
 tokio = { workspace = true }
+aws-config = { workspace = true }
+aws-credential-types = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+uuid = { workspace = true }

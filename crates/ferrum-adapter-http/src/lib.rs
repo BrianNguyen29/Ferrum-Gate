@@ -33,7 +33,9 @@ use ferrum_rollback::{
 };
 use reqwest::Url;
 use sha2::{Digest, Sha256};
-use std::net::IpAddr;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -137,6 +139,95 @@ impl RetryConfig {
     }
 }
 
+/// HTTP egress policy: exact host allowlist only.
+///
+/// Empty or absent `allowed_hosts` means the HTTP adapter and planner are not
+/// registered. Hosts are validated as exact DNS names; IP literals, wildcards,
+/// ports, and suffix matches are rejected.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct HttpEgressConfig {
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+}
+
+impl HttpEgressConfig {
+    /// Build and validate a config from a list of host names.
+    pub fn from_hosts(hosts: Vec<String>) -> Result<Self, String> {
+        let cfg = Self {
+            allowed_hosts: hosts,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Validate that every entry is an exact DNS name.
+    pub fn validate(&self) -> Result<(), String> {
+        for host in &self.allowed_hosts {
+            validate_hostname(host)?;
+        }
+        Ok(())
+    }
+
+    /// True when the config has no allowed hosts.
+    pub fn is_empty(&self) -> bool {
+        self.allowed_hosts.is_empty()
+    }
+
+    /// Canonical allowlist membership set (lowercase, no trailing dot).
+    pub fn canonical_set(&self) -> HashSet<String> {
+        self.allowed_hosts
+            .iter()
+            .map(|h| canonical_host(h))
+            .collect()
+    }
+}
+
+fn canonical_host(host: &str) -> String {
+    host.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn validate_hostname(host: &str) -> Result<(), String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return Err("allowed host cannot be empty".to_string());
+    }
+    if host.parse::<IpAddr>().is_ok() {
+        return Err(format!("allowed host cannot be an IP address: {host}"));
+    }
+    if host.contains(':') {
+        return Err(format!("allowed host cannot include a port: {host}"));
+    }
+    if host.contains('*') {
+        return Err(format!("allowed host cannot include a wildcard: {host}"));
+    }
+    if host.contains('/') || host.contains('?') || host.contains('@') || host.contains("://") {
+        return Err(format!("allowed host must be a bare hostname: {host}"));
+    }
+    let host = host.trim_end_matches('.');
+    if host.len() > 253 {
+        return Err(format!("allowed host is too long: {host}"));
+    }
+    for label in host.split('.') {
+        if label.is_empty() {
+            return Err(format!("allowed host has an empty label: {host}"));
+        }
+        if label.len() > 63 {
+            return Err(format!("allowed host label is too long: {label}"));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(format!(
+                "allowed host label cannot start or end with '-': {label}"
+            ));
+        }
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(format!(
+                "allowed host label has invalid characters: {label}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Records a single retry attempt.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AttemptRecord {
@@ -238,7 +329,135 @@ impl From<HttpAdapterError> for AdapterError {
 /// rollback/compensate unsupported.
 pub struct HttpAdapter {
     key: &'static str,
+    /// Test-only flag; production adapters always enforce special-use IP blocking.
+    #[allow(dead_code)]
     allow_private_networks: bool,
+    allowed_hosts: HashSet<String>,
+    client: reqwest::Client,
+}
+
+#[derive(Clone)]
+struct EgressResolver {
+    allowed_hosts: Arc<HashSet<String>>,
+    allow_private_networks: bool,
+    test_records: Option<Arc<HashMap<String, Vec<IpAddr>>>>,
+}
+
+impl reqwest::dns::Resolve for EgressResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = canonical_host(name.as_str());
+        let allowed_hosts = Arc::clone(&self.allowed_hosts);
+        let allow_private_networks = self.allow_private_networks;
+        let test_records = self.test_records.clone();
+        Box::pin(async move {
+            if !allowed_hosts.contains(&host) {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("HTTP egress to '{}' is not allowed", host),
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+            let ips: Vec<IpAddr> = match test_records {
+                Some(records) => records.get(&host).cloned().unwrap_or_default(),
+                None => resolve_host_ips(&host).await?,
+            };
+            if ips.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("DNS resolution for '{}' returned no answers", host),
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+            if !allow_private_networks {
+                for ip in &ips {
+                    if is_forbidden_destination_ip(*ip) {
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            format!(
+                                "HTTP egress to '{}' resolved to forbidden address {}",
+                                host, ip
+                            ),
+                        ))
+                            as Box<dyn std::error::Error + Send + Sync>);
+                    }
+                }
+            }
+            let addrs: reqwest::dns::Addrs =
+                Box::new(ips.into_iter().map(|ip| SocketAddr::new(ip, 0)));
+            Ok(addrs)
+        })
+    }
+}
+
+async fn resolve_host_ips(
+    host: &str,
+) -> Result<Vec<IpAddr>, Box<dyn std::error::Error + Send + Sync>> {
+    let addrs = tokio::net::lookup_host((host, 0)).await?;
+    Ok(addrs.map(|sa| sa.ip()).collect())
+}
+
+fn is_forbidden_destination_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(addr) => is_forbidden_ipv4(addr),
+        IpAddr::V6(addr) => {
+            // Map IPv4-mapped IPv6 to its IPv4 form and apply the IPv4 policy.
+            if let Some(v4) = addr.to_ipv4_mapped() {
+                return is_forbidden_ipv4(v4);
+            }
+            addr.is_loopback()
+                || addr.is_unspecified()
+                || addr.is_multicast()
+                || addr.is_unique_local()
+                || addr.is_unicast_link_local()
+        }
+    }
+}
+
+fn is_forbidden_ipv4(addr: Ipv4Addr) -> bool {
+    let octets = addr.octets();
+    addr.is_loopback()
+        || addr.is_private()
+        || addr.is_link_local()
+        || addr.is_broadcast()
+        || addr.is_documentation()
+        || addr.is_unspecified()
+        || addr.is_multicast()
+        || is_this_network(octets)
+        || is_shared_address_space(octets)
+        || is_benchmarking(octets)
+        || is_reserved_future_use(octets)
+        || is_ietf_protocol_assignments(octets)
+        || is_6to4_relay_anycast(octets)
+}
+
+fn is_this_network(octets: [u8; 4]) -> bool {
+    // 0.0.0.0/8 (RFC 1122 "this" network)
+    octets[0] == 0
+}
+
+fn is_shared_address_space(octets: [u8; 4]) -> bool {
+    // 100.64.0.0/10 (RFC 6598)
+    octets[0] == 100 && (octets[1] & 0xC0) == 0x40
+}
+
+fn is_benchmarking(octets: [u8; 4]) -> bool {
+    // 198.18.0.0/15 (RFC 2544)
+    octets[0] == 198 && (octets[1] & 0xFE) == 0x12
+}
+
+fn is_reserved_future_use(octets: [u8; 4]) -> bool {
+    // 240.0.0.0/4 (formerly "Class E")
+    octets[0] >= 240
+}
+
+fn is_ietf_protocol_assignments(octets: [u8; 4]) -> bool {
+    // 192.0.0.0/24 (RFC 6890)
+    octets[0] == 192 && octets[1] == 0 && octets[2] == 0
+}
+
+fn is_6to4_relay_anycast(octets: [u8; 4]) -> bool {
+    // 192.88.99.0/24 (RFC 3068)
+    octets[0] == 192 && octets[1] == 88 && octets[2] == 99
 }
 
 /// Parsed and validated replay contract for the narrow http.replay_v1 slice.
@@ -256,20 +475,77 @@ struct ReplayContract {
 }
 
 impl HttpAdapter {
-    /// Creates a new HttpAdapter with the given key.
-    pub fn new(key: &'static str) -> Self {
-        Self {
+    /// Creates a new HttpAdapter with the given key and egress config.
+    ///
+    /// Returns an error if the config is invalid or the pooled HTTP client
+    /// cannot be built.
+    pub fn new(key: &'static str, config: &HttpEgressConfig) -> Result<Self, AdapterError> {
+        config.validate().map_err(AdapterError::Validation)?;
+        let allowed_hosts = config.canonical_set();
+        let client = Self::build_client(&allowed_hosts, false, None)?;
+        Ok(Self {
             key,
             allow_private_networks: false,
-        }
+            allowed_hosts,
+            client,
+        })
     }
 
     #[cfg(test)]
     fn new_allow_private_networks_for_tests(key: &'static str) -> Self {
-        Self {
+        let mut records = HashMap::new();
+        records.insert(
+            "test.local".to_string(),
+            vec!["127.0.0.1".parse::<IpAddr>().unwrap()],
+        );
+        Self::new_for_test(
             key,
-            allow_private_networks: true,
-        }
+            &["test.local", "example.com", "different.com"],
+            records,
+            true,
+        )
+        .expect("test HTTP adapter")
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        key: &'static str,
+        allowed_hosts: &[&str],
+        test_records: HashMap<String, Vec<IpAddr>>,
+        allow_private_networks: bool,
+    ) -> Result<Self, AdapterError> {
+        let config =
+            HttpEgressConfig::from_hosts(allowed_hosts.iter().map(|h| h.to_string()).collect())
+                .map_err(AdapterError::Validation)?;
+        let allowed_hosts = config.canonical_set();
+        let client =
+            Self::build_client(&allowed_hosts, allow_private_networks, Some(test_records))?;
+        Ok(Self {
+            key,
+            allow_private_networks,
+            allowed_hosts,
+            client,
+        })
+    }
+
+    fn build_client(
+        allowed_hosts: &HashSet<String>,
+        allow_private_networks: bool,
+        test_records: Option<HashMap<String, Vec<IpAddr>>>,
+    ) -> Result<reqwest::Client, AdapterError> {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .dns_resolver(Arc::new(EgressResolver {
+                allowed_hosts: Arc::new(allowed_hosts.clone()),
+                allow_private_networks,
+                test_records: test_records.map(Arc::new),
+            }))
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .use_rustls_tls()
+            .build()
+            .map_err(|e| AdapterError::Internal(format!("failed to build HTTP client: {}", e)))
     }
 
     /// Computes exponential backoff delay with jitter cap.
@@ -311,6 +587,7 @@ impl HttpAdapter {
     /// On final failure after all retries, returns error with full attempt history.
     #[allow(dead_code)]
     async fn execute_with_retry(
+        &self,
         method: HttpMethod,
         url: &str,
         body: Option<Vec<u8>>,
@@ -328,15 +605,15 @@ impl HttpAdapter {
             let started_at = Utc::now();
 
             // Execute the HTTP request
-            let result = Self::execute_http_request(
-                method_clone.clone(),
-                &url_owned,
-                body.clone(),
-                idempotency_key_owned.as_deref(),
-                false,
-                PHASE_EXECUTE,
-            )
-            .await;
+            let result = self
+                .execute_http_request(
+                    method_clone.clone(),
+                    &url_owned,
+                    body.clone(),
+                    idempotency_key_owned.as_deref(),
+                    PHASE_EXECUTE,
+                )
+                .await;
 
             let completed_at = Utc::now();
 
@@ -413,8 +690,11 @@ impl HttpAdapter {
         }
     }
 
-    /// Validates URL shape - must be http or https and parseable.
-    fn validate_url_shape(url: &str) -> Result<(), AdapterError> {
+    /// Validates URL shape and egress policy.
+    ///
+    /// The URL must use http/https, must not contain credentials, must not
+    /// use an IP literal, and its canonical host must be in the allowlist.
+    fn validate_url(&self, url: &str) -> Result<Url, AdapterError> {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(HttpAdapterError::MalformedUrl(format!(
                 "URL must start with http:// or https://, got: {}",
@@ -433,8 +713,23 @@ impl HttpAdapter {
                 .into());
             }
         }
-        if parsed.host_str().is_none() {
-            return Err(HttpAdapterError::MalformedUrl(format!("URL has no host: {}", url)).into());
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| HttpAdapterError::MalformedUrl(format!("URL has no host: {}", url)))?;
+        if host.parse::<IpAddr>().is_ok() {
+            return Err(HttpAdapterError::Validation(format!(
+                "URL host must be a DNS name, not an IP literal: {}",
+                host
+            ))
+            .into());
+        }
+        let canonical = canonical_host(host);
+        if !self.allowed_hosts.contains(&canonical) {
+            return Err(HttpAdapterError::Validation(format!(
+                "HTTP egress host '{}' is not in allowed_hosts",
+                canonical
+            ))
+            .into());
         }
         if !parsed.username().is_empty() || parsed.password().is_some() {
             return Err(HttpAdapterError::MalformedUrl(
@@ -442,105 +737,13 @@ impl HttpAdapter {
             )
             .into());
         }
-        Ok(())
+        Ok(parsed)
     }
 
     fn parse_url(url: &str) -> Result<Url, AdapterError> {
         Url::parse(url).map_err(|_| {
             HttpAdapterError::MalformedUrl(format!("failed to parse URL: {}", url)).into()
         })
-    }
-
-    fn is_forbidden_destination_ip(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(addr) => {
-                addr.is_loopback()
-                    || addr.is_private()
-                    || addr.is_link_local()
-                    || addr.is_broadcast()
-                    || addr.is_documentation()
-                    || addr.is_unspecified()
-                    || addr.is_multicast()
-            }
-            IpAddr::V6(addr) => {
-                addr.is_loopback()
-                    || addr.is_unspecified()
-                    || addr.is_multicast()
-                    || addr.is_unique_local()
-                    || addr.is_unicast_link_local()
-            }
-        }
-    }
-
-    async fn validate_outbound_destination(
-        url: &str,
-        allow_private_networks: bool,
-        phase: &'static str,
-    ) -> Result<Url, AdapterError> {
-        let parsed = Self::parse_url(url)?;
-        Self::validate_url_shape(url)?;
-
-        if allow_private_networks {
-            return Ok(parsed);
-        }
-
-        let host = parsed.host_str().ok_or_else(|| {
-            Self::phase_wrap_validation(phase, format!("URL has no host: {}", url))
-        })?;
-        let lower_host = host.trim_end_matches('.').to_ascii_lowercase();
-        if lower_host == "localhost"
-            || lower_host == "localhost.localdomain"
-            || lower_host == "metadata.google.internal"
-        {
-            return Err(Self::phase_wrap_validation(
-                phase,
-                format!("forbidden private HTTP destination host: {}", host),
-            ));
-        }
-
-        if let Ok(ip) = lower_host.parse::<IpAddr>() {
-            if Self::is_forbidden_destination_ip(ip) {
-                return Err(Self::phase_wrap_validation(
-                    phase,
-                    format!("forbidden private HTTP destination address: {}", ip),
-                ));
-            }
-            return Ok(parsed);
-        }
-
-        let port = parsed.port_or_known_default().ok_or_else(|| {
-            Self::phase_wrap_validation(
-                phase,
-                format!(
-                    "URL has no known default port for scheme: {}",
-                    parsed.scheme()
-                ),
-            )
-        })?;
-        let resolved = tokio::net::lookup_host((host, port)).await.map_err(|e| {
-            Self::phase_wrap_internal(
-                phase,
-                format!(
-                    "failed to resolve HTTP destination {}:{}: {}",
-                    host, port, e
-                ),
-            )
-        })?;
-
-        for addr in resolved {
-            let ip = addr.ip();
-            if Self::is_forbidden_destination_ip(ip) {
-                return Err(Self::phase_wrap_validation(
-                    phase,
-                    format!(
-                        "forbidden private HTTP destination address: {} resolved from {}",
-                        ip, host
-                    ),
-                ));
-            }
-        }
-
-        Ok(parsed)
     }
 
     fn reqwest_method(method: HttpMethod) -> reqwest::Method {
@@ -551,16 +754,6 @@ impl HttpAdapter {
             HttpMethod::Patch => reqwest::Method::PATCH,
             HttpMethod::Delete => reqwest::Method::DELETE,
         }
-    }
-
-    fn http_client() -> Result<reqwest::Client, AdapterError> {
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(30))
-            .use_rustls_tls()
-            .build()
-            .map_err(|e| AdapterError::Internal(format!("failed to build HTTP client: {}", e)))
     }
 
     /// Normalizes a validation error with phase context.
@@ -587,16 +780,15 @@ impl HttpAdapter {
 
     /// Runs an HTTP status check against the given URL using the specified method.
     async fn run_http_status_check(
+        &self,
         url: &str,
         method: HttpMethod,
         expected_statuses: &[u16],
-        allow_private_networks: bool,
         phase: &'static str,
     ) -> Result<(), AdapterError> {
-        let parsed =
-            Self::validate_outbound_destination(url, allow_private_networks, phase).await?;
-        let client = Self::http_client()?;
-        let status = client
+        let parsed = self.validate_url(url)?;
+        let status = self
+            .client
             .request(Self::reqwest_method(method), parsed)
             .send()
             .await
@@ -629,10 +821,10 @@ impl HttpAdapter {
     /// Runs a single check spec and returns an error if it fails.
     /// The `target_method` is used as the default for HTTP status checks.
     async fn run_check(
+        &self,
         check: &ferrum_proto::CheckSpec,
         url: &str,
         target_method: HttpMethod,
-        allow_private_networks: bool,
         phase: &'static str,
     ) -> Result<(), AdapterError> {
         match check.check_type {
@@ -743,14 +935,8 @@ impl HttpAdapter {
                     target_method
                 };
 
-                Self::run_http_status_check(
-                    url,
-                    check_method,
-                    &expected_statuses,
-                    allow_private_networks,
-                    phase,
-                )
-                .await
+                self.run_http_status_check(url, check_method, &expected_statuses, phase)
+                    .await
             }
             _ => Err(AdapterError::Unsupported(format!(
                 "[{}] unsupported check type: {:?}",
@@ -1097,17 +1283,15 @@ impl HttpAdapter {
     /// Async wrapper for HTTP execution.
     /// Optionally includes an Idempotency-Key header if provided.
     async fn execute_http_request(
+        &self,
         method: HttpMethod,
         url: &str,
         body: Option<Vec<u8>>,
         idempotency_key: Option<&str>,
-        allow_private_networks: bool,
         phase: &'static str,
     ) -> Result<(u16, Vec<u8>), AdapterError> {
-        let parsed =
-            Self::validate_outbound_destination(url, allow_private_networks, phase).await?;
-        let client = Self::http_client()?;
-        let mut request = client.request(Self::reqwest_method(method), parsed);
+        let parsed = self.validate_url(url)?;
+        let mut request = self.client.request(Self::reqwest_method(method), parsed);
 
         if let Some(key) = idempotency_key {
             request = request.header("Idempotency-Key", key);
@@ -1159,9 +1343,18 @@ impl HttpAdapter {
 }
 
 /// Register the HttpAdapter with the given registry using "http" as the adapter key.
-/// This allows the adapter to be used for HttpMutation operations via the rollback service.
-pub fn register_http_adapter(registry: &mut ferrum_rollback::AdapterRegistry) {
-    registry.register(std::sync::Arc::new(HttpAdapter::new("http")));
+///
+/// No adapter is registered when `config.allowed_hosts` is empty. Returns an
+/// error if the config is invalid or the pooled HTTP client cannot be built.
+pub fn register_http_adapter(
+    registry: &mut ferrum_rollback::AdapterRegistry,
+    config: &HttpEgressConfig,
+) -> Result<(), AdapterError> {
+    if config.is_empty() {
+        return Ok(());
+    }
+    registry.register(std::sync::Arc::new(HttpAdapter::new("http", config)?));
+    Ok(())
 }
 
 #[async_trait]
@@ -1188,19 +1381,13 @@ impl RollbackAdapter for HttpAdapter {
             }
         }
 
-        // Validate URL shape
-        Self::validate_url_shape(url)?;
+        // Validate URL shape and egress policy
+        let _ = self.validate_url(url)?;
 
         // Run prepare_checks if present (fail-closed on check failure)
         for check in &request.prepare_checks {
-            Self::run_check(
-                check,
-                url,
-                (*method).clone(),
-                self.allow_private_networks,
-                PHASE_PREPARE,
-            )
-            .await?;
+            self.run_check(check, url, (*method).clone(), PHASE_PREPARE)
+                .await?;
         }
 
         let mut metadata = JsonMap::new();
@@ -1258,8 +1445,8 @@ impl RollbackAdapter for HttpAdapter {
             }
         }
 
-        // Validate URL shape
-        Self::validate_url_shape(url)?;
+        // Validate URL shape and egress policy
+        let _ = self.validate_url(url)?;
 
         // Validate payload shape
         Self::validate_payload_shape(payload)?;
@@ -1325,15 +1512,15 @@ impl RollbackAdapter for HttpAdapter {
         }
 
         // Execute HTTP request (with idempotency key if replay contract is valid)
-        let (status, response_body) = Self::execute_http_request(
-            (*method).clone(),
-            url,
-            body_bytes,
-            idempotency_key_for_request,
-            self.allow_private_networks,
-            PHASE_EXECUTE,
-        )
-        .await?;
+        let (status, response_body) = self
+            .execute_http_request(
+                (*method).clone(),
+                url,
+                body_bytes,
+                idempotency_key_for_request,
+                PHASE_EXECUTE,
+            )
+            .await?;
 
         // Compute response digest: SHA256(status + bounded body)
         // Bound response body to first 64KB to avoid memory issues
@@ -1505,8 +1692,8 @@ impl RollbackAdapter for HttpAdapter {
         // Validate target
         let (method, url) = Self::extract_http_target(&contract.target)?;
 
-        // Validate URL shape
-        Self::validate_url_shape(url)?;
+        // Validate URL shape and egress policy
+        let _ = self.validate_url(url)?;
 
         // If no verify_checks are provided, fail-closed with a clear reason.
         // Without explicit checks, we cannot verify the HTTP mutation succeeded.
@@ -1523,14 +1710,8 @@ impl RollbackAdapter for HttpAdapter {
 
         // Run explicit verify_checks (fail-closed on mismatch or error)
         for check in &contract.verify_checks {
-            Self::run_check(
-                check,
-                url,
-                (*method).clone(),
-                self.allow_private_networks,
-                PHASE_VERIFY,
-            )
-            .await?;
+            self.run_check(check, url, (*method).clone(), PHASE_VERIFY)
+                .await?;
         }
 
         // All checks passed
@@ -1558,8 +1739,8 @@ impl RollbackAdapter for HttpAdapter {
             }
         }
 
-        // Validate URL shape
-        Self::validate_url_shape(url)?;
+        // Validate URL shape and egress policy
+        let _ = self.validate_url(url)?;
 
         // Try to parse a valid http.replay_v1 contract
         let replay = match Self::parse_replay_contract(contract, PHASE_COMPENSATE) {
@@ -1622,15 +1803,15 @@ impl RollbackAdapter for HttpAdapter {
         let replay_expected_statuses = replay.expected_statuses.clone();
 
         // Execute the replay request with idempotency key
-        let (status, response_body) = Self::execute_http_request(
-            replay.method,
-            &replay.url,
-            body_bytes,
-            Some(&replay.idempotency_key),
-            self.allow_private_networks,
-            PHASE_COMPENSATE,
-        )
-        .await?;
+        let (status, response_body) = self
+            .execute_http_request(
+                replay.method,
+                &replay.url,
+                body_bytes,
+                Some(&replay.idempotency_key),
+                PHASE_COMPENSATE,
+            )
+            .await?;
 
         // Compute response digest: SHA256(status + bounded body)
         const MAX_RESPONSE_DIGEST_BYTES: usize = 64 * 1024;
@@ -1733,8 +1914,8 @@ impl RollbackAdapter for HttpAdapter {
             }
         }
 
-        // Validate URL shape
-        Self::validate_url_shape(url)?;
+        // Validate URL shape and egress policy
+        let _ = self.validate_url(url)?;
 
         // Try to parse a valid http.replay_v1 contract
         let replay = match Self::parse_replay_contract(contract, PHASE_ROLLBACK) {
@@ -1793,15 +1974,15 @@ impl RollbackAdapter for HttpAdapter {
         let replay_expected_statuses = replay.expected_statuses.clone();
 
         // Execute the replay request with idempotency key
-        let (status, response_body) = Self::execute_http_request(
-            replay.method,
-            &replay.url,
-            body_bytes,
-            Some(&replay.idempotency_key),
-            self.allow_private_networks,
-            PHASE_ROLLBACK,
-        )
-        .await?;
+        let (status, response_body) = self
+            .execute_http_request(
+                replay.method,
+                &replay.url,
+                body_bytes,
+                Some(&replay.idempotency_key),
+                PHASE_ROLLBACK,
+            )
+            .await?;
 
         // Compute response digest: SHA256(status + bounded body)
         const MAX_RESPONSE_DIGEST_BYTES: usize = 64 * 1024;

@@ -20,7 +20,9 @@ worm-sink = ["s3", "ferrum-gateway/worm-sink", "ferrum-adapter-s3/worm-sink"]
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+chrono.workspace = true
 clap.workspace = true
+ipnet.workspace = true
 jsonwebtoken.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

@@ -127,9 +127,9 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 ---
 
-## D4 — HTTP Adapter Compensation Drill
+## D4 — HTTP Adapter Recovery Drill
 
-### D4.1 HTTP POST Replay Compensation Drill
+### D4.1 HTTP Mutation Adapter R2 Rejection Verification
 
 **Command output**:
 ```
@@ -138,16 +138,16 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 | Field | Value |
 |-------|-------|
-| `compensate_http_status` | <200|500> |
-| `idempotency_replay_verified` | true / false |
-| `server_state_changed` | true / false |
-| `operator_annotation` | HTTP replay is NOT true undo; confirm idempotency semantics acceptable |
+| `http_mutation_adapter_registered` | true / false |
+| `r2_compensation_allowed` | must be false |
+| `r3_classification_required` | true / false |
+| `operator_annotation` | HTTP mutation adapters are R2-rejected; only R3 actions with auto_commit=false and manual verification/commit are supported. |
 
 **Operator initials**: _____ **Date**: _________
 
 ---
 
-### D4.2 HTTP Non-Idempotent Method Fail-Closed Drill
+### D4.2 HTTP Non-R3 Action Rejection Verification
 
 **Command output**:
 ```
@@ -156,15 +156,15 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 | Field | Value |
 |-------|-------|
-| `compensate_http_status` | <400|error> |
-| `fail_closed_verified` | true / false |
-| `operator_annotation` | Non-idempotent without compensation_plan correctly rejected |
+| `proposal_http_mutation_classified_r3` | true / false |
+| `non_r3_action_rejected` | true / false |
+| `operator_annotation` | Non-R3 HTTP mutations are correctly rejected. |
 
 **Operator initials**: _____ **Date**: _________
 
 ---
 
-## D5 — SQLite Adapter Compensation Drill
+## D5 — SQLite Adapter Recovery Drill
 
 **Command output**:
 ```
@@ -173,9 +173,10 @@ D1_D6_TEMPLATE = """## D1 — FS Adapter Compensation Drill
 
 | Field | Value |
 |-------|-------|
-| `recovered` | true / false |
-| `compensation_sql_executed` | true / false |
-| `operator_annotation` | <anomalies or deviations> |
+| `sqlite_mutation_adapter_registered` | true / false |
+| `r2_compensation_allowed` | must be false |
+| `r3_classification_required` | true / false |
+| `operator_annotation` | SQLite mutation adapters are R2-rejected; only R3 actions with auto_commit=false and manual verification/commit are supported. |
 
 **Operator initials**: _____ **Date**: _________
 
@@ -316,17 +317,17 @@ Operator signature: _________________ Date: _________
 
 ---
 
-## G2.8 — Compensate Noop Acceptance
+## G2.8 — Recovery Acceptance
 
 **Prerequisite**: D1–D6 drills completed per the workload-compensation drill plan and operator procedures in `docs/guides/operator.md`.
 
-| Adapter | Drill Item | recovered / fail-closed | Accepted Exception? | Operator Initials |
-|---------|------------|-------------------------|---------------------|-------------------|
-| FS | D1 | true/false | yes/no | |
-| Git local | D2 | true/false | yes/no | |
+| Adapter | Drill Item | R2 rejected / R3-only / recovered | Accepted Exception? | Operator Initials |
+|---------|------------|-----------------------------------|---------------------|-------------------|
+| FS | D1 | recovered | yes/no | |
+| Git local | D2 | recovered | yes/no | |
 | Git remote | D3 | fail-closed verified | yes/no | |
-| HTTP | D4 | true/false or fail-closed | yes/no | |
-| SQLite | D5 | true/false | yes/no | |
+| HTTP | D4 | R2 rejected; R3-only | yes/no | |
+| SQLite | D5 | R2 rejected; R3-only | yes/no | |
 | Maildraft | D6 | true/false | yes/no | |
 
 Operator signature: _________________ Date: _________

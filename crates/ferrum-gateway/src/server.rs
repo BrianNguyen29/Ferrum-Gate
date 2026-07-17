@@ -1,10 +1,6 @@
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
-};
+use axum::Router;
+#[cfg(test)]
+use axum::http::StatusCode;
 use ferrum_cap::InMemoryCapabilityService;
 use ferrum_pdp::StaticPdpEngine;
 #[allow(unused_imports)] // IntentStatus is used in `mod tests` via `use super::*;`.
@@ -24,1110 +20,24 @@ use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
 use ferrum_store::{InMemoryNonceCache, SqliteStore, StoreFacade};
 use ferrum_sync::RuntimeBridge;
 use std::net::SocketAddr;
+#[cfg(any(test, feature = "test-utils"))]
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration as StdDuration;
-use tower::ServiceBuilder;
-
-use ed25519_dalek::Verifier;
-
-use tower_governor::{
-    GovernorError, GovernorLayer, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
-};
-use tower_http::trace::TraceLayer;
-
-use crate::AuthActor;
-use crate::behavioral::{BehavioralSeverity, build_profiler};
-use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
-
-/// Rate-limiting key that buckets authenticated requests by a principal
-/// identifier combined with IP, and anonymous requests by IP alone.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum RateLimitKey {
-    PrincipalIp {
-        principal: String,
-        ip: std::net::IpAddr,
-    },
-    Ip(std::net::IpAddr),
-}
-
-/// Key extractor that uses principal identity when available, falling back to
-/// the client IP address.  This isolates authenticated traffic from anonymous
-/// traffic on the same IP (noisy-neighbor mitigation) while preserving the
-/// existing IP-based behavior for unauthenticated requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PrincipalOrIpKeyExtractor;
-
-impl KeyExtractor for PrincipalOrIpKeyExtractor {
-    type Key = RateLimitKey;
-
-    fn extract<T>(&self, req: &axum::http::Request<T>) -> Result<Self::Key, GovernorError> {
-        let ip = tower_governor::key_extractor::SmartIpKeyExtractor.extract(req)?;
-
-        if let Some(agent_id) = req
-            .headers()
-            .get("X-Ferrum-Agent-Id")
-            .and_then(|v| v.to_str().ok())
-        {
-            if !agent_id.is_empty() {
-                return Ok(RateLimitKey::PrincipalIp {
-                    principal: format!("agent:{}", agent_id),
-                    ip,
-                });
-            }
-        }
-
-        if let Some(auth) = req
-            .headers()
-            .get("Authorization")
-            .and_then(|v| v.to_str().ok())
-        {
-            if !auth.is_empty() {
-                let hash = blake3::hash(auth.as_bytes()).to_hex().to_string();
-                return Ok(RateLimitKey::PrincipalIp {
-                    principal: format!("auth:{}", hash),
-                    ip,
-                });
-            }
-        }
-
-        Ok(RateLimitKey::Ip(ip))
-    }
-}
-
-/// Shared state that includes both runtime and server config for auth.
-#[derive(Clone)]
-pub(crate) struct AppState {
-    pub(crate) runtime: GatewayRuntime,
-    pub(crate) server_config: ServerConfig,
-    pub(crate) metrics: Arc<Metrics>,
-    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
-    pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
-    /// Nonce cache for Agent auth replay protection.
-    nonce_cache: Arc<dyn ferrum_store::NonceCache>,
-}
-
 #[cfg(test)]
-impl AppState {
-    /// Test-only constructor that builds an AppState from a runtime and config.
-    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
-        Arc::new(AppState {
-            runtime,
-            server_config: server_config.clone(),
-            metrics: Arc::new(Metrics::new()),
-            profiler: build_profiler(&server_config),
-            jwks_cache: None,
-            nonce_cache: Arc::new(InMemoryNonceCache::new(
-                server_config.nonce_cache_max_entries,
-            )),
-        })
-    }
-}
+use std::sync::atomic::Ordering;
+use tower::ServiceBuilder;
+use tower_governor::GovernorLayer;
 
-/// Metrics state for the /v1/metrics endpoint.
-/// Tracks health/metrics request counters, store health gauge, and bounded
-/// governance error counters for all governance API endpoints.
-pub(crate) struct Metrics {
-    pub(crate) healthz_requests: AtomicU64,
-    pub(crate) readyz_requests: AtomicU64,
-    pub(crate) readyz_deep_requests_200: AtomicU64,
-    pub(crate) readyz_deep_requests_503: AtomicU64,
-    pub(crate) metrics_scrapes: AtomicU64,
-    pub(crate) store_health_up: AtomicU64,
-    // Governance error counters keyed by static route template
-    pub(crate) governance_errors_v1_intents_compile: AtomicU64,
-    pub(crate) governance_errors_v1_intents_list: AtomicU64,
-    pub(crate) governance_errors_v1_proposals_evaluate: AtomicU64,
-    pub(crate) governance_errors_v1_capabilities_mint: AtomicU64,
-    pub(crate) governance_errors_v1_capabilities_revoke: AtomicU64,
-    pub(crate) governance_errors_v1_executions_authorize: AtomicU64,
-    pub(crate) governance_errors_v1_executions_prepare: AtomicU64,
-    pub(crate) governance_errors_v1_executions_execute: AtomicU64,
-    pub(crate) governance_errors_v1_executions_verify: AtomicU64,
-    pub(crate) governance_errors_v1_executions_compensate: AtomicU64,
-    pub(crate) governance_errors_v1_executions_cancel: AtomicU64,
-    pub(crate) governance_errors_v1_executions_evaluate_outcome: AtomicU64,
-    pub(crate) governance_errors_v1_executions_execution_id: AtomicU64,
-    pub(crate) governance_errors_v1_executions_commit: AtomicU64,
-    pub(crate) governance_errors_v1_approvals: AtomicU64,
-    pub(crate) governance_errors_v1_approvals_approval_id: AtomicU64,
-    pub(crate) governance_errors_v1_approvals_resolve: AtomicU64,
-    pub(crate) governance_errors_v1_quarantines: AtomicU64,
-    pub(crate) governance_errors_v1_quarantines_hold_id: AtomicU64,
-    pub(crate) governance_errors_v1_quarantines_resolve: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_create: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_list: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_get: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_update: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_delete: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_set_active: AtomicU64,
-    pub(crate) governance_errors_v1_policy_simulate: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_simulate: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_versions: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_diff: AtomicU64,
-    pub(crate) governance_errors_v1_policy_bundles_rollback: AtomicU64,
-    pub(crate) governance_errors_v1_provenance_query: AtomicU64,
-    pub(crate) governance_errors_v1_provenance_lineage: AtomicU64,
-    pub(crate) governance_errors_v1_provenance_lineage_execution_id: AtomicU64,
-    pub(crate) governance_errors_v1_provenance_ingest: AtomicU64,
-    pub(crate) governance_errors_v1_bridges_bridge_id_tools: AtomicU64,
-    pub(crate) governance_errors_v1_agents_create: AtomicU64,
-    pub(crate) governance_errors_v1_agents_list: AtomicU64,
-    pub(crate) governance_errors_v1_agents_revoke: AtomicU64,
-    pub(crate) governance_errors_v1_mfa_enroll: AtomicU64,
-    pub(crate) governance_errors_v1_mfa_verify: AtomicU64,
-    pub(crate) governance_errors_v1_mfa_disable: AtomicU64,
-    pub(crate) governance_errors_v1_mfa_rotate: AtomicU64,
-    pub(crate) governance_errors_v1_mfa_list: AtomicU64,
-    pub(crate) governance_errors_v1_mfa_get: AtomicU64,
-    // Governance success counters keyed by static route template
-    pub(crate) governance_success_v1_intents_compile: AtomicU64,
-    pub(crate) governance_success_v1_intents_list: AtomicU64,
-    pub(crate) governance_success_v1_proposals_evaluate: AtomicU64,
-    pub(crate) governance_success_v1_capabilities_mint: AtomicU64,
-    pub(crate) governance_success_v1_capabilities_revoke: AtomicU64,
-    pub(crate) governance_success_v1_executions_authorize: AtomicU64,
-    pub(crate) governance_success_v1_executions_prepare: AtomicU64,
-    pub(crate) governance_success_v1_executions_execute: AtomicU64,
-    pub(crate) governance_success_v1_executions_verify: AtomicU64,
-    pub(crate) governance_success_v1_executions_compensate: AtomicU64,
-    pub(crate) governance_success_v1_executions_cancel: AtomicU64,
-    pub(crate) governance_success_v1_executions_evaluate_outcome: AtomicU64,
-    pub(crate) governance_success_v1_executions_execution_id: AtomicU64,
-    pub(crate) governance_success_v1_executions_commit: AtomicU64,
-    pub(crate) governance_success_v1_approvals: AtomicU64,
-    pub(crate) governance_success_v1_approvals_approval_id: AtomicU64,
-    pub(crate) governance_success_v1_approvals_resolve: AtomicU64,
-    pub(crate) governance_success_v1_quarantines: AtomicU64,
-    pub(crate) governance_success_v1_quarantines_hold_id: AtomicU64,
-    pub(crate) governance_success_v1_quarantines_resolve: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_create: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_list: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_get: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_update: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_delete: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_set_active: AtomicU64,
-    pub(crate) governance_success_v1_policy_simulate: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_simulate: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_versions: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_diff: AtomicU64,
-    pub(crate) governance_success_v1_policy_bundles_rollback: AtomicU64,
-    pub(crate) governance_success_v1_provenance_query: AtomicU64,
-    pub(crate) governance_success_v1_provenance_lineage: AtomicU64,
-    pub(crate) governance_success_v1_provenance_lineage_execution_id: AtomicU64,
-    pub(crate) governance_success_v1_provenance_ingest: AtomicU64,
-    pub(crate) governance_success_v1_bridges_bridge_id_tools: AtomicU64,
-    pub(crate) governance_success_v1_agents_create: AtomicU64,
-    pub(crate) governance_success_v1_agents_list: AtomicU64,
-    pub(crate) governance_success_v1_agents_revoke: AtomicU64,
-    pub(crate) governance_success_v1_mfa_enroll: AtomicU64,
-    pub(crate) governance_success_v1_mfa_verify: AtomicU64,
-    pub(crate) governance_success_v1_mfa_disable: AtomicU64,
-    pub(crate) governance_success_v1_mfa_rotate: AtomicU64,
-    pub(crate) governance_success_v1_mfa_list: AtomicU64,
-    pub(crate) governance_success_v1_mfa_get: AtomicU64,
-    // Audit fail-closed rejection counter
-    pub(crate) audit_fail_closed_rejections: AtomicU64,
-    // WORM sink counters
-    pub(crate) audit_worm_sink_exports_total: AtomicU64,
-    pub(crate) audit_worm_sink_failures_total: AtomicU64,
-    pub(crate) audit_worm_sink_last_success_timestamp_seconds: AtomicU64,
-    // Approval timeout counter
-    pub(crate) approval_timeouts_total: AtomicU64,
-    // Quarantine hold timeout counter
-    pub(crate) quarantine_timeouts_total: AtomicU64,
-    // HA reconciler counters
-    pub(crate) ha_reconciler_canceled_total: AtomicU64,
-    pub(crate) ha_reconciler_failed_total: AtomicU64,
-    pub(crate) ha_reconciler_errors_total: AtomicU64,
-    // Behavioral anomaly advisory counters
-    pub(crate) behavioral_anomaly_warnings_total: AtomicU64,
-    pub(crate) behavioral_anomaly_critical_total: AtomicU64,
-    // Latency histogram for /v1/healthz (always status 200)
-    pub(crate) healthz_latency_buckets: [AtomicU64; 11],
-    pub(crate) healthz_latency_sum: AtomicU64,
-    pub(crate) healthz_latency_count: AtomicU64,
-    // Latency histogram for /v1/readyz (always status 200)
-    pub(crate) readyz_latency_buckets: [AtomicU64; 11],
-    pub(crate) readyz_latency_sum: AtomicU64,
-    pub(crate) readyz_latency_count: AtomicU64,
-    // Latency histogram for /v1/readyz/deep (status 200)
-    pub(crate) readyz_deep_latency_buckets_200: [AtomicU64; 11],
-    pub(crate) readyz_deep_latency_sum_200: AtomicU64,
-    pub(crate) readyz_deep_latency_count_200: AtomicU64,
-    // Latency histogram for /v1/readyz/deep (status 503)
-    pub(crate) readyz_deep_latency_buckets_503: [AtomicU64; 11],
-    pub(crate) readyz_deep_latency_sum_503: AtomicU64,
-    pub(crate) readyz_deep_latency_count_503: AtomicU64,
-    // Latency histogram for /v1/metrics (always status 200)
-    pub(crate) metrics_latency_buckets: [AtomicU64; 11],
-    pub(crate) metrics_latency_sum: AtomicU64,
-    pub(crate) metrics_latency_count: AtomicU64,
-}
-
-impl Metrics {
-    pub(crate) fn new() -> Self {
-        Self {
-            healthz_requests: AtomicU64::new(0),
-            readyz_requests: AtomicU64::new(0),
-            readyz_deep_requests_200: AtomicU64::new(0),
-            readyz_deep_requests_503: AtomicU64::new(0),
-            metrics_scrapes: AtomicU64::new(0),
-            store_health_up: AtomicU64::new(0),
-            governance_errors_v1_intents_compile: AtomicU64::new(0),
-            governance_errors_v1_intents_list: AtomicU64::new(0),
-            governance_errors_v1_proposals_evaluate: AtomicU64::new(0),
-            governance_errors_v1_capabilities_mint: AtomicU64::new(0),
-            governance_errors_v1_capabilities_revoke: AtomicU64::new(0),
-            governance_errors_v1_executions_authorize: AtomicU64::new(0),
-            governance_errors_v1_executions_prepare: AtomicU64::new(0),
-            governance_errors_v1_executions_execute: AtomicU64::new(0),
-            governance_errors_v1_executions_verify: AtomicU64::new(0),
-            governance_errors_v1_executions_compensate: AtomicU64::new(0),
-            governance_errors_v1_executions_cancel: AtomicU64::new(0),
-            governance_errors_v1_executions_evaluate_outcome: AtomicU64::new(0),
-            governance_errors_v1_executions_execution_id: AtomicU64::new(0),
-            governance_errors_v1_executions_commit: AtomicU64::new(0),
-            governance_errors_v1_approvals: AtomicU64::new(0),
-            governance_errors_v1_approvals_approval_id: AtomicU64::new(0),
-            governance_errors_v1_approvals_resolve: AtomicU64::new(0),
-            governance_errors_v1_quarantines: AtomicU64::new(0),
-            governance_errors_v1_quarantines_hold_id: AtomicU64::new(0),
-            governance_errors_v1_quarantines_resolve: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_create: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_list: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_get: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_update: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_delete: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_set_active: AtomicU64::new(0),
-            governance_errors_v1_policy_simulate: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_simulate: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_versions: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_diff: AtomicU64::new(0),
-            governance_errors_v1_policy_bundles_rollback: AtomicU64::new(0),
-            governance_errors_v1_provenance_query: AtomicU64::new(0),
-            governance_errors_v1_provenance_lineage: AtomicU64::new(0),
-            governance_errors_v1_provenance_lineage_execution_id: AtomicU64::new(0),
-            governance_errors_v1_provenance_ingest: AtomicU64::new(0),
-            governance_errors_v1_bridges_bridge_id_tools: AtomicU64::new(0),
-            governance_errors_v1_agents_create: AtomicU64::new(0),
-            governance_errors_v1_agents_list: AtomicU64::new(0),
-            governance_errors_v1_agents_revoke: AtomicU64::new(0),
-            governance_errors_v1_mfa_enroll: AtomicU64::new(0),
-            governance_errors_v1_mfa_verify: AtomicU64::new(0),
-            governance_errors_v1_mfa_disable: AtomicU64::new(0),
-            governance_errors_v1_mfa_rotate: AtomicU64::new(0),
-            governance_errors_v1_mfa_list: AtomicU64::new(0),
-            governance_errors_v1_mfa_get: AtomicU64::new(0),
-            governance_success_v1_intents_compile: AtomicU64::new(0),
-            governance_success_v1_intents_list: AtomicU64::new(0),
-            governance_success_v1_proposals_evaluate: AtomicU64::new(0),
-            governance_success_v1_capabilities_mint: AtomicU64::new(0),
-            governance_success_v1_capabilities_revoke: AtomicU64::new(0),
-            governance_success_v1_executions_authorize: AtomicU64::new(0),
-            governance_success_v1_executions_prepare: AtomicU64::new(0),
-            governance_success_v1_executions_execute: AtomicU64::new(0),
-            governance_success_v1_executions_verify: AtomicU64::new(0),
-            governance_success_v1_executions_compensate: AtomicU64::new(0),
-            governance_success_v1_executions_cancel: AtomicU64::new(0),
-            governance_success_v1_executions_evaluate_outcome: AtomicU64::new(0),
-            governance_success_v1_executions_execution_id: AtomicU64::new(0),
-            governance_success_v1_executions_commit: AtomicU64::new(0),
-            governance_success_v1_approvals: AtomicU64::new(0),
-            governance_success_v1_approvals_approval_id: AtomicU64::new(0),
-            governance_success_v1_approvals_resolve: AtomicU64::new(0),
-            governance_success_v1_quarantines: AtomicU64::new(0),
-            governance_success_v1_quarantines_hold_id: AtomicU64::new(0),
-            governance_success_v1_quarantines_resolve: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_create: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_list: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_get: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_update: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_delete: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_set_active: AtomicU64::new(0),
-            governance_success_v1_policy_simulate: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_simulate: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_versions: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_diff: AtomicU64::new(0),
-            governance_success_v1_policy_bundles_rollback: AtomicU64::new(0),
-            governance_success_v1_provenance_query: AtomicU64::new(0),
-            governance_success_v1_provenance_lineage: AtomicU64::new(0),
-            governance_success_v1_provenance_lineage_execution_id: AtomicU64::new(0),
-            governance_success_v1_provenance_ingest: AtomicU64::new(0),
-            governance_success_v1_bridges_bridge_id_tools: AtomicU64::new(0),
-            governance_success_v1_agents_create: AtomicU64::new(0),
-            governance_success_v1_agents_list: AtomicU64::new(0),
-            governance_success_v1_agents_revoke: AtomicU64::new(0),
-            governance_success_v1_mfa_enroll: AtomicU64::new(0),
-            governance_success_v1_mfa_verify: AtomicU64::new(0),
-            governance_success_v1_mfa_disable: AtomicU64::new(0),
-            governance_success_v1_mfa_rotate: AtomicU64::new(0),
-            governance_success_v1_mfa_list: AtomicU64::new(0),
-            governance_success_v1_mfa_get: AtomicU64::new(0),
-            audit_fail_closed_rejections: AtomicU64::new(0),
-            audit_worm_sink_exports_total: AtomicU64::new(0),
-            audit_worm_sink_failures_total: AtomicU64::new(0),
-            audit_worm_sink_last_success_timestamp_seconds: AtomicU64::new(0),
-            approval_timeouts_total: AtomicU64::new(0),
-            quarantine_timeouts_total: AtomicU64::new(0),
-            ha_reconciler_canceled_total: AtomicU64::new(0),
-            ha_reconciler_failed_total: AtomicU64::new(0),
-            ha_reconciler_errors_total: AtomicU64::new(0),
-            behavioral_anomaly_warnings_total: AtomicU64::new(0),
-            behavioral_anomaly_critical_total: AtomicU64::new(0),
-            // Latency histogram fields
-            healthz_latency_buckets: [const { AtomicU64::new(0) }; 11],
-            healthz_latency_sum: AtomicU64::new(0),
-            healthz_latency_count: AtomicU64::new(0),
-            readyz_latency_buckets: [const { AtomicU64::new(0) }; 11],
-            readyz_latency_sum: AtomicU64::new(0),
-            readyz_latency_count: AtomicU64::new(0),
-            readyz_deep_latency_buckets_200: [const { AtomicU64::new(0) }; 11],
-            readyz_deep_latency_sum_200: AtomicU64::new(0),
-            readyz_deep_latency_count_200: AtomicU64::new(0),
-            readyz_deep_latency_buckets_503: [const { AtomicU64::new(0) }; 11],
-            readyz_deep_latency_sum_503: AtomicU64::new(0),
-            readyz_deep_latency_count_503: AtomicU64::new(0),
-            metrics_latency_buckets: [const { AtomicU64::new(0) }; 11],
-            metrics_latency_sum: AtomicU64::new(0),
-            metrics_latency_count: AtomicU64::new(0),
-        }
-    }
-
-    /// Increments the governance error counter for the given route.
-    pub(crate) fn increment_governance_error(&self, route: GovernanceRoute) {
-        match route {
-            GovernanceRoute::IntentsCompile => self
-                .governance_errors_v1_intents_compile
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::IntentsList => self
-                .governance_errors_v1_intents_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProposalsEvaluate => self
-                .governance_errors_v1_proposals_evaluate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::CapabilitiesMint => self
-                .governance_errors_v1_capabilities_mint
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::CapabilitiesRevoke => self
-                .governance_errors_v1_capabilities_revoke
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsAuthorize => self
-                .governance_errors_v1_executions_authorize
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsPrepare => self
-                .governance_errors_v1_executions_prepare
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsExecute => self
-                .governance_errors_v1_executions_execute
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsVerify => self
-                .governance_errors_v1_executions_verify
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsCommit => self
-                .governance_errors_v1_executions_commit
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsCompensate => self
-                .governance_errors_v1_executions_compensate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsCancel => self
-                .governance_errors_v1_executions_cancel
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsEvaluateOutcome => self
-                .governance_errors_v1_executions_evaluate_outcome
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsExecutionId => self
-                .governance_errors_v1_executions_execution_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::Approvals => self
-                .governance_errors_v1_approvals
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ApprovalsApprovalId => self
-                .governance_errors_v1_approvals_approval_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ApprovalsResolve => self
-                .governance_errors_v1_approvals_resolve
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::Quarantines => self
-                .governance_errors_v1_quarantines
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::QuarantinesHoldId => self
-                .governance_errors_v1_quarantines_hold_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::QuarantinesResolve => self
-                .governance_errors_v1_quarantines_resolve
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesCreate => self
-                .governance_errors_v1_policy_bundles_create
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesList => self
-                .governance_errors_v1_policy_bundles_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesGet => self
-                .governance_errors_v1_policy_bundles_get
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesUpdate => self
-                .governance_errors_v1_policy_bundles_update
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesDelete => self
-                .governance_errors_v1_policy_bundles_delete
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesSetActive => self
-                .governance_errors_v1_policy_bundles_set_active
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicySimulate => self
-                .governance_errors_v1_policy_simulate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesSimulate => self
-                .governance_errors_v1_policy_bundles_simulate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesVersions => self
-                .governance_errors_v1_policy_bundles_versions
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesDiff => self
-                .governance_errors_v1_policy_bundles_diff
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesRollback => self
-                .governance_errors_v1_policy_bundles_rollback
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceQuery => self
-                .governance_errors_v1_provenance_query
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceLineage => self
-                .governance_errors_v1_provenance_lineage
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceLineageExecutionId => self
-                .governance_errors_v1_provenance_lineage_execution_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceIngest => self
-                .governance_errors_v1_provenance_ingest
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::BridgesBridgeIdTools => self
-                .governance_errors_v1_bridges_bridge_id_tools
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::AgentsCreate => self
-                .governance_errors_v1_agents_create
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::AgentsList => self
-                .governance_errors_v1_agents_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::AgentsRevoke => self
-                .governance_errors_v1_agents_revoke
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaEnroll => self
-                .governance_errors_v1_mfa_enroll
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaVerify => self
-                .governance_errors_v1_mfa_verify
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaDisable => self
-                .governance_errors_v1_mfa_disable
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaRotate => self
-                .governance_errors_v1_mfa_rotate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaList => self
-                .governance_errors_v1_mfa_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaGet => self
-                .governance_errors_v1_mfa_get
-                .fetch_add(1, Ordering::Relaxed),
-        };
-    }
-
-    /// Increments the governance success counter for the given route.
-    pub(crate) fn increment_governance_success(&self, route: GovernanceRoute) {
-        match route {
-            GovernanceRoute::IntentsCompile => self
-                .governance_success_v1_intents_compile
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::IntentsList => self
-                .governance_success_v1_intents_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProposalsEvaluate => self
-                .governance_success_v1_proposals_evaluate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::CapabilitiesMint => self
-                .governance_success_v1_capabilities_mint
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::CapabilitiesRevoke => self
-                .governance_success_v1_capabilities_revoke
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsAuthorize => self
-                .governance_success_v1_executions_authorize
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsPrepare => self
-                .governance_success_v1_executions_prepare
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsExecute => self
-                .governance_success_v1_executions_execute
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsVerify => self
-                .governance_success_v1_executions_verify
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsCommit => self
-                .governance_success_v1_executions_commit
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsCompensate => self
-                .governance_success_v1_executions_compensate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsCancel => self
-                .governance_success_v1_executions_cancel
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsEvaluateOutcome => self
-                .governance_success_v1_executions_evaluate_outcome
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ExecutionsExecutionId => self
-                .governance_success_v1_executions_execution_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::Approvals => self
-                .governance_success_v1_approvals
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ApprovalsApprovalId => self
-                .governance_success_v1_approvals_approval_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ApprovalsResolve => self
-                .governance_success_v1_approvals_resolve
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::Quarantines => self
-                .governance_success_v1_quarantines
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::QuarantinesHoldId => self
-                .governance_success_v1_quarantines_hold_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::QuarantinesResolve => self
-                .governance_success_v1_quarantines_resolve
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesCreate => self
-                .governance_success_v1_policy_bundles_create
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesList => self
-                .governance_success_v1_policy_bundles_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesGet => self
-                .governance_success_v1_policy_bundles_get
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesUpdate => self
-                .governance_success_v1_policy_bundles_update
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesDelete => self
-                .governance_success_v1_policy_bundles_delete
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesSetActive => self
-                .governance_success_v1_policy_bundles_set_active
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicySimulate => self
-                .governance_success_v1_policy_simulate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesSimulate => self
-                .governance_success_v1_policy_bundles_simulate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesVersions => self
-                .governance_success_v1_policy_bundles_versions
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesDiff => self
-                .governance_success_v1_policy_bundles_diff
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::PolicyBundlesRollback => self
-                .governance_success_v1_policy_bundles_rollback
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceQuery => self
-                .governance_success_v1_provenance_query
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceLineage => self
-                .governance_success_v1_provenance_lineage
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceLineageExecutionId => self
-                .governance_success_v1_provenance_lineage_execution_id
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::ProvenanceIngest => self
-                .governance_success_v1_provenance_ingest
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::BridgesBridgeIdTools => self
-                .governance_success_v1_bridges_bridge_id_tools
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::AgentsCreate => self
-                .governance_success_v1_agents_create
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::AgentsList => self
-                .governance_success_v1_agents_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::AgentsRevoke => self
-                .governance_success_v1_agents_revoke
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaEnroll => self
-                .governance_success_v1_mfa_enroll
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaVerify => self
-                .governance_success_v1_mfa_verify
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaDisable => self
-                .governance_success_v1_mfa_disable
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaRotate => self
-                .governance_success_v1_mfa_rotate
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaList => self
-                .governance_success_v1_mfa_list
-                .fetch_add(1, Ordering::Relaxed),
-            GovernanceRoute::MfaGet => self
-                .governance_success_v1_mfa_get
-                .fetch_add(1, Ordering::Relaxed),
-        };
-    }
-
-    /// Increments the governance error counter for the given route and returns the error.
-    /// Use this in `map_err` closures: `.map_err(|e| state.metrics.record_governance_error(route, e))`
-    ///
-    /// Generic over the error type so it accepts both the server-local
-    /// `ApiProblem` and the extracted `crate::problem::ApiProblem` used by
-    /// handler modules declared alongside `server`.
-    pub(crate) fn record_governance_error<T>(&self, route: GovernanceRoute, err: T) -> T {
-        self.increment_governance_error(route);
-        err
-    }
-
-    /// Increments the behavioral anomaly advisory counter for the given severity.
-    pub(crate) fn record_behavioral_anomaly(&self, severity: BehavioralSeverity) {
-        match severity {
-            BehavioralSeverity::Warning => self
-                .behavioral_anomaly_warnings_total
-                .fetch_add(1, Ordering::Relaxed),
-            BehavioralSeverity::Critical => self
-                .behavioral_anomaly_critical_total
-                .fetch_add(1, Ordering::Relaxed),
-        };
-    }
-
-    /// Records a latency sample in the appropriate histogram based on route and status.
-    /// `elapsed_ns` is the elapsed time in nanoseconds.
-    pub(crate) fn record_latency(&self, route: PublicRoute, status: u16, elapsed_ns: u64) {
-        let (buckets, sum, count) = match (route, status) {
-            (PublicRoute::Healthz, 200) => (
-                &self.healthz_latency_buckets,
-                &self.healthz_latency_sum,
-                &self.healthz_latency_count,
-            ),
-            (PublicRoute::Readyz, 200) => (
-                &self.readyz_latency_buckets,
-                &self.readyz_latency_sum,
-                &self.readyz_latency_count,
-            ),
-            (PublicRoute::ReadyzDeep, 200) => (
-                &self.readyz_deep_latency_buckets_200,
-                &self.readyz_deep_latency_sum_200,
-                &self.readyz_deep_latency_count_200,
-            ),
-            (PublicRoute::ReadyzDeep, 503) => (
-                &self.readyz_deep_latency_buckets_503,
-                &self.readyz_deep_latency_sum_503,
-                &self.readyz_deep_latency_count_503,
-            ),
-            (PublicRoute::Metrics, 200) => (
-                &self.metrics_latency_buckets,
-                &self.metrics_latency_sum,
-                &self.metrics_latency_count,
-            ),
-            // Ignore unknown combinations (shouldn't happen for public endpoints)
-            _ => return,
-        };
-
-        let elapsed_s = elapsed_ns as f64 / 1e9_f64;
-
-        // Update sum and count
-        sum.fetch_add(elapsed_ns, Ordering::Relaxed);
-        count.fetch_add(1, Ordering::Relaxed);
-
-        // Update buckets - increment all buckets where elapsed >= boundary
-        for (i, boundary) in crate::monitoring::HISTOGRAM_BOUNDARIES.iter().enumerate() {
-            if elapsed_s >= *boundary {
-                buckets[i].fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-}
-
-/// Static route templates for governance error counters.
-/// Each variant corresponds to a route path template with {param} placeholders normalized to fixed strings.
-/// Variants are split by method to avoid counter collisions for same-path-different-method routes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(clippy::enum_variant_names)]
-pub(crate) enum GovernanceRoute {
-    IntentsCompile,
-    IntentsList,
-    ProposalsEvaluate,
-    CapabilitiesMint,
-    CapabilitiesRevoke,
-    ExecutionsAuthorize,
-    ExecutionsPrepare,
-    ExecutionsExecute,
-    ExecutionsVerify,
-    ExecutionsCommit,
-    ExecutionsCompensate,
-    ExecutionsCancel,
-    ExecutionsEvaluateOutcome,
-    ExecutionsExecutionId,
-    Approvals,
-    ApprovalsApprovalId,
-    ApprovalsResolve,
-    Quarantines,
-    QuarantinesHoldId,
-    QuarantinesResolve,
-    PolicyBundlesCreate,
-    PolicyBundlesList,
-    PolicyBundlesGet,
-    PolicyBundlesUpdate,
-    PolicyBundlesDelete,
-    PolicyBundlesSetActive,
-    PolicySimulate,
-    PolicyBundlesSimulate,
-    PolicyBundlesVersions,
-    PolicyBundlesDiff,
-    PolicyBundlesRollback,
-    ProvenanceQuery,
-    ProvenanceLineage,
-    ProvenanceLineageExecutionId,
-    ProvenanceIngest,
-    BridgesBridgeIdTools,
-    AgentsCreate,
-    AgentsList,
-    AgentsRevoke,
-    MfaEnroll,
-    MfaVerify,
-    MfaDisable,
-    MfaRotate,
-    MfaList,
-    MfaGet,
-}
-
-impl GovernanceRoute {
-    #[allow(dead_code)]
-    fn path(&self) -> &'static str {
-        match self {
-            GovernanceRoute::IntentsCompile => "/v1/intents/compile",
-            GovernanceRoute::IntentsList => "/v1/intents",
-            GovernanceRoute::ProposalsEvaluate => "/v1/proposals/{proposal_id}/evaluate",
-            GovernanceRoute::CapabilitiesMint => "/v1/capabilities/mint",
-            GovernanceRoute::CapabilitiesRevoke => "/v1/capabilities/{capability_id}/revoke",
-            GovernanceRoute::ExecutionsAuthorize => "/v1/executions/authorize",
-            GovernanceRoute::ExecutionsPrepare => "/v1/executions/{execution_id}/prepare",
-            GovernanceRoute::ExecutionsExecute => "/v1/executions/{execution_id}/execute",
-            GovernanceRoute::ExecutionsVerify => "/v1/executions/{execution_id}/verify",
-            GovernanceRoute::ExecutionsCommit => "/v1/executions/{execution_id}/commit",
-            GovernanceRoute::ExecutionsCompensate => "/v1/executions/{execution_id}/compensate",
-            GovernanceRoute::ExecutionsCancel => "/v1/executions/{execution_id}/cancel",
-            GovernanceRoute::ExecutionsEvaluateOutcome => {
-                "/v1/executions/{execution_id}/evaluate-outcome"
-            }
-            GovernanceRoute::ExecutionsExecutionId => "/v1/executions/{execution_id}",
-            GovernanceRoute::Approvals => "/v1/approvals",
-            GovernanceRoute::ApprovalsApprovalId => "/v1/approvals/{approval_id}",
-            GovernanceRoute::ApprovalsResolve => "/v1/approvals/{approval_id}/resolve",
-            GovernanceRoute::Quarantines => "/v1/quarantines",
-            GovernanceRoute::QuarantinesHoldId => "/v1/quarantines/{hold_id}",
-            GovernanceRoute::QuarantinesResolve => "/v1/quarantines/{hold_id}/resolve",
-            GovernanceRoute::PolicyBundlesCreate => "/v1/policy-bundles",
-            GovernanceRoute::PolicyBundlesList => "/v1/policy-bundles",
-            GovernanceRoute::PolicyBundlesGet => "/v1/policy-bundles/{bundle_id}",
-            GovernanceRoute::PolicyBundlesUpdate => "/v1/policy-bundles/{bundle_id}",
-            GovernanceRoute::PolicyBundlesDelete => "/v1/policy-bundles/{bundle_id}",
-            GovernanceRoute::PolicyBundlesSetActive => "/v1/policy-bundles/{bundle_id}/active",
-            GovernanceRoute::PolicySimulate => "/v1/policy/simulate",
-            GovernanceRoute::PolicyBundlesSimulate => "/v1/policy-bundles/simulate",
-            GovernanceRoute::PolicyBundlesVersions => "/v1/policy-bundles/{bundle_id}/versions",
-            GovernanceRoute::PolicyBundlesDiff => "/v1/policy-bundles/{bundle_id}/diff",
-            GovernanceRoute::PolicyBundlesRollback => "/v1/policy-bundles/{bundle_id}/rollback",
-            GovernanceRoute::ProvenanceQuery => "/v1/provenance/query",
-            GovernanceRoute::ProvenanceLineage => "/v1/provenance/lineage",
-            GovernanceRoute::ProvenanceLineageExecutionId => {
-                "/v1/provenance/lineage/{execution_id}"
-            }
-            GovernanceRoute::ProvenanceIngest => "/v1/provenance/ingest",
-            GovernanceRoute::BridgesBridgeIdTools => "/v1/bridges/{bridge_id}/tools",
-            GovernanceRoute::AgentsCreate => "/v1/admin/agents",
-            GovernanceRoute::AgentsList => "/v1/admin/agents",
-            GovernanceRoute::AgentsRevoke => "/v1/admin/agents/{agent_id}",
-            GovernanceRoute::MfaEnroll => "/v1/admin/agents/{agent_id}/mfa/enroll",
-            GovernanceRoute::MfaVerify => "/v1/admin/agents/{agent_id}/mfa/verify",
-            GovernanceRoute::MfaDisable => "/v1/admin/agents/{agent_id}/mfa/disable",
-            GovernanceRoute::MfaRotate => "/v1/admin/agents/{agent_id}/mfa/rotate",
-            GovernanceRoute::MfaList => "/v1/admin/agents/{agent_id}/mfa",
-            GovernanceRoute::MfaGet => "/v1/admin/agents/{agent_id}/mfa/{mfa_factor_id}",
-        }
-    }
-
-    /// Returns the HTTP method for this route as a static string.
-    #[allow(dead_code)]
-    fn method(&self) -> &'static str {
-        match self {
-            GovernanceRoute::IntentsCompile => "POST",
-            GovernanceRoute::IntentsList => "GET",
-            GovernanceRoute::ProposalsEvaluate => "POST",
-            GovernanceRoute::CapabilitiesMint => "POST",
-            GovernanceRoute::CapabilitiesRevoke => "POST",
-            GovernanceRoute::ExecutionsAuthorize => "POST",
-            GovernanceRoute::ExecutionsPrepare => "POST",
-            GovernanceRoute::ExecutionsExecute => "POST",
-            GovernanceRoute::ExecutionsVerify => "POST",
-            GovernanceRoute::ExecutionsCommit => "POST",
-            GovernanceRoute::ExecutionsCompensate => "POST",
-            GovernanceRoute::ExecutionsCancel => "POST",
-            GovernanceRoute::ExecutionsEvaluateOutcome => "POST",
-            GovernanceRoute::ExecutionsExecutionId => "GET",
-            GovernanceRoute::Approvals => "GET",
-            GovernanceRoute::ApprovalsApprovalId => "GET",
-            GovernanceRoute::ApprovalsResolve => "POST",
-            GovernanceRoute::Quarantines => "GET",
-            GovernanceRoute::QuarantinesHoldId => "GET",
-            GovernanceRoute::QuarantinesResolve => "POST",
-            GovernanceRoute::PolicyBundlesCreate => "POST",
-            GovernanceRoute::PolicyBundlesList => "GET",
-            GovernanceRoute::PolicyBundlesGet => "GET",
-            GovernanceRoute::PolicyBundlesUpdate => "PUT",
-            GovernanceRoute::PolicyBundlesDelete => "DELETE",
-            GovernanceRoute::PolicyBundlesSetActive => "PUT",
-            GovernanceRoute::PolicySimulate => "POST",
-            GovernanceRoute::PolicyBundlesSimulate => "POST",
-            GovernanceRoute::PolicyBundlesVersions => "GET",
-            GovernanceRoute::PolicyBundlesDiff => "GET",
-            GovernanceRoute::PolicyBundlesRollback => "POST",
-            GovernanceRoute::ProvenanceQuery => "POST",
-            GovernanceRoute::ProvenanceLineage => "POST",
-            GovernanceRoute::ProvenanceLineageExecutionId => "GET",
-            GovernanceRoute::ProvenanceIngest => "POST",
-            GovernanceRoute::BridgesBridgeIdTools => "GET",
-            GovernanceRoute::AgentsCreate => "POST",
-            GovernanceRoute::AgentsList => "GET",
-            GovernanceRoute::AgentsRevoke => "DELETE",
-            GovernanceRoute::MfaEnroll => "POST",
-            GovernanceRoute::MfaVerify => "POST",
-            GovernanceRoute::MfaDisable => "POST",
-            GovernanceRoute::MfaRotate => "POST",
-            GovernanceRoute::MfaList => "GET",
-            GovernanceRoute::MfaGet => "GET",
-        }
-    }
-}
-
-/// Public endpoint routes that have latency histograms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PublicRoute {
-    Healthz,
-    Readyz,
-    ReadyzDeep,
-    Metrics,
-}
-
-// ---------------------------------------------------------------------------
-// I11 Output Sanitization helpers
-// ---------------------------------------------------------------------------
-
-const APPROVAL_TIMEOUT_BATCH_SIZE: u32 = 100;
-const QUARANTINE_TIMEOUT_BATCH_SIZE: u32 = 100;
-
-/// Emit a provenance event recording that an approval timed out.
-async fn emit_approval_timed_out_provenance(
-    state: &AppState,
-    approval: &ferrum_proto::ApprovalRequest,
-) {
-    let mut metadata = ferrum_proto::JsonMap::new();
-    metadata.insert(
-        "approval_id".to_string(),
-        serde_json::json!(approval.approval_id.to_string()),
-    );
-    metadata.insert(
-        "previous_state".to_string(),
-        serde_json::json!(format!("{:?}", approval.state)),
-    );
-
-    let event = ProvenanceEvent {
-        event_id: EventId::new(),
-        kind: ProvenanceEventKind::ApprovalTimedOut,
-        occurred_at: chrono::Utc::now(),
-        actor: ActorRef {
-            actor_type: ActorType::Gateway,
-            actor_id: "ferrum-gateway".to_string(),
-            display_name: Some("FerrumGate Gateway".to_string()),
-        },
-        object: ObjectRef {
-            object_type: ObjectType::Approval,
-            object_id: approval.approval_id.to_string(),
-            summary: Some("Approval timed out and was transitioned to Expired".to_string()),
-        },
-        intent_id: Some(approval.intent_id),
-        proposal_id: Some(approval.proposal_id),
-        execution_id: approval.execution_id,
-        capability_id: None,
-        rollback_contract_id: None,
-        policy_bundle_id: None,
-        trust_labels: Vec::new(),
-        sensitivity_labels: Vec::new(),
-        parent_edges: Vec::new(),
-        hash_chain: HashChainRef {
-            content_hash: None,
-            manifest_hash: None,
-            policy_bundle_hash: None,
-            previous_ledger_hash: None,
-        },
-        metadata,
-        source_runtime_id: None,
-    };
-
-    if let Err(e) = state.runtime.store.provenance().append_event(&event).await {
-        tracing::warn!(
-            error = %e,
-            approval_id = %approval.approval_id,
-            "failed to append ApprovalTimedOut provenance event"
-        );
-    }
-}
-
-/// Background task that periodically reconciles stale pending approvals.
-async fn approval_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::sync::Notify>) {
-    let interval_secs = state.server_config.approval_reconciliation_interval_secs;
-    let timeout_seconds = state.server_config.approval_timeout_seconds;
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                let now = chrono::Utc::now();
-                match state
-                    .runtime
-                    .store
-                    .approvals()
-                    .expire_stale_pending(now, timeout_seconds, APPROVAL_TIMEOUT_BATCH_SIZE)
-                    .await
-                {
-                    Ok(expired) => {
-                        for approval in &expired {
-                            state
-                                .metrics
-                                .approval_timeouts_total
-                                .fetch_add(1, Ordering::Relaxed);
-                            emit_approval_timed_out_provenance(&state, approval).await;
-                        }
-                        if !expired.is_empty() {
-                            tracing::info!(
-                                count = expired.len(),
-                                "approval timeout reconciliation expired stale pending approvals"
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(%error, "approval timeout reconciliation failed");
-                    }
-                }
-            }
-            _ = shutdown.notified() => {
-                tracing::info!("approval timeout reconciler shutting down");
-                break;
-            }
-        }
-    }
-}
-
-/// Emit a provenance event recording that a quarantine hold timed out.
-async fn emit_quarantine_timed_out_provenance(
-    state: &AppState,
-    hold: &ferrum_proto::QuarantineHold,
-) {
-    let mut metadata = ferrum_proto::JsonMap::new();
-    metadata.insert(
-        "hold_id".to_string(),
-        serde_json::json!(hold.hold_id.to_string()),
-    );
-    metadata.insert(
-        "previous_state".to_string(),
-        serde_json::json!(format!("{:?}", hold.state)),
-    );
-
-    let event = ProvenanceEvent {
-        event_id: EventId::new(),
-        kind: ProvenanceEventKind::QuarantineTimedOut,
-        occurred_at: chrono::Utc::now(),
-        actor: ActorRef {
-            actor_type: ActorType::Gateway,
-            actor_id: "ferrum-gateway".to_string(),
-            display_name: Some("FerrumGate Gateway".to_string()),
-        },
-        object: ObjectRef {
-            object_type: ObjectType::QuarantineHold,
-            object_id: hold.hold_id.to_string(),
-            summary: Some("Quarantine hold timed out and was transitioned to Expired".to_string()),
-        },
-        intent_id: Some(hold.intent_id),
-        proposal_id: Some(hold.proposal_id),
-        execution_id: None,
-        capability_id: None,
-        rollback_contract_id: None,
-        policy_bundle_id: None,
-        trust_labels: Vec::new(),
-        sensitivity_labels: Vec::new(),
-        parent_edges: Vec::new(),
-        hash_chain: HashChainRef {
-            content_hash: None,
-            manifest_hash: None,
-            policy_bundle_hash: None,
-            previous_ledger_hash: None,
-        },
-        metadata,
-        source_runtime_id: None,
-    };
-
-    if let Err(e) = crate::provenance::append_governance_event(&state.runtime.store, event).await {
-        tracing::warn!(
-            error = %e,
-            hold_id = %hold.hold_id,
-            "failed to append QuarantineTimedOut provenance event"
-        );
-    }
-}
-
-/// Background task that periodically reconciles stale pending quarantine holds.
-async fn quarantine_timeout_reconciler(state: Arc<AppState>, shutdown: Arc<tokio::sync::Notify>) {
-    let interval_secs = state.server_config.quarantine_reconciliation_interval_secs;
-    let timeout_seconds = state.server_config.quarantine_timeout_seconds;
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                let now = chrono::Utc::now();
-                match state
-                    .runtime
-                    .store
-                    .quarantine_holds()
-                    .expire_stale_pending(now, timeout_seconds, QUARANTINE_TIMEOUT_BATCH_SIZE)
-                    .await
-                {
-                    Ok(expired) => {
-                        for hold in &expired {
-                            state
-                                .metrics
-                                .quarantine_timeouts_total
-                                .fetch_add(1, Ordering::Relaxed);
-                            emit_quarantine_timed_out_provenance(&state, hold).await;
-                        }
-                        if !expired.is_empty() {
-                            tracing::info!(
-                                count = expired.len(),
-                                "quarantine timeout reconciliation expired stale pending holds"
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(%error, "quarantine timeout reconciliation failed");
-                    }
-                }
-            }
-            _ = shutdown.notified() => {
-                tracing::info!("quarantine timeout reconciler shutting down");
-                break;
-            }
-        }
-    }
-}
+use crate::auth::auth_middleware;
+use crate::behavioral::build_profiler;
+use crate::governor_config;
+#[cfg(test)]
+use crate::metrics::GovernanceRoute;
+use crate::metrics::Metrics;
+use crate::rate_limit::{AuthActorIpKeyExtractor, ResolvedIpKeyExtractor, resolve_client_ip};
+use crate::state::AppState;
+use crate::timeout_reconciler::{approval_timeout_reconciler, quarantine_timeout_reconciler};
+use crate::{AuthMode, GatewayRuntime, OidcJwksCache, ServerConfig};
 
 /// Wait for shutdown signal (Ctrl+C or SIGTERM on unix).
 async fn shutdown_signal() {
@@ -1172,6 +82,16 @@ pub async fn run_http_server(
         jwks_cache,
         nonce_cache,
     });
+
+    if state
+        .server_config
+        .legacy_object_compat_allow_until
+        .is_some()
+    {
+        tracing::warn!(
+            "legacy_object_compat_allow_until is configured; unbound workflow objects are permitted until the deadline"
+        );
+    }
 
     let approval_reconciler_shutdown = Arc::new(tokio::sync::Notify::new());
     let approval_reconciler_handle = if config.approval_timeout_enabled {
@@ -1245,50 +165,79 @@ pub async fn run_http_server(
         None
     };
 
-    let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
-    let workload_router = build_workload_router(state.clone());
+    let outer_governor_conf = governor_config!(
+        ResolvedIpKeyExtractor,
+        config.effective_pre_auth_rate_limit_per_second(),
+        config.effective_pre_auth_rate_limit_burst(),
+    );
+    let outer_limiter = outer_governor_conf.limiter().clone();
 
-    // Rate limiting: configurable per IP via config
-    // P3: Use PrincipalOrIpKeyExtractor to bucket authenticated requests by
-    // principal identity (agent id or auth header hash) combined with IP,
-    // falling back to IP for anonymous traffic.  This preserves the existing
-    // IP-based behavior for unauthenticated requests while mitigating
-    // noisy-neighbor issues on shared IPs.
-    let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(PrincipalOrIpKeyExtractor)
-        .per_second(config.rate_limit_per_second)
-        .burst_size(config.rate_limit_burst)
-        .finish()
-        .unwrap();
+    let inner_layer_and_limiter = if config.auth_mode == AuthMode::Scoped
+        || config.auth_mode == AuthMode::Oidc
+        || config.auth_mode == AuthMode::Agent
+    {
+        let conf = governor_config!(
+            AuthActorIpKeyExtractor,
+            config.rate_limit_per_second,
+            config.rate_limit_burst,
+        );
+        let limiter = conf.limiter().clone();
+        let layer = GovernorLayer::new(conf);
+        Some((layer, limiter))
+    } else {
+        None
+    };
 
     // Spawn periodic cleanup of rate limiter entries
-    let limiter = governor_conf.limiter().clone();
+    let inner_layer_and_limiter_for_cleanup = inner_layer_and_limiter.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
-            limiter.retain_recent();
+            outer_limiter.retain_recent();
+            if let Some((_, ref limiter)) = inner_layer_and_limiter_for_cleanup {
+                limiter.retain_recent();
+            }
         }
     });
 
-    let workload_router = workload_router.layer(GovernorLayer::new(governor_conf));
-
-    let mut app = monitoring_router.merge(workload_router);
-
-    // Add auth layer if auth mode requires authentication
-    if config.auth_mode == AuthMode::Bearer
-        || config.auth_mode == AuthMode::Scoped
-        || config.auth_mode == AuthMode::Oidc
-        || config.auth_mode == AuthMode::Agent
-    {
-        let auth_layer = ServiceBuilder::new()
+    let auth_layer = || {
+        ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 auth_middleware,
             ))
-            .into_inner();
-        app = app.layer(auth_layer);
-    }
+            .into_inner()
+    };
+
+    let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
+    let monitoring_router = if config.auth_mode == AuthMode::Disabled {
+        monitoring_router
+    } else {
+        monitoring_router.layer(auth_layer())
+    };
+
+    let workload_router = crate::router::build_workload_router(state.clone());
+    let workload_router = match config.auth_mode {
+        AuthMode::Disabled => workload_router,
+        AuthMode::Bearer => workload_router.layer(auth_layer()),
+        AuthMode::Scoped | AuthMode::Oidc | AuthMode::Agent => {
+            let (inner_layer, _) = inner_layer_and_limiter
+                .as_ref()
+                .expect("inner governor built above");
+            workload_router
+                .layer(inner_layer.clone())
+                .layer(auth_layer())
+        }
+    };
+    let workload_router = workload_router
+        .layer(GovernorLayer::new(outer_governor_conf))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            resolve_client_ip,
+        ));
+
+    let app = monitoring_router.merge(workload_router);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!("ferrumd listening on {}", config.bind_addr);
@@ -1344,9 +293,8 @@ pub fn build_router(runtime: GatewayRuntime) -> Router {
             server_config.nonce_cache_max_entries,
         )),
     });
-    let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
-    let workload_router = build_workload_router(state);
-    monitoring_router.merge(workload_router)
+    let workload_router = crate::router::build_workload_router(state.clone());
+    crate::router::build_app_router(state, workload_router)
 }
 
 /// Build a router with auth middleware using the given server config.
@@ -1366,9 +314,8 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
             server_config.nonce_cache_max_entries,
         )),
     });
-    let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
-    let workload_router = build_workload_router(state.clone());
-    let mut router = monitoring_router.merge(workload_router);
+    let workload_router = crate::router::build_workload_router(state.clone());
+    let mut router = crate::router::build_app_router(state.clone(), workload_router);
 
     // Add auth layer if auth mode requires authentication
     if server_config.auth_mode == AuthMode::Bearer
@@ -1388,671 +335,149 @@ pub fn build_router_with_auth(runtime: GatewayRuntime, server_config: ServerConf
     router
 }
 
+/// Build a router with dual rate limiting using the provided server config.
+///
+/// This test-only helper mirrors the production composition:
+///   - monitoring routes are outside both governors;
+///   - workload routes get an outer IP-only governor before auth, and an inner
+///     `AuthActor`+IP governor after auth for modes that carry identity;
+///   - disabled/bearer modes do not get the inner governor.
+///
+/// The caller is expected to supply `ConnectInfo` extensions on requests; if
+/// no connect info is provided the resolver fails closed.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn build_router_with_governor_and_config(
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+) -> Router {
+    build_router_with_governor_inner(runtime, server_config, false)
+}
+
 /// Build a router with rate limiting enabled using a custom GovernorConfig.
 /// This is a test-only helper that allows configuring rate limits for integration tests.
 /// For production, rate limiting is applied in `run_http_server` with 2 req/s and burst 50.
 ///
-/// Uses PrincipalOrIpKeyExtractor which supports x-real-ip header for client IP identification
-/// and buckets authenticated requests by principal identity, falling back to IP for
-/// anonymous traffic.  This allows tests to set the IP via header without needing
-/// MockConnectInfo.
+/// Auth is disabled so the router is driven entirely by the outer IP-only governor.
+/// A test-only layer is added that materializes `ConnectInfo` from the `x-real-ip`
+/// header so existing integration tests can continue to vary client IPs without
+/// manually injecting `ConnectInfo` extensions.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn build_router_with_governor(
     runtime: GatewayRuntime,
     per_second: u64,
     burst_size: u32,
 ) -> Router {
-    // Use PrincipalOrIpKeyExtractor to support x-real-ip header and principal-aware
-    // rate limiting in tests.
-    let governor_conf = GovernorConfigBuilder::default()
-        .key_extractor(PrincipalOrIpKeyExtractor)
-        .per_second(per_second)
-        .burst_size(burst_size)
-        .finish()
-        .unwrap();
+    let server_config = ServerConfig {
+        auth_mode: AuthMode::Disabled,
+        rate_limit_per_second: per_second,
+        rate_limit_burst: burst_size,
+        ..ServerConfig::default()
+    };
+    build_router_with_governor_inner(runtime, server_config, true)
+}
 
-    let server_config = ServerConfig::default();
+#[cfg(any(test, feature = "test-utils"))]
+fn build_router_with_governor_inner(
+    runtime: GatewayRuntime,
+    server_config: ServerConfig,
+    add_mock_connect_info: bool,
+) -> Router {
+    let jwks_cache = server_config.oidc_config.as_ref().and_then(|oidc| {
+        oidc.jwks_url
+            .as_ref()
+            .map(|url| Arc::new(OidcJwksCache::new(url.clone(), oidc.jwks_cache_ttl_secs)))
+    });
     let state = Arc::new(AppState {
         runtime,
         server_config: server_config.clone(),
         metrics: Arc::new(Metrics::new()),
         profiler: build_profiler(&server_config),
-        jwks_cache: None,
+        jwks_cache,
         nonce_cache: Arc::new(InMemoryNonceCache::new(
             server_config.nonce_cache_max_entries,
         )),
     });
 
+    let outer_conf = governor_config!(
+        ResolvedIpKeyExtractor,
+        server_config.effective_pre_auth_rate_limit_per_second(),
+        server_config.effective_pre_auth_rate_limit_burst(),
+    );
+    let inner_layer = if server_config.auth_mode == AuthMode::Scoped
+        || server_config.auth_mode == AuthMode::Oidc
+        || server_config.auth_mode == AuthMode::Agent
+    {
+        Some(GovernorLayer::new(governor_config!(
+            AuthActorIpKeyExtractor,
+            server_config.rate_limit_per_second,
+            server_config.rate_limit_burst,
+        )))
+    } else {
+        None
+    };
+
+    let auth_layer = || {
+        ServiceBuilder::new()
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ))
+            .into_inner()
+    };
+
     let monitoring_router = crate::monitoring::build_monitoring_router(state.clone());
-    let workload_router = build_workload_router(state).layer(GovernorLayer::new(governor_conf));
+    let monitoring_router = if server_config.auth_mode == AuthMode::Disabled {
+        monitoring_router
+    } else {
+        monitoring_router.layer(auth_layer())
+    };
+
+    let workload_router = crate::router::build_workload_router(state.clone());
+    let workload_router = match server_config.auth_mode {
+        AuthMode::Disabled => workload_router,
+        AuthMode::Bearer => workload_router.layer(auth_layer()),
+        AuthMode::Scoped | AuthMode::Oidc | AuthMode::Agent => {
+            let inner_layer = inner_layer.expect("inner governor layer built above");
+            workload_router.layer(inner_layer).layer(auth_layer())
+        }
+    };
+    let mut workload_router = workload_router.layer(GovernorLayer::new(outer_conf)).layer(
+        axum::middleware::from_fn_with_state(state.clone(), resolve_client_ip),
+    );
+
+    if add_mock_connect_info {
+        workload_router =
+            workload_router.layer(axum::middleware::from_fn(mock_connect_info_from_x_real_ip));
+    }
+
     monitoring_router.merge(workload_router)
 }
 
-fn build_workload_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        // Provenance query endpoint
-        .route(
-            "/v1/provenance/query",
-            post(crate::bridge::query_provenance),
-        )
-        // Execution lineage endpoint
-        .route(
-            "/v1/provenance/lineage/{execution_id}",
-            get(crate::lineage::get_execution_lineage),
-        )
-        // Multi-hop lineage query endpoint
-        .route(
-            "/v1/provenance/lineage",
-            post(crate::lineage::query_lineage),
-        )
-        // Provenance ingest endpoint
-        .route(
-            "/v1/provenance/ingest",
-            post(crate::bridge::ingest_provenance),
-        )
-        // Bridge endpoints
-        .route("/v1/bridges", get(crate::bridge::list_bridges))
-        .route(
-            "/v1/bridges/{bridge_id}/tools",
-            get(crate::bridge::list_bridge_tools),
-        )
-        // Execution inspection endpoint
-        .route(
-            "/v1/executions/{execution_id}",
-            get(crate::lineage::get_execution),
-        )
-        // Approvals endpoints
-        .route("/v1/approvals", get(crate::approval::list_approvals))
-        .route(
-            "/v1/approvals/{approval_id}",
-            get(crate::approval::get_approval),
-        )
-        .route(
-            "/v1/approvals/{approval_id}/resolve",
-            post(crate::approval::resolve_approval),
-        )
-        // Quarantine hold endpoints
-        .route(
-            "/v1/quarantines",
-            get(crate::quarantine::list_quarantine_holds),
-        )
-        .route(
-            "/v1/quarantines/{hold_id}",
-            get(crate::quarantine::get_quarantine_hold),
-        )
-        .route(
-            "/v1/quarantines/{hold_id}/resolve",
-            post(crate::quarantine::resolve_quarantine_hold),
-        )
-        // Policy/evaluation endpoints
-        .route("/v1/intents/compile", post(crate::intents::compile_intent))
-        .route("/v1/intents", get(crate::intents::list_intents))
-        .route(
-            "/v1/proposals/{proposal_id}/evaluate",
-            post(crate::proposals::evaluate_proposal),
-        )
-        .route(
-            "/v1/capabilities/mint",
-            post(crate::capabilities::mint_capability),
-        )
-        .route(
-            "/v1/capabilities/{capability_id}/revoke",
-            post(crate::capabilities::revoke_capability),
-        )
-        .route(
-            "/v1/executions/authorize",
-            post(crate::execution::authorize_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/prepare",
-            post(crate::execution::prepare_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/execute",
-            post(crate::execution::execute_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/verify",
-            post(crate::execution::verify_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/commit",
-            post(crate::execution::commit_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/compensate",
-            post(crate::execution::compensate_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/cancel",
-            post(crate::execution::cancel_execution),
-        )
-        .route(
-            "/v1/executions/{execution_id}/evaluate-outcome",
-            post(crate::execution::evaluate_outcome),
-        )
-        // Policy bundle endpoints
-        .route(
-            "/v1/policy-bundles",
-            post(crate::policy::create_policy_bundle),
-        )
-        .route(
-            "/v1/policy-bundles",
-            get(crate::policy::list_policy_bundles),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}",
-            get(crate::policy::get_policy_bundle),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}",
-            put(crate::policy::update_policy_bundle),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}",
-            delete(crate::policy::delete_policy_bundle),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}/active",
-            put(crate::policy::set_policy_bundle_active),
-        )
-        .route("/v1/policy/simulate", post(crate::policy::simulate_policy))
-        .route(
-            "/v1/policy-bundles/simulate",
-            post(crate::policy::simulate_policy_bundle),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}/versions",
-            get(crate::policy::list_policy_bundle_versions),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}/diff",
-            get(crate::policy::diff_policy_bundle_versions),
-        )
-        .route(
-            "/v1/policy-bundles/{bundle_id}/rollback",
-            post(crate::policy::rollback_policy_bundle),
-        )
-        // Admin token endpoints
-        .route("/v1/admin/tokens", post(crate::admin::tokens::create_token))
-        .route("/v1/admin/tokens", get(crate::admin::tokens::list_tokens))
-        .route(
-            "/v1/admin/tokens/{token_id}",
-            delete(crate::admin::tokens::revoke_token),
-        )
-        .route(
-            "/v1/admin/tokens/{token_id}/rotate",
-            post(crate::admin::tokens::rotate_token),
-        )
-        // Admin agent endpoints
-        .route("/v1/admin/agents", post(crate::admin::agents::create_agent))
-        .route("/v1/admin/agents", get(crate::admin::agents::list_agents))
-        .route(
-            "/v1/admin/agents/{agent_id}",
-            delete(crate::admin::agents::revoke_agent),
-        )
-        // Admin MFA endpoints
-        .route(
-            "/v1/admin/agents/{agent_id}/mfa/enroll",
-            post(crate::admin::mfa::enroll_mfa),
-        )
-        .route(
-            "/v1/admin/agents/{agent_id}/mfa/verify",
-            post(crate::admin::mfa::verify_mfa),
-        )
-        .route(
-            "/v1/admin/agents/{agent_id}/mfa/disable",
-            post(crate::admin::mfa::disable_mfa),
-        )
-        .route(
-            "/v1/admin/agents/{agent_id}/mfa/rotate",
-            post(crate::admin::mfa::rotate_mfa),
-        )
-        .route(
-            "/v1/admin/agents/{agent_id}/mfa",
-            get(crate::admin::mfa::list_mfa_factors),
-        )
-        .route(
-            "/v1/admin/agents/{agent_id}/mfa/{mfa_factor_id}",
-            get(crate::admin::mfa::get_mfa_factor),
-        )
-        // Admin lifecycle outbox operator endpoints
-        .route(
-            "/v1/admin/lifecycle-outbox",
-            get(crate::admin::lifecycle_outbox::list_lifecycle_outbox),
-        )
-        .route(
-            "/v1/admin/lifecycle-outbox/{outbox_id}",
-            get(crate::admin::lifecycle_outbox::get_lifecycle_outbox),
-        )
-        .route(
-            "/v1/admin/lifecycle-outbox/{outbox_id}/retry",
-            post(crate::admin::lifecycle_outbox::retry_lifecycle_outbox),
-        )
-        .route(
-            "/v1/admin/lifecycle-outbox/{outbox_id}/resolve",
-            post(crate::admin::lifecycle_outbox::resolve_lifecycle_outbox),
-        )
-        // Audit log endpoints
-        .route("/v1/admin/audit-logs", get(crate::audit::list_audit_logs))
-        .route(
-            "/v1/admin/audit-logs/export",
-            get(crate::audit::export_audit_logs),
-        )
-        .route(
-            "/v1/admin/audit/verify",
-            get(crate::audit::verify_audit_chain),
-        )
-        .route(
-            "/v1/admin/audit/merkle-verify",
-            get(crate::audit::verify_audit_merkle_root),
-        )
-        .route(
-            "/v1/admin/audit/merkle-roots",
-            get(crate::audit::list_audit_merkle_roots),
-        )
-        .route(
-            "/v1/admin/audit/checkpoints",
-            post(crate::audit::create_checkpoint),
-        )
-        .route(
-            "/v1/admin/audit/checkpoints",
-            get(crate::audit::list_checkpoints),
-        )
-        .route(
-            "/v1/admin/audit/checkpoints/{window_start}/verify",
-            get(crate::audit::verify_checkpoint),
-        )
-        .with_state(state)
-        .layer(TraceLayer::new_for_http())
-}
-
-/// Authentication middleware supporting Bearer, Scoped, OIDC, and Agent modes.
-async fn auth_middleware(
-    State(state): State<Arc<AppState>>,
-    request: axum::extract::Request,
+/// Test-only middleware that synthesizes `ConnectInfo` from the `x-real-ip`
+/// header. This keeps existing integration tests working without requiring them
+/// to manually inject `ConnectInfo` extensions.
+#[cfg(any(test, feature = "test-utils"))]
+async fn mock_connect_info_from_x_real_ip(
+    mut request: axum::extract::Request,
     next: axum::middleware::Next,
-) -> Response {
-    let path = request.uri().path().to_string();
-    let method = request.method().as_str().to_string();
-
-    // Keep only shallow health/readiness public. Deep readiness and metrics expose
-    // operational detail and require auth whenever auth is enabled.
-    if path == "/v1/healthz" || path == "/v1/readyz" {
-        return next.run(request).await;
+) -> axum::response::Response {
+    use axum::extract::connect_info::ConnectInfo;
+    if request
+        .extensions()
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .is_none()
+    {
+        let ip = request
+            .headers()
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<IpAddr>().ok())
+            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(std::net::SocketAddr::new(ip, 0)));
     }
-
-    let config = &state.server_config;
-
-    match config.auth_mode {
-        AuthMode::Disabled => next.run(request).await,
-        AuthMode::Bearer => {
-            let auth_header = request
-                .headers()
-                .get("Authorization")
-                .and_then(|v| v.to_str().ok());
-            let Some(header) = auth_header else {
-                return auth_error("missing authorization header");
-            };
-            if !header.starts_with("Bearer ") {
-                return auth_error("invalid authorization header format");
-            }
-            let provided = &header[7..];
-            let token = config.bearer_token.as_deref().unwrap_or("");
-            if constant_time_eq::constant_time_eq(provided.as_bytes(), token.as_bytes()) {
-                next.run(request).await
-            } else {
-                auth_error("invalid bearer token")
-            }
-        }
-        AuthMode::Oidc => {
-            let auth_header = request
-                .headers()
-                .get("Authorization")
-                .and_then(|v| v.to_str().ok());
-            let Some(header) = auth_header else {
-                return auth_error("missing authorization header");
-            };
-            if !header.starts_with("Bearer ") {
-                return auth_error("invalid authorization header format");
-            }
-            let provided = &header[7..];
-            let oidc = match &config.oidc_config {
-                Some(c) => c,
-                None => {
-                    tracing::error!("oidc config missing");
-                    let _ = crate::audit::append_audit(
-                        &state.runtime.store,
-                        "unknown",
-                        AuditAction::AuthFailed,
-                        AuditResourceType::Auth,
-                        "oidc",
-                        "oidc auth misconfigured",
-                        Some(serde_json::json!({"reason": "oidc config missing"})),
-                    )
-                    .await;
-                    return auth_error("oidc auth misconfigured");
-                }
-            };
-            match validate_oidc_token(provided, oidc, state.jwks_cache.as_ref(), &method, &path)
-                .await
-            {
-                Ok((actor_id, scopes)) => {
-                    let (mut parts, body) = request.into_parts();
-                    parts.extensions.insert(AuthActor {
-                        actor_id,
-                        source: "oidc",
-                        scopes,
-                    });
-                    let request = axum::http::Request::from_parts(parts, body);
-                    next.run(request).await
-                }
-                Err(OidcAuthError::Unauthorized(msg)) => {
-                    let _ = crate::audit::append_audit(
-                        &state.runtime.store,
-                        "unknown",
-                        AuditAction::AuthFailed,
-                        AuditResourceType::Auth,
-                        "oidc",
-                        "unauthorized",
-                        Some(serde_json::json!({"reason": msg})),
-                    )
-                    .await;
-                    auth_error(&msg)
-                }
-                Err(OidcAuthError::Forbidden(msg)) => {
-                    let _ = crate::audit::append_audit(
-                        &state.runtime.store,
-                        "unknown",
-                        AuditAction::AuthFailed,
-                        AuditResourceType::Auth,
-                        "oidc",
-                        "forbidden",
-                        Some(serde_json::json!({"reason": msg})),
-                    )
-                    .await;
-                    (StatusCode::FORBIDDEN, msg).into_response()
-                }
-            }
-        }
-        AuthMode::Scoped => {
-            let auth_header = request
-                .headers()
-                .get("Authorization")
-                .and_then(|v| v.to_str().ok());
-            let Some(header) = auth_header else {
-                return auth_error("missing authorization header");
-            };
-            if !header.starts_with("Bearer ") {
-                return auth_error("invalid authorization header format");
-            }
-            let provided = &header[7..];
-            // Step 1: deterministic lookup hash (fast DB lookup)
-            let lookup_hash = hash_token_value(provided);
-            let token_repo = state.runtime.store.tokens();
-            let token = match token_repo.get_by_lookup_hash(&lookup_hash).await {
-                Ok(Some(t)) => t,
-                Ok(None) => return auth_error("invalid scoped token"),
-                Err(e) => {
-                    tracing::error!(error = %e, "token lookup failed");
-                    return auth_error("token lookup failed");
-                }
-            };
-
-            // Step 2: verify presented token against secure salted hash
-            let expected_hash = hash_token_with_salt(provided, &token.token_salt);
-            if !constant_time_eq::constant_time_eq(
-                expected_hash.as_bytes(),
-                token.token_hash.as_bytes(),
-            ) {
-                return auth_error("invalid scoped token");
-            }
-
-            // Check revocation
-            if token.revoked_at.is_some() {
-                return auth_error("token revoked");
-            }
-
-            // Check expiration
-            if token.expires_at < chrono::Utc::now() {
-                return auth_error("token expired");
-            }
-
-            // Check scope
-            let required_scope = required_scope_for_path(&method, &path);
-            if let Some(scope) = required_scope {
-                if !token_has_scope(&token, scope) {
-                    return forbidden_error(&format!("required scope {}", scope));
-                }
-            }
-
-            // Update last_used_at (best-effort, fire-and-forget)
-            let token_id = token.token_id.clone();
-            tokio::spawn(async move {
-                let _ = token_repo.touch(&token_id).await;
-            });
-
-            // Insert authenticated actor identity for downstream handlers
-            let (mut parts, body) = request.into_parts();
-            parts.extensions.insert(AuthActor {
-                actor_id: token.actor_id.clone(),
-                source: "scoped",
-                scopes: token.scopes.clone(),
-            });
-            let request = axum::http::Request::from_parts(parts, body);
-
-            next.run(request).await
-        }
-        AuthMode::Agent => {
-            match verify_agent_request(&state, request, next, &method, &path).await {
-                Ok(response) => response,
-                Err(AgentAuthError::Unauthorized(msg)) => {
-                    let _ = crate::audit::append_audit(
-                        &state.runtime.store,
-                        "unknown",
-                        AuditAction::AgentAuthFailed,
-                        AuditResourceType::Auth,
-                        "agent",
-                        "unauthorized",
-                        Some(serde_json::json!({"reason": msg})),
-                    )
-                    .await;
-                    auth_error(&msg)
-                }
-                Err(AgentAuthError::Forbidden(msg)) => forbidden_error(&msg),
-            }
-        }
-    }
-}
-
-/// Error type for Agent auth failures.
-enum AgentAuthError {
-    Unauthorized(String),
-    Forbidden(String),
-}
-
-/// Verify an Ed25519-signed agent request.
-///
-/// Flow:
-/// 1. Extract required headers.
-/// 2. Verify timestamp skew.
-/// 3. Check nonce replay cache.
-/// 4. Recompute body hash and compare.
-/// 5. Look up agent and check revocation.
-/// 6. Verify Ed25519 signature over canonical payload.
-/// 7. Enforce route scope.
-async fn verify_agent_request(
-    state: &AppState,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-    method: &str,
-    path: &str,
-) -> Result<Response, AgentAuthError> {
-    let headers = request.headers().clone();
-    let agent_id = headers
-        .get("X-Ferrum-Agent-Id")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Agent-Id".to_string()))?;
-    let timestamp = headers
-        .get("X-Ferrum-Timestamp")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Timestamp".to_string()))?;
-    let nonce = headers
-        .get("X-Ferrum-Nonce")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Nonce".to_string()))?;
-    let body_hash_header = headers
-        .get("X-Ferrum-Body-Hash")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Body-Hash".to_string()))?;
-    let signature_b64 = headers
-        .get("X-Ferrum-Signature")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| AgentAuthError::Unauthorized("missing X-Ferrum-Signature".to_string()))?;
-
-    // Verify timestamp
-    let ts = chrono::DateTime::parse_from_rfc3339(timestamp)
-        .map_err(|_| AgentAuthError::Unauthorized("invalid timestamp format".to_string()))?
-        .with_timezone(&chrono::Utc);
-    let now = chrono::Utc::now();
-    let skew = chrono::Duration::seconds(state.server_config.agent_clock_skew_secs);
-    if ts < now - skew || ts > now + skew {
-        return Err(AgentAuthError::Unauthorized(
-            "timestamp out of skew window".to_string(),
-        ));
-    }
-
-    // Verify nonce (replay protection)
-    if nonce.chars().count() > 256 {
-        return Err(AgentAuthError::Unauthorized(
-            "nonce exceeds maximum length".to_string(),
-        ));
-    }
-    let nonce_ttl = if state.server_config.nonce_cache_ttl_secs > 0 {
-        StdDuration::from_secs(state.server_config.nonce_cache_ttl_secs)
-    } else {
-        StdDuration::from_secs((state.server_config.agent_clock_skew_secs * 2).max(60) as u64)
-    };
-    match state.nonce_cache.check_and_insert(nonce, nonce_ttl).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return Err(AgentAuthError::Unauthorized("replayed nonce".to_string()));
-        }
-        Err(error) => {
-            tracing::error!(%error, "nonce cache check failed");
-            return Err(AgentAuthError::Unauthorized(
-                "nonce cache unavailable".to_string(),
-            ));
-        }
-    }
-
-    // Read body and verify body hash
-    let (mut parts, body) = request.into_parts();
-    let bytes = axum::body::to_bytes(body, 10 * 1024 * 1024)
-        .await
-        .map_err(|_| AgentAuthError::Unauthorized("failed to read body".to_string()))?;
-    let computed_body_hash = if bytes.is_empty() {
-        "null".to_string()
-    } else {
-        blake3::hash(&bytes).to_hex().to_string()
-    };
-    if computed_body_hash != body_hash_header {
-        return Err(AgentAuthError::Unauthorized(
-            "body hash mismatch".to_string(),
-        ));
-    }
-
-    // Look up agent
-    let agent = match state.runtime.store.agents().get(agent_id).await {
-        Ok(Some(a)) => a,
-        Ok(None) => {
-            return Err(AgentAuthError::Unauthorized("agent not found".to_string()));
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "agent lookup failed");
-            return Err(AgentAuthError::Unauthorized(
-                "agent lookup failed".to_string(),
-            ));
-        }
-    };
-
-    if agent.revoked_at.is_some() {
-        return Err(AgentAuthError::Unauthorized("agent revoked".to_string()));
-    }
-
-    // Canonical payload
-    let payload = format!(
-        "{}:{}:{}:{}:{}:{}",
-        agent_id, timestamp, nonce, body_hash_header, method, path
-    );
-
-    // Decode and verify signature
-    let sig_bytes =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, signature_b64)
-            .map_err(|_| AgentAuthError::Unauthorized("invalid signature encoding".to_string()))?;
-    let sig_array: [u8; 64] = sig_bytes
-        .try_into()
-        .map_err(|_| AgentAuthError::Unauthorized("invalid signature length".to_string()))?;
-    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
-    let pk_bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &agent.public_key,
-    )
-    .map_err(|_| AgentAuthError::Unauthorized("invalid public key encoding".to_string()))?;
-    let pk_array: [u8; 32] = pk_bytes
-        .try_into()
-        .map_err(|_| AgentAuthError::Unauthorized("invalid public key length".to_string()))?;
-    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
-        .map_err(|_| AgentAuthError::Unauthorized("invalid public key".to_string()))?;
-
-    verifying_key
-        .verify(payload.as_bytes(), &signature)
-        .map_err(|_| AgentAuthError::Unauthorized("signature verification failed".to_string()))?;
-
-    // Scope enforcement
-    if let Some(required) = required_scope_for_path(method, path) {
-        let has_scope = agent
-            .allowed_scopes
-            .iter()
-            .any(|s| s == "*" || s == required);
-        if !has_scope {
-            return Err(AgentAuthError::Forbidden(format!(
-                "required scope {}",
-                required
-            )));
-        }
-    }
-
-    // Reconstruct request and proceed
-    parts.extensions.insert(AuthActor {
-        actor_id: agent_id.to_string(),
-        source: "agent",
-        scopes: agent.allowed_scopes.clone(),
-    });
-    let request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
-    Ok(next.run(request).await)
-}
-
-fn auth_error(message: &str) -> Response {
-    let error = ApiError {
-        code: ApiErrorCode::Unauthorized,
-        message: message.to_string(),
-        correlation_id: uuid::Uuid::new_v4().to_string(),
-        retriable: false,
-        details: serde_json::json!({}),
-    };
-    (StatusCode::UNAUTHORIZED, Json(error)).into_response()
-}
-
-fn forbidden_error(message: &str) -> Response {
-    let error = ApiError {
-        code: ApiErrorCode::Forbidden,
-        message: message.to_string(),
-        correlation_id: uuid::Uuid::new_v4().to_string(),
-        retriable: false,
-        details: serde_json::json!({}),
-    };
-    (StatusCode::FORBIDDEN, Json(error)).into_response()
+    next.run(request).await
 }
 
 /// Deterministic lookup hash: blake3(raw_token_value).
@@ -2085,355 +510,6 @@ pub(crate) fn generate_token_value() -> String {
 /// Generate a random 16-byte salt (hex-encoded, 32 chars).
 pub(crate) fn generate_token_salt() -> String {
     uuid::Uuid::new_v4().to_string().replace('-', "")
-}
-
-/// Check if a token has a given scope (or wildcard).
-fn token_has_scope(token: &ferrum_proto::ScopedToken, scope: &str) -> bool {
-    token.scopes.iter().any(|s| s == "*" || s == scope)
-}
-
-/// Map HTTP method + path to required scope.
-fn required_scope_for_path(method: &str, path: &str) -> Option<&'static str> {
-    // Public endpoints (no scope required) are handled before this is called
-    match (method, path) {
-        // Intent and proposal
-        ("POST", "/v1/intents/compile") => Some("intent:submit"),
-        ("GET", "/v1/intents") => Some("intent:submit"),
-        ("POST", p) if p.starts_with("/v1/proposals/") && p.ends_with("/evaluate") => {
-            Some("proposal:evaluate")
-        }
-        // Capability
-        ("POST", "/v1/capabilities/mint") => Some("capability:mint"),
-        ("POST", p) if p.starts_with("/v1/capabilities/") && p.ends_with("/revoke") => {
-            Some("capability:mint")
-        }
-        // Execution
-        ("POST", "/v1/executions/authorize") => Some("execution:authorize"),
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/prepare") => {
-            Some("execution:prepare")
-        }
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/execute") => {
-            Some("execution:execute")
-        }
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/verify") => {
-            Some("execution:verify")
-        }
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/commit") => {
-            Some("execution:commit")
-        }
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/compensate") => {
-            Some("execution:compensate")
-        }
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/cancel") => {
-            Some("execution:execute")
-        }
-        ("POST", p) if p.starts_with("/v1/executions/") && p.ends_with("/evaluate-outcome") => {
-            Some("execution:verify")
-        }
-        ("GET", p) if p.starts_with("/v1/executions/") => Some("provenance:read"),
-        // Approvals
-        ("GET", "/v1/approvals") => Some("approval:read"),
-        ("GET", p) if p.starts_with("/v1/approvals/") && !p.ends_with("/resolve") => {
-            Some("approval:read")
-        }
-        ("POST", p) if p.starts_with("/v1/approvals/") && p.ends_with("/resolve") => {
-            Some("approval:resolve")
-        }
-        // Quarantine holds (Phase 1: mirror approval scopes)
-        ("GET", "/v1/quarantines") => Some("approval:read"),
-        ("GET", p) if p.starts_with("/v1/quarantines/") && !p.ends_with("/resolve") => {
-            Some("approval:read")
-        }
-        ("POST", p) if p.starts_with("/v1/quarantines/") && p.ends_with("/resolve") => {
-            Some("approval:resolve")
-        }
-        // Policy bundles
-        ("POST", "/v1/policy-bundles") => Some("policy:write"),
-        ("GET", "/v1/policy-bundles") => Some("policy:read"),
-        ("GET", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/versions") => {
-            Some("policy:read")
-        }
-        ("GET", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/diff") => {
-            Some("policy:read")
-        }
-        ("POST", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/rollback") => {
-            Some("policy:write")
-        }
-        ("POST", "/v1/policy/simulate") => Some("policy:read"),
-        ("POST", "/v1/policy-bundles/simulate") => Some("policy:read"),
-        ("GET", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:read"),
-        ("PUT", p) if p.starts_with("/v1/policy-bundles/") && p.ends_with("/active") => {
-            Some("policy:write")
-        }
-        ("PUT", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:write"),
-        ("DELETE", p) if p.starts_with("/v1/policy-bundles/") => Some("policy:write"),
-        // Provenance
-        ("POST", "/v1/provenance/query") => Some("provenance:read"),
-        ("POST", "/v1/provenance/lineage") => Some("provenance:read"),
-        ("GET", p) if p.starts_with("/v1/provenance/lineage/") => Some("provenance:read"),
-        ("POST", "/v1/provenance/ingest") => Some("provenance:write"),
-        // Bridge
-        ("GET", "/v1/bridges") => Some("provenance:read"),
-        ("GET", p) if p.starts_with("/v1/bridges/") && p.ends_with("/tools") => {
-            Some("provenance:read")
-        }
-        // Admin tokens
-        ("POST", "/v1/admin/tokens") => Some("admin:tokens"),
-        ("GET", "/v1/admin/tokens") => Some("admin:tokens"),
-        ("DELETE", p) if p.starts_with("/v1/admin/tokens/") => Some("admin:tokens"),
-        ("POST", p) if p.starts_with("/v1/admin/tokens/") && p.ends_with("/rotate") => {
-            Some("admin:tokens")
-        }
-        // Admin agents
-        ("POST", "/v1/admin/agents") => Some("admin:agents"),
-        ("GET", "/v1/admin/agents") => Some("admin:agents"),
-        ("DELETE", p) if p.starts_with("/v1/admin/agents/") => Some("admin:agents"),
-        // Admin MFA routes
-        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/enroll") => {
-            Some("admin:mfa")
-        }
-        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/verify") => {
-            Some("admin:mfa")
-        }
-        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/disable") => {
-            Some("admin:mfa")
-        }
-        ("POST", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa/rotate") => {
-            Some("admin:mfa")
-        }
-        ("GET", p) if p.starts_with("/v1/admin/agents/") && p.ends_with("/mfa") => {
-            Some("admin:mfa")
-        }
-        ("GET", p)
-            if p.starts_with("/v1/admin/agents/")
-                && p.contains("/mfa/")
-                && !p.ends_with("/mfa") =>
-        {
-            Some("admin:mfa")
-        }
-        // Lifecycle outbox operator workflow
-        ("GET", "/v1/admin/lifecycle-outbox") => Some("admin:lifecycle-outbox:read"),
-        ("GET", p) if p.starts_with("/v1/admin/lifecycle-outbox/") => {
-            Some("admin:lifecycle-outbox:read")
-        }
-        ("POST", p)
-            if p.starts_with("/v1/admin/lifecycle-outbox/")
-                && (p.ends_with("/retry") || p.ends_with("/resolve")) =>
-        {
-            Some("admin:lifecycle-outbox:write")
-        }
-        // Audit logs
-        ("GET", "/v1/admin/audit-logs") => Some("admin:audit"),
-        ("GET", "/v1/admin/audit-logs/export") => Some("admin:audit"),
-        ("GET", "/v1/admin/audit/verify") => Some("admin:audit"),
-        ("GET", "/v1/admin/audit/merkle-verify") => Some("admin:audit"),
-        ("GET", "/v1/admin/audit/merkle-roots") => Some("admin:audit"),
-        ("POST", "/v1/admin/audit/checkpoints") => Some("admin:audit"),
-        ("GET", "/v1/admin/audit/checkpoints") => Some("admin:audit"),
-        ("GET", p) if p.starts_with("/v1/admin/audit/checkpoints/") && p.ends_with("/verify") => {
-            Some("admin:audit")
-        }
-        _ => Some("admin:tokens"), // Deny-by-default for unknown paths
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 4.3: OIDC/JWT offline validation helpers
-// ---------------------------------------------------------------------------
-
-/// Error type for OIDC auth failures.
-enum OidcAuthError {
-    Unauthorized(String),
-    Forbidden(String),
-}
-
-/// Validate a Bearer JWT against OIDC config.
-///
-/// Flow:
-/// 1. Decode header, select static key by `kid`.
-/// 2. If static key missing and jwks_url configured, fetch from JWKS cache.
-/// 3. Validate signature, algorithm allowlist, issuer, audience, exp, nbf.
-/// 4. Map actor_id from configured claim.
-/// 5. Map role from configured role/group claims via explicit mapping table.
-/// 6. Derive scopes via `TokenRole::default_scopes()`.
-/// 7. Enforce `required_scope_for_path()`.
-///
-/// Fail closed: any validation failure returns `OidcAuthError::Unauthorized`.
-/// Unmapped role or missing required scope returns `OidcAuthError::Forbidden`.
-async fn validate_oidc_token(
-    token: &str,
-    oidc: &crate::OidcConfig,
-    jwks_cache: Option<&Arc<OidcJwksCache>>,
-    method: &str,
-    path: &str,
-) -> Result<(String, Vec<String>), OidcAuthError> {
-    // Step 1: decode header to get kid and alg
-    let header = match jsonwebtoken::decode_header(token) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to decode jwt header");
-            return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
-        }
-    };
-
-    // Reject "none" algorithm unconditionally
-    if header.alg == jsonwebtoken::Algorithm::HS256
-        && !oidc
-            .allowed_algorithms
-            .contains(&jsonwebtoken::Algorithm::HS256)
-    {
-        // HS256 is only allowed if explicitly listed (tests)
-    }
-    if !oidc.allowed_algorithms.contains(&header.alg) {
-        tracing::warn!(alg = ?header.alg, "jwt algorithm not in allowlist");
-        return Err(OidcAuthError::Unauthorized(
-            "unsupported jwt algorithm".to_string(),
-        ));
-    }
-
-    // Step 2: select key by kid (empty string fallback for JWTs without kid)
-    let kid = header.kid.as_deref().unwrap_or("");
-    let key_material = if let Some(km) = oidc.static_keys.get(kid) {
-        km.clone()
-    } else if let Some(cache) = jwks_cache {
-        match cache.get_key(kid).await {
-            Ok(Some(km)) => km,
-            Ok(None) => {
-                tracing::warn!(kid = %kid, "jwt key not found in static keys or jwks");
-                return Err(OidcAuthError::Unauthorized("jwt key not found".to_string()));
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, kid = %kid, "jwks fetch failed");
-                return Err(OidcAuthError::Unauthorized(
-                    "jwt key unavailable".to_string(),
-                ));
-            }
-        }
-    } else {
-        tracing::warn!(kid = %kid, "jwt key not found in static keys");
-        return Err(OidcAuthError::Unauthorized("jwt key not found".to_string()));
-    };
-
-    let decoding_key = match key_material.to_decoding_key() {
-        Ok(k) => k,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to build decoding key");
-            return Err(OidcAuthError::Unauthorized("jwt key invalid".to_string()));
-        }
-    };
-
-    // Step 3: build validation
-    let mut validation = jsonwebtoken::Validation::new(header.alg);
-    validation.leeway = oidc.clock_skew_secs.max(0) as u64;
-    validation.validate_nbf = true;
-    validation.set_issuer(&[&oidc.issuer]);
-    validation.set_audience(&oidc.audiences);
-    validation.algorithms = oidc.allowed_algorithms.clone();
-
-    // Step 4: decode and validate signature + claims
-    let token_data: jsonwebtoken::TokenData<serde_json::Map<String, serde_json::Value>> =
-        match jsonwebtoken::decode(token, &decoding_key, &validation) {
-            Ok(td) => td,
-            Err(e) => {
-                tracing::warn!(error = %e, "jwt validation failed");
-                return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
-            }
-        };
-
-    let claims = token_data.claims;
-
-    // Step 4b: explicit future-iat rejection (fail closed).
-    // If `iat` is present and beyond now + clock_skew, reject.
-    // Missing `iat` is tolerated to avoid breaking IdPs that omit it.
-    if let Some(iat_val) = claims.get("iat").and_then(|v| v.as_i64()) {
-        let now = chrono::Utc::now().timestamp();
-        let skew = oidc.clock_skew_secs.max(0);
-        if iat_val > now + skew {
-            tracing::warn!(iat = %iat_val, now = %now, skew = %skew, "jwt iat is in the future");
-            return Err(OidcAuthError::Unauthorized("invalid jwt".to_string()));
-        }
-    }
-
-    // Step 5: email verification check
-    if oidc.require_email_verified {
-        let verified = claims
-            .get("email_verified")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !verified {
-            tracing::warn!("jwt email_verified is false or missing");
-            return Err(OidcAuthError::Unauthorized(
-                "email not verified".to_string(),
-            ));
-        }
-    }
-
-    // Step 6: extract actor_id
-    let actor_id = match claims.get(&oidc.actor_id_claim).and_then(|v| v.as_str()) {
-        Some(s) if !s.is_empty() => s.to_string(),
-        _ => {
-            tracing::warn!(claim = %oidc.actor_id_claim, "jwt missing actor_id claim");
-            return Err(OidcAuthError::Unauthorized(
-                "missing actor_id claim".to_string(),
-            ));
-        }
-    };
-
-    // Step 7: extract role_source claim and map to TokenRole
-    let role_source_values = match claims.get(&oidc.role_source_claim) {
-        Some(serde_json::Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect::<Vec<_>>(),
-        Some(serde_json::Value::String(s)) => vec![s.clone()],
-        _ => {
-            tracing::warn!(
-                claim = %oidc.role_source_claim,
-                "jwt missing role_source claim"
-            );
-            return Err(OidcAuthError::Forbidden("unmapped role".to_string()));
-        }
-    };
-
-    let mapped_role = role_source_values
-        .iter()
-        .filter_map(|name| oidc.role_mappings.get(name))
-        .next()
-        .copied();
-
-    let role = match mapped_role {
-        Some(r) => r,
-        None => {
-            tracing::warn!(
-                values = ?role_source_values,
-                "jwt role not mapped"
-            );
-            return Err(OidcAuthError::Forbidden("unmapped role".to_string()));
-        }
-    };
-
-    // Step 8: derive scopes from role
-    let scopes = role.default_scopes();
-
-    // Step 9: enforce required scope for path
-    if let Some(required) = required_scope_for_path(method, path) {
-        let has_scope = scopes.iter().any(|s| s == "*" || s == required);
-        if !has_scope {
-            tracing::warn!(
-                actor_id = %actor_id,
-                role = ?role,
-                required = %required,
-                "jwt insufficient scope"
-            );
-            return Err(OidcAuthError::Forbidden(format!(
-                "required scope {}",
-                required
-            )));
-        }
-    }
-
-    tracing::debug!(actor_id = %actor_id, role = ?role, "oidc auth succeeded");
-    Ok((actor_id, scopes))
 }
 
 /// Validates that `resource_bindings` is a subset of `resource_scope`.
@@ -2637,6 +713,8 @@ mod rate_limit_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::required_scope_for_path;
+    use crate::timeout_reconciler::emit_approval_timed_out_provenance;
     use crate::{KeyMaterial, OidcConfig};
     use axum::{body::Body, http::Request};
     use chrono::DurationRound;
@@ -3479,6 +1557,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -3497,6 +1576,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -3529,6 +1609,7 @@ mod tests {
             expires_at: now + chrono::Duration::minutes(5),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime
             .store
@@ -3549,6 +1630,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime.store.executions().insert(&execution).await.unwrap();
 
@@ -3747,6 +1829,74 @@ mod tests {
 
         // Empty description should be accepted (no validation rejecting it)
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_provenance_rejects_internal_kind() {
+        use ferrum_proto::ProvenanceEventKind;
+
+        let bridge = Arc::new(McpBridge::new("test-runtime"));
+        let runtime = test_runtime_with_bridges(vec![bridge.clone()]).await;
+        let router = build_router(runtime);
+
+        let request = ProvenanceIngestRequest {
+            source_runtime_id: "test-runtime".to_string(),
+            kind: ProvenanceEventKind::CapabilityMinted,
+            description: "forged internal event".to_string(),
+            execution_id: None,
+            intent_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/provenance/ingest")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_ingest_provenance_rejects_policy_evaluated_kind() {
+        use ferrum_proto::ProvenanceEventKind;
+
+        let bridge = Arc::new(McpBridge::new("test-runtime"));
+        let runtime = test_runtime_with_bridges(vec![bridge.clone()]).await;
+        let router = build_router(runtime);
+
+        let request = ProvenanceIngestRequest {
+            source_runtime_id: "test-runtime".to_string(),
+            kind: ProvenanceEventKind::PolicyEvaluated,
+            description: "forged policy evaluation".to_string(),
+            execution_id: None,
+            intent_id: None,
+            trust_labels: vec![],
+            sensitivity_labels: vec![],
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/provenance/ingest")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -4935,6 +3085,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -4951,6 +3102,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -4997,6 +3149,8 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -5104,6 +3258,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -5120,6 +3275,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -5164,6 +3320,8 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -5217,6 +3375,8 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval2).await.unwrap();
 
@@ -5645,6 +3805,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -5661,6 +3822,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -5680,6 +3842,8 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: chrono::Utc::now(),
+            resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         runtime.store.approvals().insert(&approval).await.unwrap();
 
@@ -5801,6 +3965,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: now,
             expires_at: now + chrono::Duration::hours(1),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
         let proposal = ferrum_proto::ActionProposal {
@@ -5817,6 +3982,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: now,
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -5835,6 +4001,7 @@ mod tests {
             resolved_by: None,
             resolution_reason: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime
             .store
@@ -5882,6 +4049,967 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(lockout.failed_attempts, 1);
+    }
+
+    // ---------------------------------------------------------------------
+    // p0-actor-binding: authenticated AuthActor is authoritative for resolves
+    // ---------------------------------------------------------------------
+
+    async fn seed_intent_proposal(
+        runtime: &GatewayRuntime,
+    ) -> (ferrum_proto::IntentId, ferrum_proto::ProposalId) {
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let now = chrono::Utc::now();
+        runtime
+            .store
+            .intents()
+            .insert(&ferrum_proto::IntentEnvelope {
+                intent_id,
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: "t".to_string(),
+                goal: "g".to_string(),
+                normalized_goal: "g".to_string(),
+                allowed_outcomes: Vec::new(),
+                forbidden_outcomes: Vec::new(),
+                resource_scope: Vec::new(),
+                risk_tier: ferrum_proto::RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+                time_budget: ferrum_proto::TimeBudget {
+                    max_duration_ms: 30_000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: ferrum_proto::TrustContextSummary {
+                    input_labels: Vec::new(),
+                    sensitivity_labels: Vec::new(),
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: Vec::new(),
+                tags: Vec::new(),
+                metadata: ferrum_proto::JsonMap::new(),
+                status: ferrum_proto::IntentStatus::Active,
+                created_at: now,
+                expires_at: now + chrono::Duration::hours(1),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+        runtime
+            .store
+            .proposals()
+            .insert(&ferrum_proto::ActionProposal {
+                proposal_id,
+                intent_id,
+                step_index: 0,
+                title: "p".to_string(),
+                tool_name: "tool".to_string(),
+                server_name: "server".to_string(),
+                raw_arguments: serde_json::json!({}),
+                expected_effect: "e".to_string(),
+                estimated_risk: ferrum_proto::RiskTier::Low,
+                requested_rollback_class: ferrum_proto::RollbackClass::R0NativeReversible,
+                taint_inputs: Vec::new(),
+                metadata: ferrum_proto::JsonMap::new(),
+                created_at: now,
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+        (intent_id, proposal_id)
+    }
+
+    async fn insert_scoped_token(
+        runtime: &GatewayRuntime,
+        actor_id: &str,
+        scopes: Vec<String>,
+    ) -> String {
+        insert_scoped_token_with_role(runtime, actor_id, ferrum_proto::TokenRole::Operator, scopes)
+            .await
+    }
+
+    async fn insert_scoped_token_with_role(
+        runtime: &GatewayRuntime,
+        actor_id: &str,
+        role: ferrum_proto::TokenRole,
+        scopes: Vec<String>,
+    ) -> String {
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        runtime
+            .store
+            .tokens()
+            .insert(&ferrum_proto::ScopedToken {
+                token_id: format!("tok_{}", actor_id),
+                actor_id: actor_id.to_string(),
+                role,
+                scopes,
+                description: None,
+                expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+                created_at: chrono::Utc::now(),
+                last_used_at: None,
+                revoked_at: None,
+                revoked_reason: None,
+                rotated_from: None,
+                token_lookup_hash,
+                token_hash,
+                token_salt,
+            })
+            .await
+            .unwrap();
+        token_value
+    }
+
+    // Quarantine resolve enforces a lineage parent (`QuarantineHoldCreated`) via
+    // `append_governance_event`; seed one so the success path can resolve.
+    async fn seed_quarantine_created_event(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) {
+        runtime
+            .store
+            .provenance()
+            .append_event(&ferrum_proto::ProvenanceEvent {
+                event_id: ferrum_proto::EventId::new(),
+                kind: ferrum_proto::ProvenanceEventKind::QuarantineHoldCreated,
+                occurred_at: chrono::Utc::now() - chrono::Duration::seconds(1),
+                actor: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Gateway,
+                    actor_id: "ferrum-gateway".to_string(),
+                    display_name: None,
+                },
+                object: ferrum_proto::ObjectRef {
+                    object_type: ferrum_proto::ObjectType::QuarantineHold,
+                    object_id: "seed".to_string(),
+                    summary: None,
+                },
+                intent_id: Some(intent_id),
+                proposal_id: Some(proposal_id),
+                execution_id: None,
+                capability_id: None,
+                rollback_contract_id: None,
+                policy_bundle_id: None,
+                trust_labels: Vec::new(),
+                sensitivity_labels: Vec::new(),
+                parent_edges: Vec::new(),
+                hash_chain: ferrum_proto::HashChainRef {
+                    content_hash: None,
+                    manifest_hash: None,
+                    policy_bundle_hash: None,
+                    previous_ledger_hash: None,
+                },
+                metadata: ferrum_proto::JsonMap::new(),
+                source_runtime_id: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn seed_pending_quarantine_hold(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) -> ferrum_proto::QuarantineHoldId {
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+        hold_id
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_authenticated_actor_mismatch_rejected() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        runtime
+            .store
+            .approvals()
+            .insert(&ferrum_proto::ApprovalRequest {
+                approval_id,
+                intent_id,
+                proposal_id,
+                execution_id: None,
+                requested_by: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Operator,
+                    actor_id: "requester".to_string(),
+                    display_name: None,
+                },
+                reason: "r".to_string(),
+                action_digest: "d".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                state: ferrum_proto::ApprovalState::Pending,
+                created_at: chrono::Utc::now(),
+                resolver_evidence_version: None,
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        // Body asserts a forged actor that does not match the authenticated token.
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "forged-attacker".to_string(),
+                display_name: None,
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // Fail closed: no state mutation; approval must remain pending.
+        let after = runtime
+            .store
+            .approvals()
+            .get(approval_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(after.state, ferrum_proto::ApprovalState::Pending));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_authenticated_actor_binds_provenance() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let approval_id = ferrum_proto::ApprovalId::new();
+        runtime
+            .store
+            .approvals()
+            .insert(&ferrum_proto::ApprovalRequest {
+                approval_id,
+                intent_id,
+                proposal_id,
+                execution_id: None,
+                requested_by: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Operator,
+                    actor_id: "requester".to_string(),
+                    display_name: None,
+                },
+                reason: "r".to_string(),
+                action_digest: "d".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                state: ferrum_proto::ApprovalState::Pending,
+                created_at: chrono::Utc::now(),
+                resolver_evidence_version: None,
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        // Body actor matches the authenticated actor.
+        let resolve_request = ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "real-operator".to_string(),
+                display_name: None,
+            },
+            approve: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Provenance metadata must carry the authenticated actor, proving it is authoritative.
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ferrum_proto::ProvenanceEventKind::ApprovalGranted),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("real-operator")
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // p0-resolver-role-binding: resolver evidence metadata on approval resolve
+    // ---------------------------------------------------------------------
+
+    async fn seed_pending_approval(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ferrum_proto::ProposalId,
+    ) -> ferrum_proto::ApprovalId {
+        let approval_id = ferrum_proto::ApprovalId::new();
+        runtime
+            .store
+            .approvals()
+            .insert(&ferrum_proto::ApprovalRequest {
+                approval_id,
+                intent_id,
+                proposal_id,
+                execution_id: None,
+                requested_by: ferrum_proto::ActorRef {
+                    actor_type: ferrum_proto::ActorType::Operator,
+                    actor_id: "requester".to_string(),
+                    display_name: None,
+                },
+                reason: "r".to_string(),
+                action_digest: "d".to_string(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                state: ferrum_proto::ApprovalState::Pending,
+                created_at: chrono::Utc::now(),
+                resolver_evidence_version: None,
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+        approval_id
+    }
+
+    async fn query_approval_event_metadata(
+        runtime: &GatewayRuntime,
+        intent_id: ferrum_proto::IntentId,
+        kind: ferrum_proto::ProvenanceEventKind,
+    ) -> ferrum_proto::JsonMap {
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(kind),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        events[0].metadata.clone()
+    }
+
+    fn approval_resolve_request(
+        actor_id: &str,
+        approve: bool,
+    ) -> ferrum_proto::ApprovalResolveRequest {
+        ferrum_proto::ApprovalResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: actor_id.to_string(),
+                display_name: None,
+            },
+            approve,
+            reason: None,
+            mfa_factor: None,
+        }
+    }
+
+    /// Resolve an approval in Scoped mode with the given token role and return
+    /// the emitted provenance metadata plus the approval id.
+    async fn resolve_approval_scoped_metadata(
+        role: ferrum_proto::TokenRole,
+        approve: bool,
+    ) -> (ferrum_proto::JsonMap, ferrum_proto::ApprovalId) {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token = insert_scoped_token_with_role(
+            &runtime,
+            "resolver-1",
+            role,
+            vec!["approval:resolve".into()],
+        )
+        .await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let approval_id = seed_pending_approval(&runtime, intent_id, proposal_id).await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&approval_resolve_request("resolver-1", approve))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let kind = if approve {
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted
+        } else {
+            ferrum_proto::ProvenanceEventKind::ApprovalDenied
+        };
+        let metadata = query_approval_event_metadata(&runtime, intent_id, kind).await;
+        (metadata, approval_id)
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_scoped_operator_emits_authenticated_resolver_metadata() {
+        let (metadata, approval_id) =
+            resolve_approval_scoped_metadata(ferrum_proto::TokenRole::Operator, true).await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("resolver-1")
+        );
+        assert_eq!(
+            metadata.get("actor_source").and_then(|v| v.as_str()),
+            Some("scoped")
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_scoped_admin_emits_admin_role_metadata() {
+        let (metadata, _) =
+            resolve_approval_scoped_metadata(ferrum_proto::TokenRole::Admin, true).await;
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("admin")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_denied_emits_authenticated_resolver_metadata() {
+        let (metadata, approval_id) =
+            resolve_approval_scoped_metadata(ferrum_proto::TokenRole::Operator, false).await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_bearer_emits_legacy_unauthenticated_metadata() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            bearer_token: Some("secret-token".to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let approval_id = seed_pending_approval(&runtime, intent_id, proposal_id).await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", "Bearer secret-token")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&approval_resolve_request(
+                            "legacy-body-operator",
+                            true,
+                        ))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let metadata = query_approval_event_metadata(
+            &runtime,
+            intent_id,
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted,
+        )
+        .await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("legacy-body-operator")
+        );
+        assert_eq!(
+            metadata.get("actor_source").and_then(|v| v.as_str()),
+            Some("request_body_legacy")
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            metadata.get("claimed_actor_type").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+        assert!(
+            metadata.get("actor_role").is_none(),
+            "unauthenticated resolver must not claim a role"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_approval_oidc_emits_authenticated_role_metadata() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let approval_id = seed_pending_approval(&runtime, intent_id, proposal_id).await;
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("oidc-operator"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+        let jwt = mint_test_jwt(claims, Some("test-key-1"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approval_id))
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&approval_resolve_request("oidc-operator", true))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let metadata = query_approval_event_metadata(
+            &runtime,
+            intent_id,
+            ferrum_proto::ProvenanceEventKind::ApprovalGranted,
+        )
+        .await;
+        assert_eq!(
+            metadata.get("approval_id").and_then(|v| v.as_str()),
+            Some(approval_id.to_string().as_str())
+        );
+        assert_eq!(
+            metadata.get("actor_id").and_then(|v| v.as_str()),
+            Some("oidc-operator")
+        );
+        assert_eq!(
+            metadata.get("actor_source").and_then(|v| v.as_str()),
+            Some("oidc")
+        );
+        assert_eq!(
+            metadata
+                .get("actor_authenticated")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            metadata.get("actor_role").and_then(|v| v.as_str()),
+            Some("operator")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_actor_mismatch_rejected() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "forged-attacker".to_string(),
+                display_name: None,
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // Fail closed: hold remains pending and unresolved.
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            after.state,
+            ferrum_proto::QuarantineHoldState::Pending
+        ));
+        assert!(after.resolved_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_actor_binds_resolved_by() {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        seed_quarantine_created_event(&runtime, intent_id, proposal_id).await;
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "real-operator".to_string(),
+                display_name: None,
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Persisted resolver must be the authenticated actor, not a body-supplied value.
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.resolved_by.unwrap().actor_id,
+            "real-operator".to_string()
+        );
+    }
+
+    async fn resolve_quarantine_with_forged_actor(body_actor_id: &str) {
+        let (runtime, config) = test_runtime_with_scoped_auth().await;
+        let token =
+            insert_scoped_token(&runtime, "real-operator", vec!["approval:resolve".into()]).await;
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+        let hold_id = seed_pending_quarantine_hold(&runtime, intent_id, proposal_id).await;
+        seed_quarantine_created_event(&runtime, intent_id, proposal_id).await;
+
+        // Body forges actor_type and display_name; actor_id is either matching (compat)
+        // or empty (omitted). Both must be ignored in favor of the authenticated identity.
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Agent,
+                actor_id: body_actor_id.to_string(),
+                display_name: Some("Forged Name".to_string()),
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Persisted resolver is fully trusted: actor_type derives from the auth source
+        // (scoped -> Operator) and display_name is cleared; forged body fields are dropped.
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let resolved_by = after.resolved_by.unwrap();
+        assert_eq!(resolved_by.actor_id, "real-operator".to_string());
+        assert!(matches!(
+            resolved_by.actor_type,
+            ferrum_proto::ActorType::Operator
+        ));
+        assert!(resolved_by.display_name.is_none());
+
+        // Provenance actor is equally trusted.
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ferrum_proto::ProvenanceQueryRequest {
+                intent_id: Some(intent_id),
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ferrum_proto::ProvenanceEventKind::QuarantineResolved),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor.actor_id, "real-operator".to_string());
+        assert!(matches!(
+            events[0].actor.actor_type,
+            ferrum_proto::ActorType::Operator
+        ));
+        assert!(events[0].actor.display_name.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_matching_id_overrides_forged_actor_fields() {
+        resolve_quarantine_with_forged_actor("real-operator").await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_authenticated_empty_id_overrides_forged_actor_fields() {
+        resolve_quarantine_with_forged_actor("").await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_quarantine_bearer_fallback_uses_body_actor() {
+        // Bearer mode inserts no AuthActor, so the request-body actor must remain authoritative.
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            bearer_token: Some("secret-token".to_string()),
+            ..ServerConfig::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+        let (intent_id, proposal_id) = seed_intent_proposal(&runtime).await;
+
+        let hold_id = ferrum_proto::QuarantineHoldId::new();
+        runtime
+            .store
+            .quarantine_holds()
+            .insert(&ferrum_proto::QuarantineHold {
+                hold_id,
+                intent_id,
+                proposal_id,
+                reason: "r".to_string(),
+                matched_rule_ids: vec![],
+                policy_bundle_id: None,
+                state: ferrum_proto::QuarantineHoldState::Pending,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                created_at: chrono::Utc::now(),
+                resolved_at: None,
+                resolved_by: None,
+                resolution_reason: None,
+                metadata: ferrum_proto::JsonMap::new(),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        seed_quarantine_created_event(&runtime, intent_id, proposal_id).await;
+
+        let resolve_request = ferrum_proto::QuarantineResolveRequest {
+            actor: ferrum_proto::ActorRef {
+                actor_type: ferrum_proto::ActorType::Operator,
+                actor_id: "legacy-body-operator".to_string(),
+                display_name: None,
+            },
+            allow: true,
+            reason: None,
+            mfa_factor: None,
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/quarantines/{}/resolve", hold_id))
+                    .header("Authorization", "Bearer secret-token")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&resolve_request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let after = runtime
+            .store
+            .quarantine_holds()
+            .get(hold_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.resolved_by.unwrap().actor_id,
+            "legacy-body-operator".to_string()
+        );
     }
 
     // Note: Tests for pending→granted, pending→denied, terminal→409, expired→403, and
@@ -5949,7 +5077,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     use ferrum_proto::{
-        ActionType, RollbackContract, RollbackContractId, RollbackState, RollbackTarget,
+        ActionType, HttpMethod, RollbackContract, RollbackContractId, RollbackState, RollbackTarget,
     };
 
     /// Helper: create intent + proposal + capability + execution in a specific state.
@@ -6006,6 +5134,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         runtime.store.intents().insert(&intent).await.unwrap();
 
@@ -6025,6 +5154,7 @@ mod tests {
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
         runtime.store.proposals().insert(&proposal).await.unwrap();
 
@@ -6071,6 +5201,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         };
         runtime.store.executions().insert(&record).await.unwrap();
 
@@ -6127,6 +5258,173 @@ mod tests {
         runtime.store.executions().update(&execution).await.unwrap();
 
         contract_id
+    }
+
+    /// Helper: link an R2Compensatable contract with the given action type to
+    /// an execution. Used by Slice 1 execute-gate negative tests.
+    async fn link_r2_rollback_contract(
+        runtime: &GatewayRuntime,
+        execution_id: ExecutionId,
+        intent_id: ferrum_proto::IntentId,
+        proposal_id: ProposalId,
+        action_type: ActionType,
+        target: RollbackTarget,
+    ) -> RollbackContractId {
+        let adapter_key = match action_type {
+            ActionType::HttpMutation => "http".to_string(),
+            ActionType::SqlMutation => "sqlite".to_string(),
+            _ => "noop".to_string(),
+        };
+        let contract_id = RollbackContractId::new();
+        let contract = RollbackContract {
+            contract_id,
+            intent_id,
+            proposal_id,
+            execution_id,
+            action_type,
+            rollback_class: RollbackClass::R2Compensatable,
+            adapter_key,
+            target,
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::Prepared,
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            metadata: ferrum_proto::JsonMap::new(),
+        };
+        runtime
+            .store
+            .rollback_contracts()
+            .insert(&contract)
+            .await
+            .unwrap();
+
+        let mut execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        execution.rollback_contract_id = Some(contract_id);
+        runtime.store.executions().update(&execution).await.unwrap();
+
+        contract_id
+    }
+
+    /// R-2 Slice 1: execute_execution rejects legacy persisted R2Compensatable
+    /// contracts for HttpMutation before the adapter or state transition is
+    /// attempted.
+    #[tokio::test]
+    async fn test_execute_rejects_legacy_r2_http_mutation_contract() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Prepared).await;
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        link_r2_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            ActionType::HttpMutation,
+            RollbackTarget::HttpRequest {
+                method: HttpMethod::Post,
+                url: "https://example.com".to_string(),
+                request_digest: String::new(),
+            },
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/execute", execution_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"payload": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "legacy R2 HttpMutation contract execute should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("R2Compensatable"),
+            "Error should name R2Compensatable: {}",
+            body_str
+        );
+    }
+
+    /// R-2 Slice 1: execute_execution rejects legacy persisted R2Compensatable
+    /// contracts for SqlMutation before the adapter or state transition is
+    /// attempted.
+    #[tokio::test]
+    async fn test_execute_rejects_legacy_r2_sql_mutation_contract() {
+        let (runtime, router, execution_id) =
+            setup_lifecycle_test_runtime(ExecutionState::Prepared).await;
+        let execution = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        link_r2_rollback_contract(
+            &runtime,
+            execution_id,
+            execution.intent_id,
+            execution.proposal_id,
+            ActionType::SqlMutation,
+            RollbackTarget::SqliteTxn {
+                db_path: "/tmp/test.db".to_string(),
+                tx_id: "tx-1".to_string(),
+            },
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/executions/{}/execute", execution_id))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"payload": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "legacy R2 SqlMutation contract execute should return 409 Conflict"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("R2Compensatable"),
+            "Error should name R2Compensatable: {}",
+            body_str
+        );
     }
 
     /// D-1 Slice 4: prepare_execution on Proposed execution returns 409.
@@ -6406,6 +5704,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicyBundleSimulateRequest {
@@ -6470,6 +5769,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicyBundleSimulateRequest {
@@ -6531,6 +5831,7 @@ rules:
             taint_inputs: vec!["external".to_string()],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicyBundleSimulateRequest {
@@ -6591,6 +5892,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicySimulateRequest {
@@ -6637,6 +5939,7 @@ rules:
             taint_inputs: Vec::new(),
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
 
         let request = PolicySimulateRequest {
@@ -6951,12 +6254,235 @@ rules:
             })
             .await
             .unwrap();
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e.kind, ProvenanceEventKind::PolicyBundleRolledBack)),
-            "rollback should emit PolicyBundleRolledBack provenance event"
-        );
+        let rollback_event = events
+            .iter()
+            .find(|e| matches!(e.kind, ProvenanceEventKind::PolicyBundleRolledBack))
+            .expect("rollback should emit PolicyBundleRolledBack provenance event");
+        assert_eq!(rollback_event.actor.actor_id, "test-operator");
+        assert!(matches!(
+            rollback_event.actor.actor_type,
+            ActorType::Operator
+        ));
+
+        // Backward compatibility: when no AuthActor is present, request.actor is used.
+        let (audit_entries, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::PolicyBundleRollback),
+                Some(AuditResourceType::PolicyBundle),
+                Some("rollback-test-bundle"),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].actor_id, "test-operator");
+    }
+
+    #[tokio::test]
+    async fn test_policy_bundle_actor_identity_prefer_auth_actor() {
+        let runtime = test_runtime().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Insert a scoped token with a known actor identity.
+        let token_value = generate_token_value();
+        let token_salt = generate_token_salt();
+        let token_lookup_hash = hash_token_value(&token_value);
+        let token_hash = hash_token_with_salt(&token_value, &token_salt);
+        let token = ferrum_proto::ScopedToken {
+            token_id: "tok_policy_actor_test".to_string(),
+            actor_id: "auth-operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: vec!["policy:write".to_string()],
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash,
+            token_hash,
+            token_salt,
+        };
+        runtime.store.tokens().insert(&token).await.unwrap();
+
+        // Create a policy bundle
+        let yaml = r#"version: "0.1.0"
+bundle_id: "actor-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule"
+    decision: "Allow"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let create_req = ferrum_proto::CreatePolicyBundleRequest {
+            yaml_content: yaml.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Activate the bundle
+        let activate_req = ferrum_proto::SetPolicyBundleActiveRequest { active: true };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/actor-test-bundle/active")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&activate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Audit log for create should record the authenticated actor
+        let (audit_entries, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::PolicyBundleCreate),
+                Some(AuditResourceType::PolicyBundle),
+                Some("actor-test-bundle"),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].actor_id, "auth-operator");
+
+        // Provenance event for activation should record the authenticated operator
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ProvenanceQueryRequest {
+                intent_id: None,
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::PolicyBundleActivated),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor.actor_id, "auth-operator");
+        assert!(matches!(events[0].actor.actor_type, ActorType::Operator));
+
+        // Update the bundle to create version 2
+        let yaml2 = r#"version: "0.1.0"
+bundle_id: "actor-test-bundle"
+rules:
+  - id: "rule1"
+    description: "Test rule updated"
+    decision: "Deny"
+    priority: 100
+    matchers:
+      - type: "action_is_mutation"
+"#;
+        let update_req = ferrum_proto::UpdatePolicyBundleRequest {
+            yaml_content: yaml2.to_string(),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/v1/policy-bundles/actor-test-bundle")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Rollback with a client-forged actor; AuthActor should win
+        let rollback_req = RollbackPolicyBundleRequest {
+            target_version: 1,
+            actor: Some("client-forged".to_string()),
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/policy-bundles/actor-test-bundle/rollback")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rollback_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Audit log for rollback should prefer authenticated actor
+        let (audit_entries, _) = runtime
+            .store
+            .audit_log()
+            .list(
+                Some(AuditAction::PolicyBundleRollback),
+                Some(AuditResourceType::PolicyBundle),
+                Some("actor-test-bundle"),
+                None,
+                10,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit_entries.len(), 1);
+        assert_eq!(audit_entries[0].actor_id, "auth-operator");
+
+        // Provenance event for rollback should prefer authenticated actor
+        let events = runtime
+            .store
+            .provenance()
+            .query(&ProvenanceQueryRequest {
+                intent_id: None,
+                execution_id: None,
+                capability_id: None,
+                event_kind: Some(ProvenanceEventKind::PolicyBundleRolledBack),
+                since: None,
+                until: None,
+                edge_types: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actor.actor_id, "auth-operator");
+        assert!(matches!(events[0].actor.actor_type, ActorType::Operator));
     }
 
     // ── Scoped Token Tests ──
@@ -7595,7 +7121,7 @@ rules:
 
     // ── OIDC/JWT Offline Validation Tests (Phase 4.3) ──
 
-    fn test_oidc_config() -> OidcConfig {
+    fn test_oidc_config_with_profile(token_profile: crate::OidcTokenProfile) -> OidcConfig {
         let mut role_mappings = std::collections::HashMap::new();
         role_mappings.insert("fg-admins".to_string(), ferrum_proto::TokenRole::Admin);
         role_mappings.insert(
@@ -7627,15 +7153,28 @@ rules:
             require_email_verified: false,
             jwks_url: None,
             jwks_cache_ttl_secs: 300,
+            token_profile,
         }
+    }
+
+    fn test_oidc_config() -> OidcConfig {
+        test_oidc_config_with_profile(crate::OidcTokenProfile::LegacyJwt)
     }
 
     fn mint_test_jwt(
         claims: serde_json::Map<String, serde_json::Value>,
         kid: Option<&str>,
     ) -> String {
+        mint_test_jwt_with_typ(claims, kid, Some("JWT"))
+    }
+
+    fn mint_test_jwt_with_typ(
+        claims: serde_json::Map<String, serde_json::Value>,
+        kid: Option<&str>,
+        typ: Option<&str>,
+    ) -> String {
         let header = jsonwebtoken::Header {
-            typ: Some("JWT".to_string()),
+            typ: typ.map(|s| s.to_string()),
             alg: jsonwebtoken::Algorithm::HS256,
             kid: kid.map(|s| s.to_string()),
             ..Default::default()
@@ -8057,6 +7596,486 @@ rules:
         assert_eq!(response.status(), StatusCode::OK);
     }
 
+    fn test_oidc_server_config_with_profile(
+        token_profile: crate::OidcTokenProfile,
+    ) -> ServerConfig {
+        ServerConfig {
+            auth_mode: AuthMode::Oidc,
+            oidc_config: Some(test_oidc_config_with_profile(token_profile)),
+            ..ServerConfig::default()
+        }
+    }
+
+    fn valid_oidc_claims() -> serde_json::Map<String, serde_json::Value> {
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+        claims
+    }
+
+    fn mint_unsigned_jwt(
+        claims: serde_json::Map<String, serde_json::Value>,
+        _kid: Option<&str>,
+        typ: Option<&str>,
+    ) -> String {
+        let mut header = serde_json::Map::new();
+        header.insert("alg".to_string(), serde_json::json!("none"));
+        if let Some(t) = typ {
+            header.insert("typ".to_string(), serde_json::json!(t));
+        }
+        let header_json = serde_json::to_string(&header).unwrap();
+        let claims_json = serde_json::to_string(&claims).unwrap();
+        let header_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            header_json.as_bytes(),
+        );
+        let claims_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            claims_json.as_bytes(),
+        );
+        format!("{header_b64}.{claims_b64}.")
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_accepts_at_jwt_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), Some("at+jwt"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_accepts_application_at_jwt_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(
+            valid_oidc_claims(),
+            Some("test-key-1"),
+            Some("application/at+jwt"),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_rejects_legacy_jwt_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        // Legacy "JWT" typ must be rejected under the strict RFC 9068 profile.
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), Some("JWT"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Response must not leak the expected token type.
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            !text.contains("at+jwt"),
+            "response must not disclose expected token type: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oidc_rfc9068_rejects_missing_typ() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), None);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_legacy_accepts_missing_typ() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_test_jwt_with_typ(valid_oidc_claims(), Some("test-key-1"), None);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    fn assert_oidc_401_body_is_generic(status: StatusCode, body: &str) {
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let lower = body.to_lowercase();
+        assert!(
+            !lower.contains("none")
+                && !lower.contains("alg")
+                && !lower.contains("at+jwt")
+                && !lower.contains("profile")
+                && !lower.contains("allowed")
+                && !lower.contains("hs256")
+                && !lower.contains("rs256"),
+            "response body must not disclose algorithm or profile hints: {body}"
+        );
+        let err: ApiError = serde_json::from_str(body).expect("body must be a valid ApiError");
+        assert_eq!(
+            err.code,
+            ferrum_proto::ApiErrorCode::Unauthorized,
+            "expected canonical Unauthorized code"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oidc_malformed_authorization_returns_generic_401() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let cases = vec![
+            "malformed",
+            "Basic dXNlcjpwYXNz",
+            "Bearer",
+            "Bearer ",
+            "Bearer not-a-jwt",
+            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            "Bearer abc.def.ghi",
+        ];
+
+        for header in cases {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/approvals")
+                        .header("Authorization", header)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert_oidc_401_body_is_generic(status, &text);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oidc_none_algorithm_rejected_in_legacy_profile() {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_unsigned_jwt(valid_oidc_claims(), Some("test-key-1"), Some("JWT"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_oidc_401_body_is_generic(status, &text);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_none_algorithm_rejected_in_rfc9068_profile() {
+        let runtime = test_runtime().await;
+        let config =
+            test_oidc_server_config_with_profile(crate::OidcTokenProfile::Rfc9068AccessToken);
+        let router = build_router_with_auth(runtime, config);
+
+        let jwt = mint_unsigned_jwt(valid_oidc_claims(), Some("test-key-1"), Some("at+jwt"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_oidc_401_body_is_generic(status, &text);
+    }
+
+    fn oidc_claims_for_sub(sub: &str) -> serde_json::Map<String, serde_json::Value> {
+        let mut claims = valid_oidc_claims();
+        claims.insert("sub".to_string(), serde_json::json!(sub));
+        claims
+    }
+
+    async fn setup_oidc_owner_guard_runtime(
+        owner: &str,
+    ) -> (GatewayRuntime, axum::Router, ExecutionId) {
+        let runtime = test_runtime().await;
+        let config = test_oidc_server_config();
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ferrum_proto::ProposalId::new();
+        let execution_id = ExecutionId::new();
+
+        runtime
+            .store
+            .intents()
+            .insert(&ferrum_proto::IntentEnvelope {
+                intent_id,
+                principal_id: ferrum_proto::PrincipalId::new(),
+                session_id: None,
+                channel_id: None,
+                title: "owner guard test".to_string(),
+                goal: "test".to_string(),
+                normalized_goal: "test".to_string(),
+                allowed_outcomes: vec![],
+                forbidden_outcomes: vec![],
+                resource_scope: vec![],
+                risk_tier: RiskTier::Low,
+                approval_mode: ferrum_proto::ApprovalMode::None,
+                default_rollback_class: RollbackClass::R0NativeReversible,
+                time_budget: TimeBudget {
+                    max_duration_ms: 30_000,
+                    max_steps: 8,
+                    max_retries_per_step: 1,
+                },
+                trust_context: TrustContextSummary {
+                    input_labels: vec![],
+                    sensitivity_labels: vec![],
+                    taint_score: 0,
+                    contains_external_metadata: false,
+                    contains_tool_output: false,
+                    contains_untrusted_text: false,
+                },
+                derived_from_event_ids: vec![],
+                tags: vec![],
+                metadata: ferrum_proto::JsonMap::new(),
+                status: IntentStatus::Active,
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        runtime
+            .store
+            .proposals()
+            .insert(&ferrum_proto::ActionProposal {
+                proposal_id,
+                intent_id,
+                step_index: 0,
+                title: "proposal".to_string(),
+                tool_name: "test_tool".to_string(),
+                server_name: "test_server".to_string(),
+                raw_arguments: serde_json::json!({}),
+                expected_effect: "test".to_string(),
+                estimated_risk: RiskTier::Low,
+                requested_rollback_class: RollbackClass::R0NativeReversible,
+                taint_inputs: vec![],
+                metadata: ferrum_proto::JsonMap::new(),
+                created_at: chrono::Utc::now(),
+                owner_actor_id: None,
+            })
+            .await
+            .unwrap();
+
+        let mint_response = runtime
+            .cap
+            .mint(ferrum_proto::CapabilityMintRequest {
+                intent_id,
+                proposal_id,
+                tool_binding: ferrum_proto::ToolBinding {
+                    server_name: "test_server".to_string(),
+                    tool_name: "test_tool".to_string(),
+                    tool_version: None,
+                },
+                resource_bindings: vec![],
+                argument_constraints: vec![],
+                taint_budget: ferrum_proto::TaintBudget {
+                    max_taint_score: 0,
+                    allow_external_tool_output: false,
+                    allow_external_metadata: false,
+                    allow_untrusted_text: false,
+                },
+                approval_binding: None,
+                requested_ttl_secs: 60,
+                metadata: ferrum_proto::JsonMap::new(),
+            })
+            .await
+            .unwrap();
+
+        runtime
+            .store
+            .capabilities()
+            .insert(&mint_response.lease)
+            .await
+            .unwrap();
+
+        let record = ExecutionRecord {
+            execution_id,
+            proposal_id,
+            intent_id,
+            capability_id: mint_response.lease.capability_id,
+            rollback_contract_id: None,
+            decision: Decision::Allow,
+            state: ExecutionState::Authorized,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            result_digest: None,
+            metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: Some(owner.to_string()),
+        };
+        runtime.store.executions().insert(&record).await.unwrap();
+
+        (runtime, router, execution_id)
+    }
+
+    #[tokio::test]
+    async fn test_oidc_owner_guard_cross_owner_read_returns_404_and_preserves_state() {
+        let (runtime, router, execution_id) = setup_oidc_owner_guard_runtime("actor-a").await;
+
+        // Owner can read their own execution through the real OIDC middleware.
+        let jwt_a = mint_test_jwt(oidc_claims_for_sub("actor-a"), Some("test-key-1"));
+        let owner_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/executions/{execution_id}"))
+                    .header("Authorization", format!("Bearer {}", jwt_a))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(owner_response.status(), StatusCode::OK);
+
+        // Non-owner must receive a generic 404 and must not alter the execution.
+        let jwt_b = mint_test_jwt(oidc_claims_for_sub("actor-b"), Some("test-key-1"));
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/executions/{execution_id}"))
+                    .header("Authorization", format!("Bearer {}", jwt_b))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains("object not found"),
+            "expected generic 404: {text}"
+        );
+
+        let after = runtime
+            .store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.state, ExecutionState::Authorized);
+    }
+
     // ── Phase 4.4: JWKS cache/fetch tests ──
 
     #[tokio::test]
@@ -8158,6 +8177,115 @@ rules:
 
         // Must fail closed with 401, not allow access
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_oidc_jwks_missing_kid_returns_401_no_leak() {
+        use axum::{Json, Router, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // JWKS endpoint returns 200 with a syntactically valid JWKS that does
+        // NOT contain the kid declared in the JWT header.
+        let jwks = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "other-rsa-key",
+                "n": "k4BWME9tVOIreUI5ROut2R594BH3kxnrUFJ26SAtBG3s0mYE6VM_uyvM1Lmc11oA1mzp0u_ilPOBUdDF8J2sCQ",
+                "e": "AQAB"
+            }]
+        });
+
+        let jwks_request_count = Arc::new(AtomicUsize::new(0));
+        let jwks_request_count_for_handler = jwks_request_count.clone();
+        let app = Router::new().route(
+            "/jwks",
+            get(move || {
+                let counter = jwks_request_count_for_handler.clone();
+                let jwks = jwks.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(jwks)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let jwks_url = format!("http://{}/jwks", addr);
+
+        let runtime = test_runtime().await;
+        let mut config = test_oidc_server_config();
+        if let Some(ref mut oidc) = config.oidc_config {
+            // Force JWKS fallback by removing static keys.
+            oidc.static_keys.clear();
+            oidc.jwks_url = Some(jwks_url.clone());
+        }
+        let router = build_router_with_auth(runtime, config);
+
+        let mut claims = serde_json::Map::new();
+        claims.insert("sub".to_string(), serde_json::json!("user-123"));
+        claims.insert(
+            "iss".to_string(),
+            serde_json::json!("https://test-issuer.example.com"),
+        );
+        claims.insert("aud".to_string(), serde_json::json!("ferrumgate-test"));
+        claims.insert(
+            "exp".to_string(),
+            serde_json::json!((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()),
+        );
+        claims.insert("groups".to_string(), serde_json::json!(["fg-operators"]));
+
+        // kid is intentionally absent from the JWKS returned above.
+        let jwt = mint_test_jwt(claims, Some("missing-kid"));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/approvals")
+                    .header("Authorization", format!("Bearer {}", jwt))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // The mock JWKS handler must have been reached exactly once; if it
+        // was never reached, the test would still pass on status alone and the
+        // key-miss branch would not actually be exercised.
+        assert_eq!(
+            jwks_request_count.load(Ordering::SeqCst),
+            1,
+            "expected exactly one JWKS handler request"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+
+        // Generic Unauthorized response: must not disclose the requested kid
+        // or the JWKS endpoint/config.
+        assert_oidc_401_body_is_generic(StatusCode::UNAUTHORIZED, &text);
+        assert!(
+            !text.to_lowercase().contains("missing-kid"),
+            "response body leaked the missing kid: {}",
+            text
+        );
+        assert!(
+            !text.to_lowercase().contains(&jwks_url.to_lowercase()),
+            "response body leaked the jwks url: {}",
+            text
+        );
+        assert!(
+            !text.to_lowercase().contains("other-rsa-key"),
+            "response body leaked an unrelated key id: {}",
+            text
+        );
     }
 
     #[tokio::test]
@@ -9112,6 +9240,411 @@ rules:
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Scope Attenuation Tests ──
+
+    #[tokio::test]
+    async fn test_admin_token_create_scope_subset_success() {
+        let mut issuer_scopes = ferrum_proto::TokenRole::Operator.default_scopes();
+        issuer_scopes.push("admin:tokens".to_string());
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "reader".to_string(),
+            role: ferrum_proto::TokenRole::ReadOnly,
+            scopes: None,
+            description: Some("subset success".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let create_resp: ferrum_proto::CreateTokenResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            create_resp.token.scopes,
+            ferrum_proto::TokenRole::ReadOnly.default_scopes()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_scope_overbroad_denied() {
+        let issuer_scopes = vec!["admin:tokens".to_string(), "policy:read".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "overbroad".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: None,
+            description: Some("overbroad test".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_admin_role_denied_for_non_root() {
+        let issuer_scopes = vec!["admin:tokens".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "pseudo-admin".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: None,
+            description: Some("admin escalation".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_wildcard_success_for_root() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "root".to_string(),
+            role: ferrum_proto::TokenRole::Admin,
+            scopes: None,
+            description: Some("wildcard success".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_create_no_auth_context_fail_closed() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let create_req = ferrum_proto::CreateTokenRequest {
+            actor_id: "unknown".to_string(),
+            role: ferrum_proto::TokenRole::ReadOnly,
+            scopes: None,
+            description: Some("no auth context".to_string()),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(7),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&create_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_scope_subset_success() {
+        let issuer_scopes = vec![
+            "admin:agents".to_string(),
+            "intent:submit".to_string(),
+            "proposal:evaluate".to_string(),
+        ];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_subset_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["intent:submit".to_string()]),
+            description: Some("subset success".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let register_resp: ferrum_proto::RegisterAgentResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            register_resp.agent.allowed_scopes,
+            vec!["intent:submit".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_scope_overbroad_denied() {
+        let issuer_scopes = vec!["admin:agents".to_string(), "intent:submit".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_overbroad_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec![
+                "intent:submit".to_string(),
+                "proposal:evaluate".to_string(),
+            ]),
+            description: Some("overbroad test".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_wildcard_denied_for_non_root() {
+        let issuer_scopes = vec!["admin:agents".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_wildcard_denied_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["*".to_string()]),
+            description: Some("wildcard escalation".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_wildcard_success_for_root() {
+        let (runtime, token_value) = test_runtime_with_admin_token().await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_wildcard_ok_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["*".to_string()]),
+            description: Some("wildcard success".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_admin_agent_create_no_auth_context_fail_closed() {
+        let runtime = test_runtime().await;
+        let router = build_router(runtime);
+
+        let request = RegisterAgentRequest {
+            agent_id: "agent_no_auth_1".to_string(),
+            public_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                vec![0u8; 32],
+            ),
+            scopes: Some(vec!["intent:submit".to_string()]),
+            description: Some("no auth context".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/agents")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_rotate_scope_attenuation_denied() {
+        let issuer_scopes = vec!["admin:tokens".to_string()];
+        let (runtime, token_value) = test_runtime_with_token_scopes(issuer_scopes).await;
+        let config = ServerConfig {
+            auth_mode: AuthMode::Scoped,
+            ..Default::default()
+        };
+        let router = build_router_with_auth(runtime.clone(), config);
+
+        // Insert a token with broader scopes than the issuer holds.
+        let target_token_value = generate_token_value();
+        let target_token_salt = generate_token_salt();
+        let target_token_lookup_hash = hash_token_value(&target_token_value);
+        let target_token_hash = hash_token_with_salt(&target_token_value, &target_token_salt);
+        let target_token = ferrum_proto::ScopedToken {
+            token_id: "tok_rotate_overbroad".to_string(),
+            actor_id: "operator".to_string(),
+            role: ferrum_proto::TokenRole::Operator,
+            scopes: ferrum_proto::TokenRole::Operator.default_scopes(),
+            description: None,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            revoked_at: None,
+            revoked_reason: None,
+            rotated_from: None,
+            token_lookup_hash: target_token_lookup_hash,
+            token_hash: target_token_hash,
+            token_salt: target_token_salt,
+        };
+        runtime.store.tokens().insert(&target_token).await.unwrap();
+
+        let rotate_req = ferrum_proto::RotateTokenRequest {
+            expires_at: None,
+            reason: Some("rotate with overbroad inherited scopes".to_string()),
+        };
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/admin/tokens/tok_rotate_overbroad/rotate")
+                    .header("Authorization", format!("Bearer {}", token_value))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&rotate_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // The original token should remain active (not revoked by a failed rotate).
+        let original = runtime
+            .store
+            .tokens()
+            .get("tok_rotate_overbroad")
+            .await
+            .unwrap()
+            .expect("original token still exists");
+        assert!(original.revoked_at.is_none());
     }
 
     // ── Audit Export Tests ──
@@ -11538,7 +12071,7 @@ rules:
                 &base64::engine::general_purpose::STANDARD,
                 vec![0u8; 32],
             ),
-            scopes: None,
+            scopes: Some(vec!["admin:agents".to_string()]),
             description: None,
         };
         let body_bytes = serde_json::to_vec(&create_req).unwrap();
@@ -11771,7 +12304,7 @@ rules:
     }
 
     #[tokio::test]
-    async fn approval_timeout_reconciler_emits_provenance_and_increments_metric() {
+    async fn approval_timeout_store_emits_provenance_and_increments_metric() {
         let runtime = test_runtime().await;
         let store = runtime.store.clone();
 
@@ -11810,6 +12343,7 @@ rules:
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         };
         store.intents().insert(&intent).await.unwrap();
 
@@ -11827,6 +12361,7 @@ rules:
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         };
         store.proposals().insert(&proposal).await.unwrap();
 
@@ -11847,6 +12382,8 @@ rules:
             expires_at: now - chrono::Duration::minutes(1),
             state: ferrum_proto::ApprovalState::Pending,
             created_at: now - chrono::Duration::hours(2),
+            resolver_evidence_version: None,
+            owner_actor_id: None,
         };
         store.approvals().insert(&approval).await.unwrap();
 

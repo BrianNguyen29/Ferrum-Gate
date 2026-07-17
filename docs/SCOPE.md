@@ -31,22 +31,23 @@ This document defines what FerrumGate is, what it is not, and where the boundari
 | MCP Streamable HTTP / SSE transport | Experimental | Session/replay skeleton implemented; not production-ready |
 | MCP resumability | In-memory skeleton | Replay buffer implemented; not restart-resumable |
 | Turnkey HA product | Not implemented | Operator must design HA topology |
-| Store-backed CapabilityService | Not implemented | Deferred to separate PR |
-| PolicyBundle PDP engine | Not implemented | Blocked on rule semantics ADR |
+| Store-backed CapabilityService | Implemented | ferrumd uses StoreCapabilityService for production mint/get/revoke/use paths; in-memory remains for tests/dev. |
+| PolicyBundle PDP engine | Implemented (Phase 1 / Beta) | Static-default bundle parity implemented; QuarantineHold enforced; bundle identity propagation and obligations deferred. |
 | MFA TOTP | Implemented | Admin TOTP enrollment/verification for approval resolve; per-factor lockout implemented; WebAuthn/backup codes deferred |
-| Approval timeout / auto-deny | Not implemented | Deferred to separate PR |
+| Approval timeout / auto-deny | Implemented (config-gated / opt-in) | `approval_timeout_enabled`/`approval_timeout_seconds` parsed and validated; background reconciler transitions stale pending approvals to `Expired`; emits metrics and attempts to append an `ApprovalTimedOut` provenance event; append failure is logged/observable; production-like config requires it. |
 | WORM audit sink | Implemented (feature-gated) | S3 Object Lock WORM-compatible sink behind the `worm-sink` feature; disabled by default; operator provisions bucket and Object Lock configuration |
+| Audit verification UX | Implemented (portable UX P3; WORM sink P2 experimental) | `ferrumctl audit export`/`verify` and the portable hash-chain/Merkle-root verification bundle are implemented; optional S3 Object Lock WORM sink is best-effort, operator-provisioned, feature-gated, with no external anchoring, compliance, or immutability claim. |
 | Behavioral anomaly detection | Implemented (Phase 1 V1) | In-memory advisory high-risk/R3 burst detection; opt-in, no ML/external service |
 | Persistent nonce cache (shared) | Implemented | PostgreSQL-backed `NonceCache` for multi-process deployments; in-memory remains default (ADR-015) |
 | GCS adapter | Implemented (shape-only) | Feature-gated behind `gcs`; generation-based rollback modeled; live SDK path is a declared seam. See ADR-018. |
 | Azure Blob adapter | Not implemented | Deferred to a future slice after GCS semantics are stable |
-| HA reconciler | Not implemented | Backlog; requires PostgreSQL HA design |
+| HA reconciler | Implemented (experimental / opt-in) | Stale in-flight execution reconciler; does not provide leader election or turnkey HA. |
 | HA leader election | Not implemented | Backlog; requires PostgreSQL HA design and distributed consensus |
 | Schema-drift checker | Implemented | Startup refuses databases with `_schema_version` newer than the binary-supported schema version |
 
 ## Honest assessment
 
-FerrumGate is not a turnkey HA product or a compliance-certified platform. It is a governance engine that operators integrate into their own infrastructure. All production readiness decisions—topology, TLS, secrets, backups, database HA, and acceptance testing—remain operator responsibilities.
+FerrumGate is not a turnkey HA product or a compliance-certified platform. It is a governance engine that operators integrate into their own infrastructure. All production readiness decisions—topology, TLS, secrets, backups, database HA, and acceptance testing—remain operator responsibilities. See the [subsystem readiness matrix in ROADMAP.md](./ROADMAP.md#subsystem-readiness-matrix) for per-area maturity levels and caveats.
 
 ## Related docs
 

@@ -2,9 +2,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 #[cfg(feature = "gcs")]
 use ferrum_adapter_gcs::GcsConfig;
+use ferrum_adapter_http::HttpEgressConfig;
 #[cfg(feature = "s3")]
 use ferrum_adapter_s3::S3Config;
 use ferrum_gateway::{AuthMode, ServerConfig};
+use ipnet::IpNet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -60,6 +62,22 @@ pub struct Args {
     /// Rate limit: burst size per IP (default 50).
     #[arg(long)]
     rate_limit_burst: Option<u32>,
+
+    /// Trusted proxy CIDR ranges (comma-separated) whose single `X-Real-IP`
+    /// header may be honored. `X-Forwarded-For` is ignored. Defaults to empty
+    /// (trust-none). Universal CIDRs (0.0.0.0/0, ::/0) are rejected.
+    #[arg(long)]
+    trusted_proxy_cidrs: Option<String>,
+
+    /// Pre-auth rate limit: sustained requests per second per source.
+    /// When omitted, inherits rate_limit_per_second.
+    #[arg(long)]
+    pre_auth_rate_limit_per_second: Option<u64>,
+
+    /// Pre-auth rate limit: burst size per source.
+    /// When omitted, inherits rate_limit_burst.
+    #[arg(long)]
+    pre_auth_rate_limit_burst: Option<u32>,
 
     /// Log format: "text" or "json" (default "text").
     #[arg(long)]
@@ -263,9 +281,26 @@ pub struct Args {
     #[arg(long)]
     audit_worm_sink_secret_access_key: Option<String>,
 
+    /// Comma-separated list of exact allowed HTTP egress host names.
+    /// When empty or omitted, the HTTP adapter and planner are not registered.
+    #[arg(long)]
+    http_egress_allowed_hosts: Option<String>,
+
     /// Enable live GCS SDK calls for the GCS adapter (default: false).
     #[arg(long)]
     gcs_live: bool,
+
+    /// OIDC token profile: "legacy_jwt" (default) or "rfc9068_access_token".
+    /// "legacy_jwt" accepts any signed JWT typ. "rfc9068_access_token" requires
+    /// the typ header to be exactly "at+jwt" or "application/at+jwt".
+    #[arg(long)]
+    oidc_token_profile: Option<String>,
+
+    /// RFC3339 deadline until which owner-less legacy workflow objects are
+    /// accessible in authenticated modes (Scoped/OIDC/Agent). Empty or omitted
+    /// means deny-by-default. Bearer and Disabled modes are unaffected.
+    #[arg(long)]
+    legacy_object_compat_allow_until: Option<String>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -296,6 +331,31 @@ pub fn get_env_path_list(key: &str) -> Result<Option<Vec<PathBuf>>> {
         .map(PathBuf::from)
         .collect::<Vec<_>>();
     Ok(Some(paths))
+}
+
+/// Parse a comma-separated list of CIDR ranges into typed [`IpNet`] values.
+/// Empty entries are ignored; any structurally invalid CIDR is rejected here at
+/// the config/startup boundary so the core consumer stays fully typed.
+fn parse_cidr_list(raw: &str) -> Result<Vec<IpNet>> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse::<IpNet>()
+                .map_err(|e| anyhow::anyhow!("invalid CIDR '{item}': {e}"))
+        })
+        .collect()
+}
+
+fn parse_allowed_hosts(raw: &str) -> Result<Vec<String>> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| Ok(item.to_string()))
+        .collect()
 }
 
 pub fn redact_dsn_for_log(dsn: &str) -> String {
@@ -342,6 +402,12 @@ struct ServerSection {
     rate_limit_per_second: Option<u64>,
     #[serde(default)]
     rate_limit_burst: Option<u32>,
+    #[serde(default)]
+    trusted_proxy_cidrs: Vec<String>,
+    #[serde(default)]
+    pre_auth_rate_limit_per_second: Option<u64>,
+    #[serde(default)]
+    pre_auth_rate_limit_burst: Option<u32>,
     #[serde(default)]
     log_format: Option<String>,
     #[serde(default)]
@@ -418,18 +484,28 @@ struct ServerSection {
     behavioral_anomaly_critical_threshold: Option<u32>,
     #[serde(default)]
     behavioral_anomaly_max_actors: Option<usize>,
+    #[serde(default)]
+    legacy_object_compat_allow_until: Option<String>,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
     #[cfg(feature = "gcs")]
     #[serde(default)]
     gcs_config: Option<GcsConfigSection>,
+    #[serde(default)]
+    http_egress: Option<HttpEgressSection>,
     #[cfg(feature = "worm-sink")]
     #[serde(default)]
     audit_worm_sink_enabled: Option<bool>,
     #[cfg(feature = "worm-sink")]
     #[serde(default)]
     audit_worm_sink: Option<WormSinkSection>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HttpEgressSection {
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
 }
 
 #[cfg(feature = "worm-sink")]
@@ -583,6 +659,8 @@ struct OidcSection {
     jwks_url: Option<String>,
     #[serde(default)]
     static_keys: Vec<StaticKeyEntry>,
+    #[serde(default = "default_oidc_token_profile")]
+    token_profile: String,
 }
 
 fn default_jwks_cache_ttl() -> u64 {
@@ -595,6 +673,10 @@ fn default_actor_id_claim() -> String {
 
 fn default_role_source_claim() -> String {
     "groups".to_string()
+}
+
+fn default_oidc_token_profile() -> String {
+    "legacy_jwt".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -736,6 +818,40 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or(get_env("FERRUMD_RATE_LIMIT_BURST")?)
         .or_else(|| server.as_ref().and_then(|s| s.rate_limit_burst))
         .unwrap_or(50);
+
+    // Trusted proxy CIDRs: CLI > env > config file > default (empty/trust-none).
+    // Parsed and validated into typed `IpNet` values at this startup boundary.
+    let trusted_proxy_cidrs: Vec<IpNet> = if let Some(cli) = args.trusted_proxy_cidrs.as_deref() {
+        parse_cidr_list(cli)?
+    } else if let Some(env) = get_env::<String>("FERRUMD_TRUSTED_PROXY_CIDRS")? {
+        parse_cidr_list(&env)?
+    } else if let Some(file) = server.as_ref() {
+        file.trusted_proxy_cidrs
+            .iter()
+            .map(|cidr| {
+                cidr.parse::<IpNet>()
+                    .map_err(|e| anyhow::anyhow!("invalid trusted_proxy_cidrs entry '{cidr}': {e}"))
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
+    // Pre-auth rate limits stay optional so that, when omitted, the effective
+    // values inherit `rate_limit_*` (see ServerConfig accessors).
+    let pre_auth_rate_limit_per_second = args
+        .pre_auth_rate_limit_per_second
+        .or(get_env("FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.pre_auth_rate_limit_per_second)
+        });
+
+    let pre_auth_rate_limit_burst = args
+        .pre_auth_rate_limit_burst
+        .or(get_env("FERRUMD_PRE_AUTH_RATE_LIMIT_BURST")?)
+        .or_else(|| server.as_ref().and_then(|s| s.pre_auth_rate_limit_burst));
 
     let write_queue_threshold = args
         .write_queue_threshold
@@ -999,6 +1115,22 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(1000);
 
+    let legacy_object_compat_allow_until = args
+        .legacy_object_compat_allow_until
+        .clone()
+        .or(get_env("FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.legacy_object_compat_allow_until.clone())
+        })
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| anyhow::anyhow!("invalid legacy_object_compat_allow_until: {e}"))
+        })
+        .transpose()?;
+
     #[cfg(feature = "worm-sink")]
     let (audit_worm_sink_enabled, worm_sink_config) = {
         let enabled = if args.audit_worm_sink_enabled {
@@ -1119,6 +1251,26 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.sqlite_db_roots.clone()))
         .unwrap_or_default();
 
+    let http_egress_allowed_hosts = if let Some(cli) = args.http_egress_allowed_hosts.as_deref() {
+        Some(parse_allowed_hosts(cli)?)
+    } else if let Some(env) = get_env::<String>("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS")? {
+        let hosts = parse_allowed_hosts(&env)?;
+        if hosts.is_empty() { None } else { Some(hosts) }
+    } else if let Some(file) = server.as_ref().and_then(|s| s.http_egress.as_ref()) {
+        let hosts = file.allowed_hosts.clone();
+        if hosts.is_empty() { None } else { Some(hosts) }
+    } else {
+        None
+    };
+
+    let http_egress = if let Some(hosts) = http_egress_allowed_hosts {
+        let cfg = HttpEgressConfig::from_hosts(hosts)
+            .map_err(|e| anyhow::anyhow!("invalid http_egress.allowed_hosts: {e}"))?;
+        if cfg.is_empty() { None } else { Some(cfg) }
+    } else {
+        None
+    };
+
     #[cfg(feature = "s3")]
     let s3_config = {
         let file_s3 = server.as_ref().and_then(|s| s.s3_config.as_ref());
@@ -1219,6 +1371,16 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         let jwks_cache_ttl_secs = get_env::<u64>("FERRUMD_OIDC_JWKS_CACHE_TTL_SECS")?
             .or_else(|| file_oidc.map(|o| o.jwks_cache_ttl_secs))
             .unwrap_or(300);
+
+        let token_profile = args
+            .oidc_token_profile
+            .clone()
+            .or(get_env::<String>("FERRUMD_OIDC_TOKEN_PROFILE")?)
+            .or_else(|| file_oidc.map(|o| o.token_profile.clone()))
+            .unwrap_or_else(|| "legacy_jwt".to_string());
+        let token_profile_parsed: ferrum_gateway::OidcTokenProfile = token_profile
+            .parse()
+            .map_err(|e: String| anyhow::anyhow!("invalid OIDC token profile: {e}"))?;
 
         let actor_id_claim = get_env::<String>("FERRUMD_OIDC_ACTOR_ID_CLAIM")?
             .or_else(|| file_oidc.map(|o| o.actor_id_claim.clone()))
@@ -1358,6 +1520,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
             require_email_verified,
             jwks_url,
             jwks_cache_ttl_secs,
+            token_profile: token_profile_parsed,
         })
     } else {
         None
@@ -1376,6 +1539,9 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         store_wal_autocheckpoint,
         rate_limit_per_second,
         rate_limit_burst,
+        trusted_proxy_cidrs,
+        pre_auth_rate_limit_per_second,
+        pre_auth_rate_limit_burst,
         write_queue_threshold,
         pg_max_connections,
         pg_min_idle,
@@ -1385,6 +1551,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         fs_workdir,
         git_repo_roots,
         sqlite_db_roots,
+        http_egress,
         #[cfg(feature = "s3")]
         s3_config,
         #[cfg(feature = "gcs")]
@@ -1422,6 +1589,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         behavioral_anomaly_warning_threshold,
         behavioral_anomaly_critical_threshold,
         behavioral_anomaly_max_actors,
+        legacy_object_compat_allow_until,
     };
 
     // Validate configuration

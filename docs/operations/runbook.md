@@ -69,7 +69,78 @@ The following controls are proposed but not yet implemented. See the referenced 
 | Control | ADR | Status |
 |---------|-----|--------|
 | Audit fail-closed mode | [ADR 007](../adr/007-audit-fail-closed.md) | Accepted |
-| R3 approval timeout / second factor | [ADR 008](../adr/008-r3-approval-timeout-mfa.md) | Proposed |
-| WORM export and portable audit bundle | [ADR 009](../adr/009-worm-export-audit-bundle.md) | Proposed |
+| R3 approval timeout / second factor | [ADR 008](../adr/008-r3-approval-timeout-mfa.md) | Accepted |
+| WORM export and portable audit bundle | [ADR 009](../adr/009-worm-export-audit-bundle.md) | Accepted (P2-1) |
 | Behavioral anomaly detection | [ADR 010](../adr/010-behavioral-anomaly-detection.md) | Accepted (Phase 1 V1) |
 | Performance regression gate | [ADR 011](../adr/011-performance-regression-gate.md) | Accepted |
+
+## 10. Alert runbook anchors
+
+> Stable anchors consumed by `configs/monitoring/ferrumgate-alerts.yaml`
+> `runbook_url` annotations. Each alert id maps to the most relevant existing
+> section above; the deep link is `<repo>/docs/operations/runbook.md#<anchor>`.
+> Operators running standalone Prometheus may repoint the URLs to a hosted copy
+> of this runbook (see the alerts file header note).
+
+<a id="ferrumgate-down"></a>
+- **FerrumGateDown** — `ferrumd` unreachable. See [§1 Health and readiness checks](#1-health-and-readiness-checks) and [§8 Escalation principles](#8-escalation-principles); verify process, port, and store before restart.
+
+<a id="ferrumgate-store-unhealthy"></a>
+- **FerrumGateStoreUnhealthy** — store health check failing. See [§1 Health and readiness checks](#1-health-and-readiness-checks) and [§5 PostgreSQL recovery](#5-postgresql-recovery); fail closed until root cause is identified.
+
+<a id="ferrumgate-queue-high"></a>
+- **FerrumGateWriteQueueHigh** — write queue depth above threshold. See [§2 Metrics checks](#2-metrics-checks) and [§3 Common incident patterns](#3-common-incident-patterns); scale to PostgreSQL or reduce burst.
+
+<a id="ferrumgate-queue-full"></a>
+- **FerrumGateWriteQueueFull** — write queue blocking writes. See [§3 Common incident patterns](#3-common-incident-patterns); immediate action: shed load and recover the store before draining.
+
+<a id="ferrumgate-high-error-rate"></a>
+- **FerrumGateHighErrorRate** — elevated 5xx rate. See [§2 Metrics checks](#2-metrics-checks); correlate by route and inspect recent governance errors.
+
+<a id="ferrumgate-high-latency"></a>
+- **FerrumGateHighLatency** — p99 latency above threshold. See [§2 Metrics checks](#2-metrics-checks); check store latency and write-queue depth.
+
+<a id="ferrumgate-cap-mint-failures"></a>
+- **FerrumGateCapabilityMintFailures** — capability mint errors elevated. See [§2 Metrics checks](#2-metrics-checks) and [§8 Escalation principles](#8-escalation-principles); never bypass the gateway or reuse capabilities.
+
+<a id="ferrumgate-policy-eval-failures"></a>
+- **FerrumGatePolicyEvalFailures** — policy evaluation errors elevated. See [§2 Metrics checks](#2-metrics-checks); inspect policy bundle and PDP connectivity.
+
+<a id="ferrumgate-execution-failures"></a>
+- **FerrumGateExecutionFailures** — execution errors elevated. See [§2 Metrics checks](#2-metrics-checks) and [§4 Lifecycle outbox review](#4-lifecycle-outbox-review).
+
+<a id="ferrumgate-rollback-failures"></a>
+- **FerrumGateRollbackFailures** — compensate/rollback errors elevated (critical). See [§4 Lifecycle outbox review](#4-lifecycle-outbox-review) and [§8 Escalation principles](#8-escalation-principles); compensations may not complete — investigate before any restart.
+
+<a id="ferrumgate-provenance-gaps"></a>
+- **FerrumGateProvenanceGaps** — lifecycle outbox records need operator review. See [§4 Lifecycle outbox review](#4-lifecycle-outbox-review); inspect with `ferrumctl admin lifecycle-outbox` and resolve manually.
+
+<a id="ferrumgate-disk-space-low"></a>
+- **FerrumGateDiskSpaceLow** — `/var/lib/ferrumgate` below 10% free. Free space or expand the volume before store writes fail; see [§8 Escalation principles](#8-escalation-principles).
+
+<a id="ferrumgate-pg-down"></a>
+- **FerrumGatePostgresMetricsAbsent** — PG pool metrics absent (connection lost or wrong backend). See [§5 PostgreSQL recovery](#5-postgresql-recovery).
+
+<a id="ferrumgate-pg-pool-saturation"></a>
+- **FerrumGatePostgresPoolSaturation** — PG pool has 0 idle connections at max. See [§5 PostgreSQL recovery](#5-postgresql-recovery); raise pool size or reduce concurrency.
+
+<a id="ferrumgate-pg-slow-acquire"></a>
+- **FerrumGatePostgresSlowAcquire** — PG connection acquire timeouts. See [§5 PostgreSQL recovery](#5-postgresql-recovery); pool may be undersized or PG slow/unreachable.
+
+<a id="ferrumgate-pg-replication-lag"></a>
+- **FerrumGatePostgresReplicationLag** — TEMPLATE; HA/replication not deployed by default. Enable only with postgres_exporter metrics; see ADR/HA docs before relying on this alert.
+
+<a id="worm-sink-failure"></a>
+- **FerrumGateWormSinkFailures / FerrumGateWormSinkStale** — WORM-compatible audit bundle sink export failure or stale last-success timestamp. This is a **best-effort archival replica**; the audit bundle remains durable locally and the request path is unaffected. Procedure:
+  1. Check WORM sink metrics (`ferrumgate_audit_worm_sink_exports_total`, `ferrumgate_audit_worm_sink_failures_total`, `ferrumgate_audit_worm_sink_last_success_timestamp_seconds`) and the ferrumd log for export errors.
+  2. Verify the WORM sink config: confirm `worm-sink` is enabled, `live: true`, and `audit_bundle_worm_interval_secs` matches the alert's staleness threshold (default 300s interval ⇒ 900s threshold).
+  3. Validate the operator-provisioned S3 Object Lock bucket, retention mode, and credentials out-of-band; do not mutate the bucket.
+  4. Use the portable fallback: `ferrumctl audit export` to write the bundle locally, then `ferrumctl audit verify` to confirm integrity without the sink.
+  5. Restart ferrumd only after correcting the config or credentials.
+  - **This does not prove compliance immutability.** Immutability evidence requires external/provider verification (Object Lock policy, retention mode, legal hold) outside this repo.
+
+<a id="ferrumgate-high-cpu"></a>
+- **FerrumGateHighCPU** — instance CPU above 80% for 10m. Profile hot routes and store load; see [§2 Metrics checks](#2-metrics-checks).
+
+<a id="ferrumgate-high-memory"></a>
+- **FerrumGateHighMemory** — instance memory above 85% for 10m. Check store cache and queue growth; see [§2 Metrics checks](#2-metrics-checks).

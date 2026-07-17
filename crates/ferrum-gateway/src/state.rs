@@ -1,19 +1,53 @@
+use ferrum_adapter_http::HttpEgressConfig;
 use ferrum_cap::CapabilityService;
 use ferrum_firewall::TaintScoringFirewall;
 use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
 use ferrum_store::{LifecycleReconciliationReport, StoreFacade};
 use ferrum_sync::RuntimeBridge;
+use ipnet::IpNet;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Re-export the canonical `AppState` so that extracted handler modules
-/// (e.g. `capabilities`, `monitoring`, `policy_eval`) can reference it via
-/// `crate::state::AppState` instead of taking a direct dependency on
-/// `crate::server`.
-pub(crate) use crate::server::AppState;
+use crate::metrics::Metrics;
+
+#[cfg(test)]
+use crate::behavioral::build_profiler;
+#[cfg(test)]
+use ferrum_store::InMemoryNonceCache;
+
+/// Canonical shared state for gateway handlers and background tasks.
+/// Includes the runtime, server config, metrics, behavioral profiler, OIDC JWKS cache,
+/// and nonce cache for Agent auth replay protection.
+#[derive(Clone)]
+pub(crate) struct AppState {
+    pub(crate) runtime: GatewayRuntime,
+    pub(crate) server_config: ServerConfig,
+    pub(crate) metrics: Arc<Metrics>,
+    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
+    pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
+    /// Nonce cache for Agent auth replay protection.
+    pub(crate) nonce_cache: Arc<dyn ferrum_store::NonceCache>,
+}
+
+#[cfg(test)]
+impl AppState {
+    /// Test-only constructor that builds an AppState from a runtime and config.
+    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
+        Arc::new(AppState {
+            runtime,
+            server_config: server_config.clone(),
+            metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
+            jwks_cache: None,
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
+        })
+    }
+}
 
 #[cfg(feature = "worm-sink")]
 pub use crate::worm_sink::WormSinkConfig;
@@ -101,6 +135,36 @@ impl KeyMaterial {
     }
 }
 
+/// JWT token profile for OIDC authentication.
+///
+/// Controls whether the gateway enforces a strict `typ` header on incoming
+/// OIDC/JWT tokens. The default is `LegacyJwt`, which preserves the existing
+/// behavior of accepting any signed JWT (including tokens with a missing or
+/// non-standard `typ`). The `Rfc9068AccessToken` profile opts into RFC 9068
+/// access-token validation and requires the `typ` header to be exactly one of
+/// the well-known values before any key or signature work is performed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum OidcTokenProfile {
+    /// Legacy behavior: accept any signed JWT `typ` (or none). No typ enforcement.
+    #[default]
+    LegacyJwt,
+    /// RFC 9068 access-token profile: require `typ` to be exactly `at+jwt` or
+    /// `application/at+jwt`.
+    Rfc9068AccessToken,
+}
+
+impl std::str::FromStr for OidcTokenProfile {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "legacy_jwt" => Ok(Self::LegacyJwt),
+            "rfc9068_access_token" => Ok(Self::Rfc9068AccessToken),
+            _ => Err(format!("unknown OIDC token profile: {s}")),
+        }
+    }
+}
+
 /// OIDC configuration for JWT validation (Phase 4.3 + 4.4).
 ///
 /// Supports both static keys (offline validation) and live JWKS fetch
@@ -132,6 +196,9 @@ pub struct OidcConfig {
     pub jwks_url: Option<String>,
     /// JWKS cache TTL in seconds. Default: 300.
     pub jwks_cache_ttl_secs: u64,
+    /// JWT token profile governing `typ` header validation.
+    /// Default: `LegacyJwt` (no `typ` enforcement).
+    pub token_profile: OidcTokenProfile,
 }
 
 impl Default for OidcConfig {
@@ -155,6 +222,7 @@ impl Default for OidcConfig {
             require_email_verified: true,
             jwks_url: None,
             jwks_cache_ttl_secs: 300,
+            token_profile: OidcTokenProfile::default(),
         }
     }
 }
@@ -406,6 +474,22 @@ pub struct ServerConfig {
     pub rate_limit_per_second: u64,
     /// Rate limit: burst size per IP.
     pub rate_limit_burst: u32,
+    /// CIDR ranges of trusted reverse proxies / load balancers whose single
+    /// `X-Real-IP` header may be honored. `X-Forwarded-For` is ignored.
+    ///
+    /// Parsed and validated at the config/startup boundary into typed
+    /// [`IpNet`] values so the core consumer never deals with raw strings.
+    /// Defaults to empty (trust-none): no proxy headers are honored unless a
+    /// range is explicitly configured. Universal CIDRs (`0.0.0.0/0`, `::/0`)
+    /// are rejected because they would silently trust every client.
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+    /// Optional pre-auth (unauthenticated) rate limit: sustained requests per
+    /// second per source. When `None`, inherits `rate_limit_per_second`.
+    /// `Some(0)` is rejected; the pre-auth limit can never be disabled.
+    pub pre_auth_rate_limit_per_second: Option<u64>,
+    /// Optional pre-auth (unauthenticated) rate limit: burst size per source.
+    /// When `None`, inherits `rate_limit_burst`. `Some(0)` is rejected.
+    pub pre_auth_rate_limit_burst: Option<u32>,
     /// Write queue depth threshold for deep readiness probe.
     /// Valid range: 1..=10000. Default: 100.
     pub write_queue_threshold: u64,
@@ -430,6 +514,8 @@ pub struct ServerConfig {
     pub git_repo_roots: Vec<PathBuf>,
     /// Parent roots under which SQLite database files may be mutated.
     pub sqlite_db_roots: Vec<PathBuf>,
+    /// HTTP egress configuration. When present and non-empty, enables the HTTP adapter.
+    pub http_egress: Option<HttpEgressConfig>,
     /// S3 adapter configuration. When present, enables the S3 adapter.
     #[cfg(feature = "s3")]
     pub s3_config: Option<ferrum_adapter_s3::S3Config>,
@@ -539,6 +625,11 @@ pub struct ServerConfig {
     /// Maximum number of distinct principals tracked in memory by the behavioral profiler.
     /// Default: 1000. Valid range: 1..=100_000.
     pub behavioral_anomaly_max_actors: usize,
+    /// Temporary compatibility deadline for owner-less legacy workflow objects in
+    /// authenticated modes. When set, unbound capabilities and executions are
+    /// accessible until the RFC3339 deadline; when unset or expired they are
+    /// denied. Bearer/Disabled auth modes are unaffected.
+    pub legacy_object_compat_allow_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -561,6 +652,12 @@ impl std::fmt::Debug for ServerConfig {
         d.field("store_wal_autocheckpoint", &self.store_wal_autocheckpoint);
         d.field("rate_limit_per_second", &self.rate_limit_per_second);
         d.field("rate_limit_burst", &self.rate_limit_burst);
+        d.field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs);
+        d.field(
+            "pre_auth_rate_limit_per_second",
+            &self.pre_auth_rate_limit_per_second,
+        );
+        d.field("pre_auth_rate_limit_burst", &self.pre_auth_rate_limit_burst);
         d.field("write_queue_threshold", &self.write_queue_threshold);
         d.field("pg_max_connections", &self.pg_max_connections);
         d.field("pg_min_idle", &self.pg_min_idle);
@@ -573,6 +670,7 @@ impl std::fmt::Debug for ServerConfig {
         d.field("fs_workdir", &self.fs_workdir);
         d.field("git_repo_roots", &self.git_repo_roots);
         d.field("sqlite_db_roots", &self.sqlite_db_roots);
+        d.field("http_egress", &self.http_egress);
         #[cfg(feature = "s3")]
         d.field("s3_config", &self.s3_config);
         #[cfg(feature = "gcs")]
@@ -656,6 +754,10 @@ impl std::fmt::Debug for ServerConfig {
             "behavioral_anomaly_max_actors",
             &self.behavioral_anomaly_max_actors,
         );
+        d.field(
+            "legacy_object_compat_allow_until",
+            &self.legacy_object_compat_allow_until,
+        );
         d.finish()
     }
 }
@@ -674,6 +776,9 @@ impl Default for ServerConfig {
             store_wal_autocheckpoint: None,
             rate_limit_per_second: 2,
             rate_limit_burst: 50,
+            trusted_proxy_cidrs: Vec::new(),
+            pre_auth_rate_limit_per_second: None,
+            pre_auth_rate_limit_burst: None,
             write_queue_threshold: 100,
             pg_max_connections: 10,
             pg_min_idle: 2,
@@ -683,6 +788,7 @@ impl Default for ServerConfig {
             fs_workdir: None,
             git_repo_roots: Vec::new(),
             sqlite_db_roots: Vec::new(),
+            http_egress: None,
             #[cfg(feature = "s3")]
             s3_config: None,
             #[cfg(feature = "gcs")]
@@ -721,6 +827,7 @@ impl Default for ServerConfig {
             behavioral_anomaly_warning_threshold: 5,
             behavioral_anomaly_critical_threshold: 10,
             behavioral_anomaly_max_actors: 1000,
+            legacy_object_compat_allow_until: None,
         }
     }
 }
@@ -815,11 +922,31 @@ impl ServerConfig {
         if self.sqlite_db_roots.iter().any(|root| !root.is_absolute()) {
             return Err("all sqlite_db_roots must be absolute paths".to_string());
         }
+        if let Some(http_egress) = &self.http_egress {
+            http_egress
+                .validate()
+                .map_err(|e| format!("invalid http_egress.allowed_hosts: {e}"))?;
+        }
 
         if production_like && !self.lifecycle_reconciliation_enabled {
-            tracing::warn!(
-                "lifecycle_reconciliation_enabled is false in a production-like configuration; \
-                 periodic lifecycle outbox reconciliation is disabled"
+            return Err(
+                "lifecycle_reconciliation_enabled must be true for production-like non-loopback \
+                 deployments"
+                    .to_string(),
+            );
+        }
+        if production_like && !self.approval_timeout_enabled {
+            return Err(
+                "approval_timeout_enabled must be true for production-like non-loopback \
+                 deployments"
+                    .to_string(),
+            );
+        }
+        if production_like && !self.ha_reconciler_enabled {
+            return Err(
+                "ha_reconciler_enabled must be true for production-like non-loopback deployments; \
+                 stale Running+Prepared side-effect pairs must be recoverable on restart"
+                    .to_string(),
             );
         }
         if production_like && !self.approval_timeout_enabled {
@@ -829,9 +956,9 @@ impl ServerConfig {
             );
         }
         if production_like && !self.audit_fail_closed {
-            tracing::warn!(
-                "audit_fail_closed is false in a production-like configuration; \
-                 audit append failures will not block actions"
+            return Err(
+                "audit_fail_closed must be true for production-like non-loopback deployments"
+                    .to_string(),
             );
         }
 
@@ -864,6 +991,35 @@ impl ServerConfig {
         }
         if self.rate_limit_burst > 10_000 {
             return Err("rate_limit_burst must be at most 10000".to_string());
+        }
+
+        // Validate trusted proxy CIDRs. Universal CIDRs (`0.0.0.0/0`, `::/0`)
+        // would match every client address and therefore silently trust any
+        // `X-Forwarded-For` / `X-Real-IP` header, so they are rejected. Any
+        // structurally invalid CIDR is already rejected at the parse boundary.
+        for cidr in &self.trusted_proxy_cidrs {
+            if cidr.prefix_len() == 0 {
+                return Err(format!(
+                    "trusted_proxy_cidrs must not contain a universal CIDR that matches all addresses: {cidr}"
+                ));
+            }
+        }
+
+        // Validate pre-auth rate limits when explicitly configured. When left
+        // unset they inherit `rate_limit_*` (already validated above), so the
+        // pre-auth limit is always enabled and can never be disabled.
+        if let Some(per_second) = self.pre_auth_rate_limit_per_second {
+            if per_second == 0 {
+                return Err("pre_auth_rate_limit_per_second must be at least 1".to_string());
+            }
+        }
+        if let Some(burst) = self.pre_auth_rate_limit_burst {
+            if burst == 0 {
+                return Err("pre_auth_rate_limit_burst must be at least 1".to_string());
+            }
+            if burst > 10_000 {
+                return Err("pre_auth_rate_limit_burst must be at most 10000".to_string());
+            }
         }
 
         // Validate write_queue_threshold range
@@ -1025,7 +1181,35 @@ impl ServerConfig {
             }
         }
 
+        // Validate legacy object compatibility deadline. It must be a finite,
+        // explicit future timestamp; expired deadlines are denied at runtime but
+        // rejected at config time because they are no-ops.
+        if let Some(allow_until) = self.legacy_object_compat_allow_until {
+            if allow_until <= chrono::Utc::now() {
+                return Err(
+                    "legacy_object_compat_allow_until must be a future RFC3339 timestamp"
+                        .to_string(),
+                );
+            }
+        }
+
         Ok(())
+    }
+
+    /// Effective pre-auth (unauthenticated) sustained rate limit in requests
+    /// per second. Falls back to the authenticated `rate_limit_per_second`
+    /// when no explicit pre-auth value is configured.
+    pub fn effective_pre_auth_rate_limit_per_second(&self) -> u64 {
+        self.pre_auth_rate_limit_per_second
+            .unwrap_or(self.rate_limit_per_second)
+    }
+
+    /// Effective pre-auth (unauthenticated) burst size. Falls back to the
+    /// authenticated `rate_limit_burst` when no explicit pre-auth value is
+    /// configured.
+    pub fn effective_pre_auth_rate_limit_burst(&self) -> u32 {
+        self.pre_auth_rate_limit_burst
+            .unwrap_or(self.rate_limit_burst)
     }
 }
 

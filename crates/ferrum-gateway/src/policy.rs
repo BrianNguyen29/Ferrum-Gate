@@ -21,7 +21,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
 use chrono::Utc;
@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audit;
+use crate::auth_actor::{AuthActor, audit_actor};
 use crate::macros::{governance_err, governance_ok};
 use crate::monitoring::GovernanceRoute;
 use crate::policy_eval::{
@@ -52,6 +53,7 @@ use ferrum_pdp::evaluate_bundle_rules;
 
 pub(crate) async fn create_policy_bundle(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(request): Json<ferrum_proto::CreatePolicyBundleRequest>,
 ) -> Result<Json<ferrum_proto::PolicyBundleResponse>, ApiProblem> {
     // Parse and validate the YAML
@@ -103,7 +105,7 @@ pub(crate) async fn create_policy_bundle(
     // Audit log: policy bundle created
     if let Err(problem) = audit::append_audit_checked(
         &state,
-        "gateway",
+        audit_actor(auth_actor.as_deref()),
         ferrum_proto::AuditAction::PolicyBundleCreate,
         ferrum_proto::AuditResourceType::PolicyBundle,
         &bundle.bundle_id,
@@ -334,6 +336,7 @@ pub(crate) async fn delete_policy_bundle(
 
 pub(crate) async fn set_policy_bundle_active(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Path(bundle_id): Path<String>,
     Json(request): Json<ferrum_proto::SetPolicyBundleActiveRequest>,
 ) -> Result<Json<serde_json::Value>, ApiProblem> {
@@ -377,7 +380,7 @@ pub(crate) async fn set_policy_bundle_active(
     // Audit log: policy bundle activated/deactivated
     if let Err(problem) = audit::append_audit_checked(
         &state,
-        "gateway",
+        audit_actor(auth_actor.as_deref()),
         ferrum_proto::AuditAction::PolicyBundleActivate,
         ferrum_proto::AuditResourceType::PolicyBundle,
         &bundle_id,
@@ -405,8 +408,8 @@ pub(crate) async fn set_policy_bundle_active(
         },
         occurred_at: Utc::now(),
         actor: ActorRef {
-            actor_type: ActorType::Gateway,
-            actor_id: "gateway".to_string(),
+            actor_type: ActorType::Operator,
+            actor_id: audit_actor(auth_actor.as_deref()).to_string(),
             display_name: None,
         },
         object: ObjectRef {
@@ -755,6 +758,7 @@ pub(crate) async fn diff_policy_bundle_versions(
 
 pub(crate) async fn rollback_policy_bundle(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     axum::extract::Path(bundle_id): axum::extract::Path<String>,
     Json(request): Json<RollbackPolicyBundleRequest>,
 ) -> Result<Json<RollbackPolicyBundleResponse>, ApiProblem> {
@@ -773,9 +777,14 @@ pub(crate) async fn rollback_policy_bundle(
         .map_err(|e| ApiProblem::internal(anyhow::Error::from(e)))?;
 
     // Audit log: policy bundle rollback
+    let rollback_actor_id = auth_actor
+        .as_deref()
+        .map(|a| a.actor_id.clone())
+        .or_else(|| request.actor.clone())
+        .unwrap_or_else(|| "unknown".to_string());
     if let Err(problem) = audit::append_audit_checked(
         &state,
-        request.actor.as_deref().unwrap_or("unknown"),
+        &rollback_actor_id,
         ferrum_proto::AuditAction::PolicyBundleRollback,
         ferrum_proto::AuditResourceType::PolicyBundle,
         &bundle_id,
@@ -799,11 +808,8 @@ pub(crate) async fn rollback_policy_bundle(
         occurred_at: chrono::Utc::now(),
         actor: ActorRef {
             actor_type: ActorType::Operator,
-            actor_id: request
-                .actor
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            display_name: request.actor.clone(),
+            actor_id: rollback_actor_id.clone(),
+            display_name: Some(rollback_actor_id),
         },
         object: ObjectRef {
             object_type: ObjectType::PolicyBundle,

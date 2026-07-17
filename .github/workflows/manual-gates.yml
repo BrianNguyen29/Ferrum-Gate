@@ -35,6 +35,9 @@ on:
   schedule:
     - cron: '0 3 * * *'
 
+permissions:
+  contents: read
+
 jobs:
   manual-gate:
     name: Manual Gate (${{ inputs.gate || 'scheduled' }})
@@ -42,14 +45,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
+          save-if: "false"
           shared-key: "ferrumgate-manual-gates"
           cache-targets: false
 
@@ -125,7 +129,7 @@ jobs:
 
       - name: Upload drill logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: manual-gate-logs
           path: |
@@ -210,7 +214,7 @@ jobs:
 
       - name: Upload nightly summary artifact
         if: always() && github.event_name == 'schedule'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nightly-manual-gate-summary
           path: /tmp/manual-gate-summary/nightly-summary.md

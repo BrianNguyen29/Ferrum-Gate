@@ -85,11 +85,7 @@ Entrypoints and tooling:
 
 ## Project status
 
-- **Stable** — intent lifecycle, policy evaluation, capability minting, rollback prepare/verify/compensate, SQLite write queue, provenance chain, bearer/scoped/OIDC/agent auth.
-- **Implemented** — filesystem, HTTP, Git, SQLite, mail draft adapters; S3 adapter (experimental); `ferrumctl` CLI; `ferrum-stress`; `ferrum-tui`; Prometheus metrics; rate limiting; Helm chart.
-- **Beta** — PostgreSQL runtime (local and CI live-tested). Production HA/multi-node topology is operator-managed, not provided by this repo.
-- **Experimental** — MCP Streamable HTTP / SSE transport.
-- **Not implemented / out of scope** — multi-tenancy, managed service, email sending, compliance certification, MCP resumability.
+See the [subsystem readiness matrix in ROADMAP.md](./docs/ROADMAP.md#subsystem-readiness-matrix) for the current P0–P5 maturity levels of core governance, adapters, MCP transports, stores, HA, WORM, anomaly detection, and operator tooling.
 
 > **Honesty note:** FerrumGate is not a turnkey HA product or compliance certification. Operators still own deployment topology, TLS, secrets, backups, database HA, and production acceptance testing.
 

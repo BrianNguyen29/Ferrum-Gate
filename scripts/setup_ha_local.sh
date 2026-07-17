@@ -131,7 +131,7 @@ docker run --rm \
     --network "${PROJECT_NAME}_default" \
     -v "${STANDBY_VOLUME}:/data" \
     -e PGPASSWORD=replicator_pass \
-    postgres:16 \
+    postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20 \
     pg_basebackup -h postgres_ha_primary -p 5432 -U replicator -D /data -Fp -Xs -P -R
 
 pass "pg_basebackup completed into standby volume"

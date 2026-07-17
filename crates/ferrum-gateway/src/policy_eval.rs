@@ -212,5 +212,6 @@ pub(crate) fn minimal_intent_for(
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + Duration::minutes(15),
+        owner_actor_id: None,
     }
 }

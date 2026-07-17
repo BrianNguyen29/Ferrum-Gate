@@ -43,8 +43,8 @@ impl CapabilityRepo for SqliteCapabilityRepo {
         sqlx::query(
             "INSERT INTO capabilities (
                 capability_id, intent_id, proposal_id, server_name, tool_name, status,
-                issued_at, expires_at, revoked_at, raw_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                issued_at, expires_at, revoked_at, owner_actor_id, raw_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )
         .bind(capability.capability_id.to_string())
         .bind(capability.intent_id.to_string())
@@ -55,6 +55,7 @@ impl CapabilityRepo for SqliteCapabilityRepo {
         .bind(capability.issued_at)
         .bind(capability.expires_at)
         .bind(capability.revoked_at)
+        .bind(&capability.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -87,7 +88,8 @@ impl CapabilityRepo for SqliteCapabilityRepo {
                  issued_at = ?3,
                  expires_at = ?4,
                  revoked_at = ?5,
-                 raw_json = ?6
+                 owner_actor_id = ?6,
+                 raw_json = ?7
              WHERE capability_id = ?1",
         )
         .bind(capability.capability_id.to_string())
@@ -95,6 +97,7 @@ impl CapabilityRepo for SqliteCapabilityRepo {
         .bind(capability.issued_at)
         .bind(capability.expires_at)
         .bind(capability.revoked_at)
+        .bind(&capability.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -230,6 +233,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: Utc::now(),
             expires_at: Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 
@@ -248,6 +252,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -284,6 +289,7 @@ mod tests {
             expires_at: now + chrono::Duration::seconds(300),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -376,6 +382,52 @@ mod tests {
         assert!(
             !updated,
             "should return false when capability does not exist"
+        );
+    }
+
+    /// P0 regression: an `Active` capability whose `expires_at` is already in
+    /// the past must NOT be transitioned by `update_status_if_active`. The
+    /// atomic UPDATE predicate includes `expires_at > now`, so an expired
+    /// lease loses the CAS and its state is preserved unchanged. This is the
+    /// durable guard that lets the gateway surface `Expired` (not `AlreadyUsed`)
+    /// for an expired-but-Active capability.
+    #[tokio::test]
+    async fn test_update_status_if_active_rejects_expired_active() {
+        let store = crate::SqliteStore::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let intent = make_intent();
+        let proposal = make_proposal(intent.intent_id);
+        let mut lease = make_lease(
+            intent.intent_id,
+            proposal.proposal_id,
+            CapabilityStatus::Active,
+        );
+        // Force the lease to be expired while still Active.
+        lease.expires_at = Utc::now() - chrono::Duration::seconds(60);
+        let cap_id = lease.capability_id;
+
+        store.intents().insert(&intent).await.unwrap();
+        store.proposals().insert(&proposal).await.unwrap();
+        store.capabilities().insert(&lease).await.unwrap();
+
+        let updated = store
+            .capabilities()
+            .update_status_if_active(cap_id, CapabilityStatus::Used)
+            .await
+            .unwrap();
+        assert!(
+            !updated,
+            "expired Active capability must lose the CAS (return false)"
+        );
+
+        let fetched = store.capabilities().get(cap_id).await.unwrap().unwrap();
+        assert!(
+            matches!(fetched.status, CapabilityStatus::Active),
+            "expired capability state must remain Active (unchanged), got: {:?}",
+            fetched.status
         );
     }
 }

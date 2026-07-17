@@ -20,6 +20,9 @@ fn clear_test_env() {
         "FERRUMD_LOG_FILTER",
         "FERRUMD_RATE_LIMIT_PER_SECOND",
         "FERRUMD_RATE_LIMIT_BURST",
+        "FERRUMD_TRUSTED_PROXY_CIDRS",
+        "FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND",
+        "FERRUMD_PRE_AUTH_RATE_LIMIT_BURST",
         "FERRUMD_LOG_FORMAT",
         "FERRUMD_WRITE_QUEUE_THRESHOLD",
         "FERRUMD_PG_MAX_CONNECTIONS",
@@ -39,6 +42,7 @@ fn clear_test_env() {
         "FERRUMD_OIDC_REQUIRE_EMAIL_VERIFIED",
         "FERRUMD_OIDC_ALLOWED_ALGORITHMS",
         "FERRUMD_OIDC_ROLE_MAPPINGS",
+        "FERRUMD_OIDC_TOKEN_PROFILE",
         "FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED",
         "FERRUMD_LIFECYCLE_RECONCILIATION_INTERVAL_SECS",
         "FERRUMD_LIFECYCLE_RECONCILIATION_BATCH_LIMIT",
@@ -82,6 +86,8 @@ fn clear_test_env() {
         "FERRUMD_GCS_PROJECT_ID",
         "FERRUMD_GCS_CREDENTIALS_PATH",
         "FERRUMD_GCS_LIVE",
+        "FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS",
+        "FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL",
     ] {
         unsafe { std::env::remove_var(key) };
     }
@@ -3756,7 +3762,7 @@ fn test_resolve_config_approval_mfa_required_cli_overrides_env() {
 }
 
 #[test]
-fn test_validate_warns_but_allows_disabled_lifecycle_reconciliation_in_production() {
+fn test_validate_rejects_disabled_lifecycle_reconciliation_in_production() {
     let _guard = env_lock().lock().unwrap();
     clear_test_env();
 
@@ -3767,7 +3773,10 @@ auth_mode = "bearer"
 bearer_token = "valid-test-token"
 store_dsn = "sqlite:///tmp/ferrumgate/test.db"
 fs_workdir = "/tmp/ferrumgate"
+approval_timeout_enabled = true
+audit_fail_closed = true
 lifecycle_reconciliation_enabled = false
+ha_reconciler_enabled = true
 "#,
     );
 
@@ -3796,9 +3805,10 @@ lifecycle_reconciliation_enabled = false
         lifecycle_reconciliation_batch_limit: None,
         approval_timeout_seconds: None,
         approval_reconciliation_interval_secs: None,
-        approval_timeout_enabled: false,
-        audit_fail_closed: false,
+        approval_timeout_enabled: true,
+        audit_fail_closed: true,
         approval_mfa_required: false,
+        ha_reconciler_enabled: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
@@ -3806,15 +3816,15 @@ lifecycle_reconciliation_enabled = false
         ..Default::default()
     };
 
-    let config = resolve_config(&args).unwrap();
-    assert!(!config.lifecycle_reconciliation_enabled);
+    let err = resolve_config(&args).unwrap_err();
+    assert!(err.to_string().contains("lifecycle_reconciliation_enabled"));
 
     let _ = fs::remove_file(path);
     clear_test_env();
 }
 
 #[test]
-fn test_validate_warns_but_allows_disabled_audit_fail_closed_in_production() {
+fn test_validate_rejects_disabled_approval_timeout_in_production() {
     let _guard = env_lock().lock().unwrap();
     clear_test_env();
 
@@ -3825,7 +3835,10 @@ auth_mode = "bearer"
 bearer_token = "valid-test-token"
 store_dsn = "sqlite:///tmp/ferrumgate/test.db"
 fs_workdir = "/tmp/ferrumgate"
-audit_fail_closed = false
+lifecycle_reconciliation_enabled = true
+audit_fail_closed = true
+approval_timeout_enabled = false
+ha_reconciler_enabled = true
 "#,
     );
 
@@ -3849,14 +3862,15 @@ audit_fail_closed = false
         pg_acquire_timeout_secs: None,
         pg_statement_timeout_ms: None,
         pg_idle_in_transaction_timeout_ms: None,
-        lifecycle_reconciliation_enabled: false,
+        lifecycle_reconciliation_enabled: true,
         lifecycle_reconciliation_interval_secs: None,
         lifecycle_reconciliation_batch_limit: None,
         approval_timeout_seconds: None,
         approval_reconciliation_interval_secs: None,
         approval_timeout_enabled: false,
-        audit_fail_closed: false,
+        audit_fail_closed: true,
         approval_mfa_required: false,
+        ha_reconciler_enabled: true,
         mfa_secret_key: None,
         mfa_totp_issuer: None,
         mfa_lockout_max_attempts: None,
@@ -3864,8 +3878,70 @@ audit_fail_closed = false
         ..Default::default()
     };
 
-    let config = resolve_config(&args).unwrap();
-    assert!(!config.audit_fail_closed);
+    let err = resolve_config(&args).unwrap_err();
+    assert!(err.to_string().contains("approval_timeout_enabled"));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_validate_rejects_disabled_audit_fail_closed_in_production() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "0.0.0.0:8080"
+auth_mode = "bearer"
+bearer_token = "valid-test-token"
+store_dsn = "sqlite:///tmp/ferrumgate/test.db"
+fs_workdir = "/tmp/ferrumgate"
+lifecycle_reconciliation_enabled = true
+approval_timeout_enabled = true
+audit_fail_closed = false
+ha_reconciler_enabled = true
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        bind_addr: None,
+        store_dsn: None,
+        auth_mode: None,
+        bearer_token: None,
+        allow_insecure_nonlocal_bind: false,
+        log_filter: None,
+        store_synchronous: None,
+        store_wal_autocheckpoint: None,
+        rate_limit_per_second: None,
+        rate_limit_burst: None,
+        log_format: None,
+        pdp_mode: None,
+        write_queue_threshold: None,
+        pg_max_connections: None,
+        pg_min_idle: None,
+        pg_acquire_timeout_secs: None,
+        pg_statement_timeout_ms: None,
+        pg_idle_in_transaction_timeout_ms: None,
+        lifecycle_reconciliation_enabled: true,
+        lifecycle_reconciliation_interval_secs: None,
+        lifecycle_reconciliation_batch_limit: None,
+        approval_timeout_seconds: None,
+        approval_reconciliation_interval_secs: None,
+        approval_timeout_enabled: true,
+        audit_fail_closed: false,
+        approval_mfa_required: false,
+        ha_reconciler_enabled: true,
+        mfa_secret_key: None,
+        mfa_totp_issuer: None,
+        mfa_lockout_max_attempts: None,
+        mfa_lockout_duration_secs: None,
+        ..Default::default()
+    };
+
+    let err = resolve_config(&args).unwrap_err();
+    assert!(err.to_string().contains("audit_fail_closed"));
 
     let _ = fs::remove_file(path);
     clear_test_env();
@@ -5354,4 +5430,1055 @@ live = false
 
     let _ = fs::remove_file(path);
     clear_test_env();
+}
+
+// === trusted_proxy_cidrs tests ===
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_defaults_to_trust_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(
+        config.trusted_proxy_cidrs.is_empty(),
+        "trusted_proxy_cidrs must default to empty (trust-none)"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["10.0.0.0/8", "192.168.0.0/16", "2001:db8::/32"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.trusted_proxy_cidrs.len(), 3);
+    assert_eq!(config.trusted_proxy_cidrs[0].to_string(), "10.0.0.0/8");
+    assert_eq!(config.trusted_proxy_cidrs[1].to_string(), "192.168.0.0/16");
+    assert_eq!(config.trusted_proxy_cidrs[2].to_string(), "2001:db8::/32");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_cli_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["10.0.0.0/8"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        trusted_proxy_cidrs: Some("172.16.0.0/12, 100.64.0.0/10".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.trusted_proxy_cidrs.len(), 2);
+    assert_eq!(config.trusted_proxy_cidrs[0].to_string(), "172.16.0.0/12");
+    assert_eq!(config.trusted_proxy_cidrs[1].to_string(), "100.64.0.0/10");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_trusted_proxy_cidrs_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["10.0.0.0/8"]
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_TRUSTED_PROXY_CIDRS", "192.0.2.0/24");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.trusted_proxy_cidrs.len(), 1);
+    assert_eq!(config.trusted_proxy_cidrs[0].to_string(), "192.0.2.0/24");
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_universal_ipv4_trusted_proxy_cidr() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["0.0.0.0/0"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("universal CIDR"),
+        "expected universal CIDR rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_universal_ipv6_trusted_proxy_cidr() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["::/0"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("universal CIDR"),
+        "expected universal CIDR rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_trusted_proxy_cidr() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+trusted_proxy_cidrs = ["not-a-cidr"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid trusted_proxy_cidrs entry"),
+        "expected invalid CIDR rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// === pre-auth rate limit tests ===
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_inherits_defaults() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, None);
+    assert_eq!(config.pre_auth_rate_limit_burst, None);
+    // Backwards-compatible: effective pre-auth values equal the inner defaults.
+    assert_eq!(config.effective_pre_auth_rate_limit_per_second(), 2);
+    assert_eq!(config.effective_pre_auth_rate_limit_burst(), 50);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_inherits_custom_inner() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+rate_limit_per_second = 7
+rate_limit_burst = 70
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, None);
+    assert_eq!(config.pre_auth_rate_limit_burst, None);
+    assert_eq!(config.effective_pre_auth_rate_limit_per_second(), 7);
+    assert_eq!(config.effective_pre_auth_rate_limit_burst(), 70);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 3
+pre_auth_rate_limit_burst = 25
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, Some(3));
+    assert_eq!(config.pre_auth_rate_limit_burst, Some(25));
+    assert_eq!(config.effective_pre_auth_rate_limit_per_second(), 3);
+    assert_eq!(config.effective_pre_auth_rate_limit_burst(), 25);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_cli_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 3
+pre_auth_rate_limit_burst = 25
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        pre_auth_rate_limit_per_second: Some(9),
+        pre_auth_rate_limit_burst: Some(90),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, Some(9));
+    assert_eq!(config.pre_auth_rate_limit_burst, Some(90));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_pre_auth_rate_limit_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 3
+pre_auth_rate_limit_burst = 25
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND", "11");
+        std::env::set_var("FERRUMD_PRE_AUTH_RATE_LIMIT_BURST", "110");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert_eq!(config.pre_auth_rate_limit_per_second, Some(11));
+    assert_eq!(config.pre_auth_rate_limit_burst, Some(110));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_zero_pre_auth_rate_limit_per_second() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_per_second = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("pre_auth_rate_limit_per_second must be at least 1"),
+        "expected zero pre-auth per-second rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_zero_pre_auth_rate_limit_burst() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_burst = 0
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("pre_auth_rate_limit_burst must be at least 1"),
+        "expected zero pre-auth burst rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_rejects_pre_auth_rate_limit_burst_too_large() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+pre_auth_rate_limit_burst = 20000
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("pre_auth_rate_limit_burst must be at most 10000"),
+        "expected pre-auth burst upper-bound rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_absent_is_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.http_egress.is_none());
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com", "api.example.com"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let http_egress = config.http_egress.expect("http_egress should be present");
+    assert_eq!(
+        http_egress.allowed_hosts,
+        vec!["example.com".to_string(), "api.example.com".to_string()]
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com"]
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS",
+            "env.example.com,other.com",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let http_egress = config.http_egress.expect("http_egress should be present");
+    assert_eq!(
+        http_egress.allowed_hosts,
+        vec!["env.example.com".to_string(), "other.com".to_string()]
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_http_egress_cli_overrides_env() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS", "env.example.com");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        http_egress_allowed_hosts: Some("cli.example.com".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let http_egress = config.http_egress.expect("http_egress should be present");
+    assert_eq!(
+        http_egress.allowed_hosts,
+        vec!["cli.example.com".to_string()]
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_http_egress_empty_env_disables() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com"]
+"#,
+    );
+
+    unsafe {
+        std::env::set_var("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS", "   ");
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.http_egress.is_none());
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_http_egress_rejects_ip_literal() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["127.0.0.1"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("IP address"),
+        "expected IP address rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_rejects_wildcard() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["*.example.com"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("wildcard"),
+        "expected wildcard rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_http_egress_rejects_port() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+
+[server.http_egress]
+allowed_hosts = ["example.com:8080"]
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("port"),
+        "expected port rejection, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// === OIDC token profile tests ===
+
+#[test]
+fn test_resolve_config_oidc_token_profile_defaults_to_legacy_jwt() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::LegacyJwt
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_oidc_token_profile_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "rfc9068_access_token"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::Rfc9068AccessToken
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_oidc_token_profile_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_OIDC_TOKEN_PROFILE", "legacy_jwt");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "rfc9068_access_token"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::LegacyJwt
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_oidc_token_profile_cli_overrides_env_and_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    unsafe {
+        std::env::set_var("FERRUMD_OIDC_TOKEN_PROFILE", "rfc9068_access_token");
+    }
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "legacy_jwt"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        oidc_token_profile: Some("legacy_jwt".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let oidc = config.oidc_config.as_ref().unwrap();
+    assert_eq!(
+        oidc.token_profile,
+        ferrum_gateway::OidcTokenProfile::LegacyJwt
+    );
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_rejects_invalid_oidc_token_profile() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "oidc"
+bearer_token = "unused"
+
+[oidc]
+issuer = "https://issuer.example.com"
+audiences = ["ferrumgate"]
+token_profile = "strict"
+allowed_algorithms = ["HS256"]
+
+[oidc.role_mappings]
+fg-admins = "admin"
+
+[[oidc.static_keys]]
+kid = "k1"
+type = "hmac"
+secret = "c2VjcmV0"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let error = resolve_config(&args).expect_err("expected config error");
+    assert!(
+        error.to_string().contains("invalid OIDC token profile"),
+        "expected invalid OIDC token profile error, got: {}",
+        error
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_defaults_none() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    assert!(config.legacy_object_compat_allow_until.is_none());
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_from_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2099-01-01T00:00:00Z"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let expected = chrono::DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(config.legacy_object_compat_allow_until, Some(expected));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_env_overrides_config_file() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2099-01-01T00:00:00Z"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL",
+            "2100-06-15T12:00:00Z",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let expected = chrono::DateTime::parse_from_rfc3339("2100-06-15T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(config.legacy_object_compat_allow_until, Some(expected));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_cli_overrides_all() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2099-01-01T00:00:00Z"
+"#,
+    );
+
+    unsafe {
+        std::env::set_var(
+            "FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL",
+            "2100-06-15T12:00:00Z",
+        );
+    }
+
+    let args = Args {
+        config: Some(path.clone()),
+        legacy_object_compat_allow_until: Some("2110-12-31T23:59:59Z".to_string()),
+        ..Default::default()
+    };
+
+    let config = resolve_config(&args).unwrap();
+    let expected = chrono::DateTime::parse_from_rfc3339("2110-12-31T23:59:59Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(config.legacy_object_compat_allow_until, Some(expected));
+
+    let _ = fs::remove_file(path);
+    clear_test_env();
+}
+
+#[test]
+fn test_resolve_config_legacy_object_compat_rejects_non_future() {
+    let _guard = env_lock().lock().unwrap();
+    clear_test_env();
+
+    let path = write_temp_config(
+        r#"[server]
+bind_addr = "127.0.0.1:8080"
+auth_mode = "disabled"
+legacy_object_compat_allow_until = "2000-01-01T00:00:00Z"
+"#,
+    );
+
+    let args = Args {
+        config: Some(path.clone()),
+        ..Default::default()
+    };
+
+    let result = resolve_config(&args);
+    let error = result.expect_err("expected config error");
+    assert!(
+        error
+            .to_string()
+            .contains("legacy_object_compat_allow_until must be a future RFC3339 timestamp"),
+        "expected future-timestamp error, got: {error}"
+    );
+
+    let _ = fs::remove_file(path);
 }

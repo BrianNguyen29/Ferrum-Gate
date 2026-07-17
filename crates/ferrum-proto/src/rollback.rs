@@ -28,6 +28,7 @@ pub struct RollbackContract {
 pub enum RollbackState {
     PendingPrepare,
     Prepared,
+    RecoveryRequired,
     ExecutedAwaitingVerify,
     Verified,
     Committed,

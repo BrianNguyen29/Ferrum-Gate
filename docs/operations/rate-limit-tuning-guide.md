@@ -21,13 +21,18 @@ defaults are conservative.
 
 ## Root cause: why defaults fail high-throughput validation
 
-FerrumGate uses `tower_governor` with **per-IP** token-bucket rate limiting
-as the baseline.  Since P3 the key extractor is also **principal-aware**:
-authenticated requests are bucketed by a derived principal identity (agent ID
-or a hash of the `Authorization` header) combined with the client IP,
-while anonymous requests fall back to IP-only bucketing.  This mitigates
-noisy-neighbor issues on shared IPs (e.g., NAT or reverse proxies) without
-weakening the existing IP-based protection for unauthenticated traffic.
+FerrumGate uses two `tower_governor` token-bucket governors on the workload
+router:
+
+1. **Outer pre-auth governor** — IP-only bucketing based on the resolved client
+   IP. It runs before authentication and is always enabled.
+2. **Inner post-auth governor** — `AuthActor` + IP bucketing. It runs after
+   authentication for `scoped`, `oidc`, and `agent` auth modes and prevents a
+   single IP from carrying too many distinct authenticated identities.
+
+`disabled` and `bearer` auth modes use only the outer governor. Monitoring
+routes (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`) bypass
+both governors.
 
 The built-in defaults are:
 
@@ -39,6 +44,21 @@ rate_limit_burst = 50
 These defaults are **intentionally safety-oriented**. They protect a
 single-node deployment from accidental overload and from a single client IP
 generating excessive traffic.
+
+### Trusted proxy and client IP resolution
+
+The resolved client IP is normally the immediate transport peer. If `ferrumd`
+is behind an operator-owned reverse proxy, set `trusted_proxy_cidrs` so that a
+trusted immediate peer may supply the real client address via a single
+`X-Real-IP` header:
+
+- `trusted_proxy_cidrs` defaults to `[]` (trust-none). This is the safest
+  default and the recommended starting point.
+- Only immediate peers inside a configured CIDR may supply `X-Real-IP`.
+  Malformed, multiple, or missing values fall back to the peer IP.
+- `X-Forwarded-For` is ignored entirely.
+- Universal CIDRs (`0.0.0.0/0`, `::/0`) are rejected at startup.
+- To revert to peer-IP bucketing, set `trusted_proxy_cidrs = []` or omit it.
 
 A canonical validation workload (five steps: baseline → low → target →
 spike → cooldown) generates sustained request volume that exceeds conservative
@@ -92,14 +112,16 @@ problem.
 
 4. **Revisit after topology changes**
     - If you add more load-balancer IPs (NAT), the effective per-IP limit
-       becomes more restrictive because all traffic behind a single NAT IP
-       shares one bucket.  However, authenticated traffic is isolated from
-       anonymous traffic on the same IP (principal-aware bucketing), so
-       authenticated clients are not affected by anonymous noisy neighbors.
+      becomes more restrictive because all traffic behind a single NAT IP
+      shares the outer bucket.  For `scoped`, `oidc`, and `agent` auth modes the
+      inner `AuthActor`+IP governor isolates distinct authenticated actors
+      behind the same IP, so those clients are not affected by anonymous noisy
+      neighbors.  In `bearer` or `disabled` mode there is no inner governor;
+      all traffic behind the same IP shares the outer bucket.
     - If authenticated clients still need higher limits, consider raising
-       the per-second/burst values or deploying additional gateway nodes.
-    - There is no operator-facing toggle for principal-aware mode; it is
-       always on and falls back to IP-only for anonymous requests.
+      the per-second/burst values or deploying additional gateway nodes.
+    - There is no operator-facing toggle for the inner governor; when the auth
+      mode enables it, it is always on.
 
 ---
 
@@ -113,27 +135,44 @@ Precedence: CLI > env > config file > defaults.
 ```bash
 ferrumd \
   --rate-limit-per-second 1000 \
-  --rate-limit-burst 10000
+  --rate-limit-burst 10000 \
+  --trusted-proxy-cidrs "10.0.0.0/8,172.16.0.0/12" \
+  --pre-auth-rate-limit-per-second 100 \
+  --pre-auth-rate-limit-burst 200
 ```
 
 ### Environment variables
 
 ```bash
+export FERRUMD_TRUSTED_PROXY_CIDRS="10.0.0.0/8,172.16.0.0/12"
 export FERRUMD_RATE_LIMIT_PER_SECOND=1000
 export FERRUMD_RATE_LIMIT_BURST=10000
+export FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND=100
+export FERRUMD_PRE_AUTH_RATE_LIMIT_BURST=200
 ```
 
 ### Config file
 
 ```toml
 [server]
+trusted_proxy_cidrs = []
 rate_limit_per_second = 1000
 rate_limit_burst = 10000
+pre_auth_rate_limit_per_second = 100
+pre_auth_rate_limit_burst = 200
 ```
+
+When `pre_auth_rate_limit_*` is omitted, the outer governor inherits the
+`rate_limit_*` values. Precedence is the same as all other config:
+CLI > env > config file > defaults.
 
 Validation rules:
 - `rate_limit_per_second` must be > 0
 - `rate_limit_burst` must be > 0 and ≤ 10000
+- `pre_auth_rate_limit_per_second` must be ≥ 1 when set
+- `pre_auth_rate_limit_burst` must be ≥ 1 and ≤ 10000 when set
+- `trusted_proxy_cidrs` entries must be valid CIDRs; universal CIDRs
+  (`0.0.0.0/0`, `::/0`) are rejected at startup
 
 ---
 

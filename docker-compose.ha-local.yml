@@ -15,7 +15,7 @@
 
 services:
   postgres_ha_primary:
-    image: postgres:16
+    image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
     container_name: ferrumgate_postgres_ha_primary
     environment:
       POSTGRES_USER: ferrumgate_dev
@@ -45,7 +45,7 @@ services:
           memory: 512M
 
   postgres_ha_standby:
-    image: postgres:16
+    image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
     container_name: ferrumgate_postgres_ha_standby
     environment:
       POSTGRES_USER: ferrumgate_dev

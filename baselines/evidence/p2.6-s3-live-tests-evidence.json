@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0.0",
+  "baseline": "P2.6-s3-live-tests",
+  "source": "GitHub Actions CI workflow 'ci', job 's3-live-tests'",
+  "commit": "788eb66fa5aa984f09083a9705126858e4a901bd",
+  "short_commit": "788eb66",
+  "recorded_at": "2026-07-16T00:00:00Z",
+  "command": "cargo test --package ferrum-adapter-s3 --features s3-client -- --ignored (via .github/workflows/ci.yml s3-live-tests job)",
+  "results": [
+    {
+      "job": "s3-live-tests",
+      "workflow": "ci",
+      "run_id": 29485913605,
+      "job_url": "https://github.com/BrianNguyen29/Ferrum-Gate/actions/runs/29485913605/job/87580235537",
+      "outcome": "success",
+      "description": "MinIO S3 adapter integration tests with --features s3-client passed in CI."
+    }
+  ],
+  "notes": [
+    "Job success is limited to s3-live-tests only. The overall CI workflow concluded failure at this run (other jobs failed).",
+    "No GitHub artifacts were produced (total_count: 0). Logs exist via the GitHub API but are not copied here.",
+    "Local 'make s3-test' also passed governance/legal-hold MinIO tests on a controlled development environment.",
+    "MinIO CI evidence validates the feature-gated S3 adapter path only; it does not imply AWS, cloud-provider, compliance, or immutability proof."
+  ]
+}

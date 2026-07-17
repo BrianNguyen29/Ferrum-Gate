@@ -41,7 +41,7 @@ class TestCheckSafety(unittest.TestCase):
             f.write('[server]\nauth_mode = "disabled"\n')
             path = Path(f.name)
         try:
-            errors = vtc.check_safety(path)
+            errors, _warnings = vtc.check_safety(path)
             self.assertTrue(any("auth_mode=disabled" in e for e in errors))
         finally:
             path.unlink()
@@ -51,7 +51,7 @@ class TestCheckSafety(unittest.TestCase):
             f.write("[server]\nallow_insecure_nonlocal_bind = true\n")
             path = Path(f.name)
         try:
-            errors = vtc.check_safety(path)
+            errors, _warnings = vtc.check_safety(path)
             self.assertTrue(any("allow_insecure_nonlocal_bind=true" in e for e in errors))
         finally:
             path.unlink()
@@ -61,7 +61,9 @@ class TestCheckSafety(unittest.TestCase):
             f.write('[server]\nauth_mode = "disabled"\n')
             path = Path(f.name)
         try:
-            self.assertEqual(vtc.check_safety(path), [])
+            errors, warnings = vtc.check_safety(path)
+            self.assertEqual(errors, [])
+            self.assertEqual(warnings, [])
         finally:
             path.unlink()
 
@@ -70,9 +72,82 @@ class TestCheckSafety(unittest.TestCase):
             f.write('[server]\nauth_mode = "bearer"\n')
             path = Path(f.name)
         try:
-            self.assertEqual(vtc.check_safety(path), [])
+            errors, warnings = vtc.check_safety(path)
+            self.assertEqual(errors, [])
+            self.assertEqual(warnings, [])
         finally:
             path.unlink()
+
+    def test_prod_required_controls_missing_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ferrumgate.prod.toml"
+            path.write_text('[server]\nauth_mode = "bearer"\n')
+            errors, _warnings = vtc.check_safety(path)
+            for control in vtc.PROD_REQUIRED_CONTROLS:
+                self.assertTrue(
+                    any(control in e and "must be explicitly set to true" in e for e in errors),
+                    f"expected missing-control error for {control}",
+                )
+
+    def test_prod_required_controls_disabled_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ferrumgate.prod.toml"
+            path.write_text(
+                '[server]\n'
+                'auth_mode = "bearer"\n'
+                'lifecycle_reconciliation_enabled = false\n'
+                'approval_timeout_enabled = false\n'
+                'audit_fail_closed = false\n'
+            )
+            errors, _warnings = vtc.check_safety(path)
+            for control in vtc.PROD_REQUIRED_CONTROLS:
+                self.assertTrue(
+                    any(control in e and "must be set to true" in e for e in errors),
+                    f"expected disabled-control error for {control}",
+                )
+
+    def test_prod_required_controls_enabled_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ferrumgate.prod.toml"
+            path.write_text(
+                '[server]\n'
+                'auth_mode = "bearer"\n'
+                'lifecycle_reconciliation_enabled = true\n'
+                'approval_timeout_enabled = true\n'
+                'audit_fail_closed = true\n'
+            )
+            errors, warnings = vtc.check_safety(path)
+            self.assertEqual(errors, [])
+            self.assertEqual(warnings, [])
+
+    def test_dev_enables_required_control_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ferrumgate.dev.toml"
+            path.write_text(
+                '[server]\n'
+                'auth_mode = "disabled"\n'
+                'store_dsn = "sqlite::memory:"\n'
+                'lifecycle_reconciliation_enabled = true\n'
+            )
+            errors, _warnings = vtc.check_safety(path)
+            self.assertTrue(
+                any(
+                    "lifecycle_reconciliation_enabled" in e and "must not enable" in e
+                    for e in errors
+                )
+            )
+
+    def test_dev_retains_disabled_auth_and_memory_sqlite_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ferrumgate.dev.toml"
+            path.write_text(
+                '[server]\n'
+                'auth_mode = "disabled"\n'
+                'store_dsn = "sqlite::memory:"\n'
+            )
+            errors, warnings = vtc.check_safety(path)
+            self.assertEqual(errors, [])
+            self.assertEqual(warnings, [])
 
 
 if __name__ == "__main__":

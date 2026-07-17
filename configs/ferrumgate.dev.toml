@@ -68,6 +68,13 @@ pg_acquire_timeout_secs = 5
 # mfa_lockout_duration_secs = 900
 # Lockout settings above apply to both per-factor and per-agent MFA lockout.
 
+# ── Legacy Object Compatibility (P1.4d) ──
+# Temporary RFC3339 deadline until which owner-less legacy capabilities and
+# executions are accessible in authenticated modes (scoped/oidc/agent).
+# Omit or leave empty to deny unbound objects by default. Bearer and Disabled
+# modes are unaffected. Use only for bounded migration windows.
+# legacy_object_compat_allow_until = "2026-01-01T00:00:00Z"
+
 # ── OIDC Configuration (Phase 4.4) ──
 # Uncomment and configure when auth_mode = "oidc".
 # Static keys take precedence over fetched JWKS keys.
@@ -82,6 +89,7 @@ pg_acquire_timeout_secs = 5
 # role_source_claim = "groups"
 # require_email_verified = true
 # allowed_algorithms = ["RS256", "ES256", "EdDSA"]
+# token_profile = "legacy_jwt" # "legacy_jwt" (default) or "rfc9068_access_token"
 #
 # [oidc.role_mappings]
 # fg-admins = "admin"
