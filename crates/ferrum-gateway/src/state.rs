@@ -52,6 +52,9 @@ impl AppState {
 #[cfg(feature = "worm-sink")]
 pub use crate::worm_sink::WormSinkConfig;
 
+#[cfg(feature = "worm-sink")]
+pub use crate::worm_sink::WormSinkConfig;
+
 #[derive(Clone)]
 pub struct GatewayRuntime {
     pub pdp: Arc<dyn PdpEngine>,
@@ -947,6 +950,12 @@ impl ServerConfig {
                 "ha_reconciler_enabled must be true for production-like non-loopback deployments; \
                  stale Running+Prepared side-effect pairs must be recoverable on restart"
                     .to_string(),
+            );
+        }
+        if production_like && !self.approval_timeout_enabled {
+            tracing::warn!(
+                "approval_timeout_enabled is false in a production-like configuration; \
+                 stale pending approvals will not be expired automatically"
             );
         }
         if production_like && !self.audit_fail_closed {

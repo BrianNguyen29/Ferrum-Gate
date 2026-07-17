@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- **ServerConfig public source compatibility** — `ServerConfig` gained public fields (`trusted_proxy_cidrs`, `pre_auth_rate_limit_per_second`, `pre_auth_rate_limit_burst`, `http_egress`, `legacy_object_compat_allow_until`). Code that constructs `ServerConfig` with exhaustive field literals must add the new fields or migrate to `..ServerConfig::default()` syntax to avoid future additive breaks.
 - **Docs consistency** — clarified canonical local dev port (18080) vs deployment examples (8080); added S3 adapter (experimental) to public status lists; noted `ttl_default = 15s` as a contract expectation rather than a verified runtime default; expanded API guide with admin, audit, lifecycle outbox, and missing policy/execution endpoint overview; fixed ADR007 and ADR011 status mismatches in README and runbook tables.
 - **S3 adapter** — live execution (put/delete/get/copy) with versioning-based rollback; gated behind `live` config; MinIO integration tests present.
 - **Lifecycle outbox** — reconciliation endpoints and `ferrumctl admin lifecycle-outbox` operator commands added.

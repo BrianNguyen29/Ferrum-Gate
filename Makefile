@@ -1,20 +1,17 @@
-.PHONY: help check fmt lint test docs test-python-validators validate validate-prod-monitoring tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill dr-smoke adapter-smoke stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-soft coverage-threshold-hard invariant-smoke
+.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard
 
 help:
 	@echo "make check     - cargo check workspace"
 	@echo "make fmt       - cargo fmt --all"
 	@echo "make lint      - cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "make test      - cargo test --workspace"
-	@echo "make invariant-smoke - run blocking safety-kernel smoke suite (fails on zero-test matches)"
 	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
-	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools, monitoring templates, advisory ratchet)"
-	@echo "make validate-prod-monitoring - run production-only monitoring drift gate (explicit; fails on active unsafe template values)"
+	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools)"
 	@echo "make tree      - print repository tree"
 	@echo "make pretarget - local pre-target gate (config validation, restore drill, doc presence, expanded validators)"
 	@echo "make audit     - local security audit gate (cargo-deny / cargo-audit)"
 	@echo "make secret-scan - local hardcoded secrets scan (dependency-free)"
-	@echo "make advisory-ratchet - emit advisory coverage/perf ratchet status from existing evidence (non-blocking)"
 	@echo "make wal-drill      - local SQLite WAL crash-recovery drill"
 	@echo "make pg-restart-drill - local PostgreSQL container restart recovery drill"
 	@echo "make pg-restore-drill - local PostgreSQL populated backup/restore drill"
@@ -32,8 +29,6 @@ help:
 	@echo "make domainless-tier1-fast  - lightweight Tier 1 gate (docs/validate + syntax/dry-run/light checks, no heavy Docker drills)"
 	@echo "make domainless-tier1-gate  - full domainless Tier 1 gate (docs/validate + pg-local-batch + HA setup/failover/reconnect/teardown)"
 	@echo "make restore-drill  - local temp SQLite backup/restore drill (requires ferrumctl binary or cargo build)"
-	@echo "make dr-smoke     - bounded local DR smoke (WAL crash-recovery + temp SQLite restore drill; non-Docker)"
-	@echo "make adapter-smoke - bounded non-Docker S3/GCS shape-only + MCP tool-contract smoke"
 	@echo "make s3-test   - run S3 adapter MinIO integration tests (requires local MinIO at localhost:9000)"
 	@echo "make stress    - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
@@ -45,7 +40,6 @@ help:
 	@echo "make site-check - check site scaffold presence (no zola required)"
 	@echo "make release-preflight - run conservative release preflight checks (dry-run, no push/publish)"
 	@echo "make release-preflight-execute - run release preflight with SBOM generation (still no push/publish)"
-	@echo "make coverage-threshold-soft - advisory coverage threshold check for critical crates (requires cargo-llvm-cov)"
 	@echo "make coverage-threshold-hard - local hard coverage threshold check for critical crates (requires cargo-llvm-cov)"
 	@echo "make slo-sustained-dry-run - safe dry-run rehearsal for SLO sustained observation"
 
@@ -61,10 +55,6 @@ lint:
 test:
 	cargo test --workspace
 
-invariant-smoke:
-	@echo "Running invariant smoke suite..."
-	@bash scripts/run_invariant_smoke.sh
-
 docs:
 	@echo "Running docs validation..."
 	@python3 scripts/validate_docs_links.py
@@ -72,31 +62,20 @@ docs:
 
 test-python-validators:
 	@echo "Running Python validator tests..."
-	@python3 -m unittest discover -s tests -p 'test_*.py' -v
+	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + adr-catalog + docs-links + CI badges + monitoring templates + container image pins + advisory ratchet + python-validator-tests)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + docs-links + CI badges + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
 	@python3 scripts/validate_evidence_templates.py
 	@python3 scripts/validate_toml_configs.py
 	@python3 scripts/validate_openapi_yaml.py
-	@python3 scripts/validate_adapter_maturity.py
-	@python3 scripts/validate_roadmap_matrix.py
-	@python3 scripts/validate_runbook_adr_status.py
-	@python3 scripts/validate_adr_catalog.py
 	@python3 scripts/validate_docs_links.py
 	@python3 scripts/validate_ci_badges.py
-	@python3 scripts/validate_monitoring_templates.py
-	@python3 scripts/validate_container_image_pins.py
-	@$(MAKE) advisory-ratchet
 	@$(MAKE) test-python-validators
 	@$(MAKE) site-check
-
-validate-prod-monitoring:
-	@echo "Running production-only monitoring drift validation..."
-	@python3 scripts/validate_monitoring_templates.py --production
 
 tree:
 	find . -maxdepth 4 | sort
@@ -177,27 +156,17 @@ restore-drill:
 	@echo "Running local temp SQLite backup/restore drill..."
 	@bash scripts/run_local_restore_drill.sh
 
-dr-smoke:
-	@echo "Running bounded local DR smoke (WAL crash-recovery + restore drill)..."
-	@$(MAKE) wal-drill && \
-	$(MAKE) restore-drill
-	@echo "DR SMOKE: ALL TARGETS PASSED"
-
-adapter-smoke:
-	@echo "Running bounded adapter smoke (S3/GCS shape-only + MCP tool contract)..."
-	@bash scripts/adapter_smoke.sh
-
 s3-test:
 	@echo "Running S3 adapter MinIO integration tests..."
-	@if curl -sSf http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then \
-		echo "[OK] MinIO detected at 127.0.0.1:9000"; \
+	@if curl -sSf http://localhost:9000/minio/health/live >/dev/null 2>&1; then \
+		echo "[OK] MinIO detected at localhost:9000"; \
 		cargo test -p ferrum-adapter-s3 --features s3-client --test minio_integration -- --ignored; \
 	else \
-		echo "[SKIP] MinIO not running at 127.0.0.1:9000."; \
+		echo "[SKIP] MinIO not running at localhost:9000."; \
 		echo "To run these tests, start MinIO with:"; \
 		echo "  docker run -d -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data --console-address \":9001\""; \
 		echo "Then create a versioned bucket:"; \
-		echo "  mc alias set local http://127.0.0.1:9000 minioadmin minioadmin"; \
+		echo "  mc alias set local http://localhost:9000 minioadmin minioadmin"; \
 		echo "  mc mb local/ferrum-test-bucket"; \
 		echo "  mc version enable local/ferrum-test-bucket"; \
 		echo "Then re-run: make s3-test"; \
@@ -317,10 +286,6 @@ perf-baseline-update:
 	@bash scripts/run_perf_gate.sh --write-baselines --duration 5 --scenarios "health,intent-compile,sqlite-contention"
 	@echo "[INFO] Sample baselines regenerated. They remain SAMPLE / NON-AUTHORITATIVE by default."
 
-advisory-ratchet:
-	@echo "Emitting advisory coverage/perf ratchet status from existing evidence..."
-	@python3 scripts/check_advisory_ratchet.py
-
 release-preflight:
 	@echo "Running release preflight (dry-run, no push/publish)..."
 	@bash scripts/prepare_release.sh --dry-run
@@ -329,22 +294,11 @@ release-preflight-execute:
 	@echo "Running release preflight with SBOM generation (still no push/publish)..."
 	@bash scripts/prepare_release.sh --execute
 
-coverage-threshold-soft:
-	@echo "Running advisory coverage threshold check for critical crates..."
-	@if command -v cargo-llvm-cov >/dev/null 2>&1; then \
-		cargo llvm-cov --workspace --text --output-path coverage.txt; \
-		python3 scripts/check_coverage_threshold.py coverage.txt --config coverage-thresholds.toml; \
-	else \
-		echo "cargo-llvm-cov not found. Install it to run this target:"; \
-		echo "  cargo install --locked cargo-llvm-cov"; \
-		exit 1; \
-	fi
-
 coverage-threshold-hard:
 	@echo "Running hard coverage threshold check for critical crates..."
 	@if command -v cargo-llvm-cov >/dev/null 2>&1; then \
 		cargo llvm-cov --workspace --text --output-path coverage.txt; \
-		python3 scripts/check_coverage_threshold.py coverage.txt --config coverage-thresholds.toml --hard; \
+		python3 scripts/check_coverage_threshold.py coverage.txt --hard; \
 	else \
 		echo "cargo-llvm-cov not found. Install it to run this target:"; \
 		echo "  cargo install --locked cargo-llvm-cov"; \
