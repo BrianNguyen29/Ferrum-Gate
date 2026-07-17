@@ -52,9 +52,6 @@ impl AppState {
 #[cfg(feature = "worm-sink")]
 pub use crate::worm_sink::WormSinkConfig;
 
-#[cfg(feature = "worm-sink")]
-pub use crate::worm_sink::WormSinkConfig;
-
 #[derive(Clone)]
 pub struct GatewayRuntime {
     pub pdp: Arc<dyn PdpEngine>,
