@@ -1,4 +1,4 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard
+.PHONY: help check fmt lint test invariant-smoke docs test-python-validators validate tree pretarget audit secret-scan wal-drill dr-smoke restore-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard
 
 help:
 	@echo "make check     - cargo check workspace"
@@ -98,6 +98,11 @@ secret-scan:
 wal-drill:
 	@echo "Running local SQLite WAL crash-recovery drill..."
 	@bash scripts/run_wal_crash_recovery_drill.sh
+
+dr-smoke:
+	@echo "Running DR smoke (WAL crash-recovery + temp SQLite restore)..."
+	@bash scripts/run_wal_crash_recovery_drill.sh
+	@bash scripts/run_local_restore_drill.sh
 
 pg-restart-drill:
 	@echo "Running local PostgreSQL container restart recovery drill..."
