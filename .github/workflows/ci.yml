@@ -224,7 +224,7 @@ jobs:
             --store-dsn "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test" \
             --bind-addr "$BIND_ADDR" \
             --auth-mode disabled \
-            --log-filter warn \
+            --log-filter "warn,ferrum_store=debug,sqlx=debug" \
             >"$LOG_FILE" 2>&1 &
           FERRUMD_PID=$!
           echo "[INFO] ferrumd started (PID $FERRUMD_PID) on $BIND_ADDR"
@@ -249,8 +249,12 @@ jobs:
 
           # Poll /v1/readyz/deep
           READY=false
+          RESPONSE_FILE="$(mktemp)"
+          trap 'rm -f "$LOG_FILE" "$RESPONSE_FILE"; kill "$FERRUMD_PID" 2>/dev/null || true' EXIT
+
           for i in {1..30}; do
-            if curl -sf "http://$BIND_ADDR/v1/readyz/deep" >/dev/null 2>&1; then
+            HTTP_CODE=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" "http://$BIND_ADDR/v1/readyz/deep" 2>/dev/null || echo "000")
+            if [[ "$HTTP_CODE" == "200" ]]; then
               READY=true
               break
             fi
@@ -259,8 +263,11 @@ jobs:
 
           if [[ "$READY" != "true" ]]; then
             echo "[ERROR] /v1/readyz/deep did not return 200 within 30s" >&2
-            echo "[INFO] Last 30 lines of ferrumd log:"
-            tail -n 30 "$LOG_FILE" || true
+            echo "[INFO] Last /v1/readyz/deep response body (HTTP code: ${HTTP_CODE:-unknown}):"
+            cat "$RESPONSE_FILE" || true
+            echo
+            echo "[INFO] Last 60 lines of ferrumd log (ferrum_store/sqlx scoped debug):"
+            tail -n 60 "$LOG_FILE" || true
             exit 1
           fi
           echo "[OK] /v1/readyz/deep returned 200"
