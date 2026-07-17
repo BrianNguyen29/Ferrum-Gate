@@ -15,7 +15,8 @@
     "policy_bundle_id",
     "status",
     "issued_at",
-    "expires_at"
+    "expires_at",
+    "metadata"
   ],
   "properties": {
     "capability_id": {
@@ -275,6 +276,12 @@
     },
     "metadata": {
       "type": "object"
+    },
+    "owner_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   }
 }

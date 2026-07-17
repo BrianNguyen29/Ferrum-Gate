@@ -15,7 +15,7 @@ class RunbookAdrStatusValidatorTests(unittest.TestCase):
         source = """
 | Control | ADR | Status |
 |---|---|---|
-| WORM export | [ADR 009](../adr/009-worm-export-audit-bundle.md) | Accepted (P2-1) |
+| WORM export | [ADR 999](../adr/999-test.md) | Accepted (P2-1) |
 | Behavioral anomaly | [ADR 010](../adr/010-behavioral-anomaly-detection.md) | Accepted (Phase 1 V1) |
 """
         with tempfile.NamedTemporaryFile("w", delete=False) as fh:
@@ -28,7 +28,7 @@ class RunbookAdrStatusValidatorTests(unittest.TestCase):
             Path(path).unlink()
 
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0].number, "009")
+        self.assertEqual(rows[0].number, "999")
         self.assertEqual(rows[0].runbook_status, "Accepted (P2-1)")
         self.assertEqual(rows[1].number, "010")
 
@@ -38,14 +38,14 @@ class RunbookAdrStatusValidatorTests(unittest.TestCase):
             tmp_path = Path(tmp)
             adr_dir = tmp_path / "adr"
             adr_dir.mkdir()
-            (adr_dir / "009-test.md").write_text(
-                "# ADR 009\n\n## Status\n\nAccepted (P2-1). Implemented.\n",
+            (adr_dir / "999-test.md").write_text(
+                "# ADR 999\n\n## Status\n\nAccepted (P2-1). Implemented.\n",
                 encoding="utf-8",
             )
             runbook = tmp_path / "runbook.md"
             runbook.write_text(
                 "| Control | ADR | Status |\n|---|---|---|\n"
-                "| WORM | [ADR 009](../adr/009-test.md) | Accepted (P2-1) |\n",
+                "| WORM | [ADR 999](../adr/999-test.md) | Accepted (P2-1) |\n",
                 encoding="utf-8",
             )
 
@@ -66,14 +66,14 @@ class RunbookAdrStatusValidatorTests(unittest.TestCase):
             tmp_path = Path(tmp)
             adr_dir = tmp_path / "adr"
             adr_dir.mkdir()
-            (adr_dir / "009-test.md").write_text(
-                "# ADR 009\n\n## Status\n\nProposed\n",
+            (adr_dir / "999-test.md").write_text(
+                "# ADR 999\n\n## Status\n\nProposed\n",
                 encoding="utf-8",
             )
             runbook = tmp_path / "runbook.md"
             runbook.write_text(
                 "| Control | ADR | Status |\n|---|---|---|\n"
-                "| WORM | [ADR 009](../adr/009-test.md) | Accepted (P2-1) |\n",
+                "| WORM | [ADR 999](../adr/999-test.md) | Accepted (P2-1) |\n",
                 encoding="utf-8",
             )
 
@@ -97,7 +97,7 @@ class RunbookAdrStatusValidatorTests(unittest.TestCase):
             runbook = tmp_path / "runbook.md"
             runbook.write_text(
                 "| Control | ADR | Status |\n|---|---|---|\n"
-                "| WORM | [ADR 009](../adr/009-test.md) | Accepted |\n",
+                "| WORM | [ADR 999](../adr/999-test.md) | Accepted |\n",
                 encoding="utf-8",
             )
 

@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 GITLEAKS_FOUND=false
-GITLEAKS_IMAGE="ghcr.io/gitleaks/gitleaks:v8.24.0"
+GITLEAKS_IMAGE="ghcr.io/gitleaks/gitleaks:v8.24.0@sha256:2bcceac45179b3a91bff11a824d0fb952585b429e54fc928728b1d4d5c3e5176"
 
 # --- Try gitleaks via docker (no auth needed for public images) ---
 try_gitleaks_docker() {

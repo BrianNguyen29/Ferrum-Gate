@@ -6,7 +6,7 @@ import yaml
 
 
 class CIWorkflowValidationTests(unittest.TestCase):
-    """Validate that the PR CI workflow keeps the DR smoke gate blocking."""
+    """Validate that the PR CI workflow keeps the DR and invariant smoke gates blocking."""
 
     def setUp(self):
         self.repo_root = Path(__file__).resolve().parents[1]
@@ -23,14 +23,14 @@ class CIWorkflowValidationTests(unittest.TestCase):
         self.assertIn("validate", jobs, "CI workflow must contain a validate job")
         return jobs["validate"]
 
-    def _get_dr_smoke_steps(self, workflow):
+    def _get_smoke_steps(self, workflow, name_prefix, cmd):
         validate_job = self._get_validate_job(workflow)
         steps = validate_job.get("steps", [])
         return [
             step
             for step in steps
-            if step.get("name", "").lower().startswith("dr smoke")
-            and "make dr-smoke" in step.get("run", "")
+            if step.get("name", "").lower().startswith(name_prefix)
+            and cmd in step.get("run", "")
         ]
 
     def _assert_continue_on_error_blocking(self, scope, value):
@@ -48,52 +48,68 @@ class CIWorkflowValidationTests(unittest.TestCase):
                 executable.append(line)
         return executable
 
-    def _assert_dr_smoke_shell_blocking(self, step):
+    def _assert_smoke_step_blocking(self, step, label, cmd):
         run = step.get("run", "")
         lines = self._normalize_run(run)
 
         self.assertIn(
             "set -euo pipefail",
             lines,
-            "DR smoke step must contain `set -euo pipefail`",
+            f"{label} step must contain `set -euo pipefail`",
         )
 
-        make_lines = [ln for ln in lines if ln == "make dr-smoke"]
+        make_lines = [ln for ln in lines if ln == cmd]
         self.assertEqual(
             len(make_lines),
             1,
-            "DR smoke step must contain exactly one executable `make dr-smoke` command",
+            f"{label} step must contain exactly one executable `{cmd}` command",
         )
 
         for line in lines:
-            if line in ("set -euo pipefail", "make dr-smoke"):
+            if line in ("set -euo pipefail", cmd):
                 continue
             self.fail(
-                f"DR smoke step contains forbidden shell line {line!r} "
+                f"{label} step contains forbidden shell line {line!r} "
                 "(no `|| true`, `; true`, `if`, or other failure-swallowing/control syntax)"
             )
 
-    def _assert_dr_smoke_blocking(self, workflow):
-        dr_smoke_steps = self._get_dr_smoke_steps(workflow)
+    def _assert_smoke_blocking(self, workflow, name_prefix, cmd, label):
+        smoke_steps = self._get_smoke_steps(workflow, name_prefix, cmd)
         self.assertEqual(
-            len(dr_smoke_steps),
+            len(smoke_steps),
             1,
-            "expected exactly one 'DR smoke' step running `make dr-smoke` in validate job",
+            f"expected exactly one '{label}' step running `{cmd}` in validate job",
         )
 
         validate_job = self._get_validate_job(workflow)
-        step = dr_smoke_steps[0]
+        step = smoke_steps[0]
 
         self._assert_continue_on_error_blocking(
             "validate job", validate_job.get("continue-on-error")
         )
         self._assert_continue_on_error_blocking(
-            "DR smoke step", step.get("continue-on-error")
+            f"{label} step", step.get("continue-on-error")
         )
-        self._assert_dr_smoke_shell_blocking(step)
+        self._assert_smoke_step_blocking(step, label, cmd)
+
+    def _assert_dr_smoke_blocking(self, workflow):
+        self._assert_smoke_blocking(
+            workflow, name_prefix="dr smoke", cmd="make dr-smoke", label="DR smoke"
+        )
 
     def test_validate_job_has_dr_smoke_step(self):
         self._assert_dr_smoke_blocking(self.workflow)
+
+    def _assert_invariant_smoke_blocking(self, workflow):
+        self._assert_smoke_blocking(
+            workflow,
+            name_prefix="invariant smoke",
+            cmd="make invariant-smoke",
+            label="Invariant smoke",
+        )
+
+    def test_validate_job_has_invariant_smoke_step(self):
+        self._assert_invariant_smoke_blocking(self.workflow)
 
     def test_job_continue_on_error_true_rejected(self):
         workflow = copy.deepcopy(self.workflow)
@@ -162,6 +178,68 @@ class CIWorkflowValidationTests(unittest.TestCase):
             0,
             "WAL-only step should be replaced by `make dr-smoke`; no direct WAL invocation allowed",
         )
+
+    def _find_step_index(self, steps, name_substring):
+        for idx, step in enumerate(steps):
+            if name_substring in step.get("name", ""):
+                return idx
+        self.fail(f"no step with name containing {name_substring!r} found in validate job")
+
+    def test_invariant_smoke_step_placed_after_rust_and_before_release_validation(self):
+        validate_job = self._get_validate_job(self.workflow)
+        steps = validate_job.get("steps", [])
+        rust_idx = self._find_step_index(steps, "Install Rust")
+        invariant_idx = self._find_step_index(steps, "Invariant smoke")
+        release_idx = self._find_step_index(steps, "Release profile smoke")
+        self.assertLess(
+            rust_idx,
+            invariant_idx,
+            "Invariant smoke must be placed after the Rust toolchain setup",
+        )
+        self.assertLess(
+            invariant_idx,
+            release_idx,
+            "Invariant smoke must be placed before downstream release validation",
+        )
+
+    def test_invariant_step_continue_on_error_true_rejected(self):
+        workflow = copy.deepcopy(self.workflow)
+        steps = workflow["jobs"]["validate"]["steps"]
+        inv_steps = [
+            step
+            for step in steps
+            if step.get("name", "").lower().startswith("invariant smoke")
+            and "make invariant-smoke" in step.get("run", "")
+        ]
+        inv_steps[0]["continue-on-error"] = True
+        with self.assertRaises(AssertionError):
+            self._assert_invariant_smoke_blocking(workflow)
+
+    def test_invariant_step_continue_on_error_expression_rejected(self):
+        workflow = copy.deepcopy(self.workflow)
+        steps = workflow["jobs"]["validate"]["steps"]
+        inv_steps = [
+            step
+            for step in steps
+            if step.get("name", "").lower().startswith("invariant smoke")
+            and "make invariant-smoke" in step.get("run", "")
+        ]
+        inv_steps[0]["continue-on-error"] = "${{ true }}"
+        with self.assertRaises(AssertionError):
+            self._assert_invariant_smoke_blocking(workflow)
+
+    def test_make_invariant_smoke_or_true_rejected(self):
+        workflow = copy.deepcopy(self.workflow)
+        steps = workflow["jobs"]["validate"]["steps"]
+        inv_steps = [
+            step
+            for step in steps
+            if step.get("name", "").lower().startswith("invariant smoke")
+            and "make invariant-smoke" in step.get("run", "")
+        ]
+        inv_steps[0]["run"] = "set -euo pipefail\nmake invariant-smoke || true"
+        with self.assertRaises(AssertionError):
+            self._assert_invariant_smoke_blocking(workflow)
 
 
 if __name__ == "__main__":

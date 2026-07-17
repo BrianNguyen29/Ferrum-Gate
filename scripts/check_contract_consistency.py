@@ -27,6 +27,264 @@ REQUIRED_SCHEMA_FILES = [
     ROOT / "schemas" / "jsonschema" / "rollback-contract.json",
 ]
 
+METASCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
+
+
+# ---------------------------------------------------------------------------
+# Schema structure helpers
+# ---------------------------------------------------------------------------
+
+
+def collect_refs(node: object) -> list[str]:
+    """Recursively collect all $ref values in a JSON schema."""
+    refs: list[str] = []
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            refs.append(ref)
+        for value in node.values():
+            refs.extend(collect_refs(value))
+    elif isinstance(node, list):
+        for item in node:
+            refs.extend(collect_refs(item))
+    return refs
+
+
+def resolve_json_pointer(doc: object, pointer: str) -> object | None:
+    """Resolve a JSON Pointer (RFC 6901) against a document."""
+    if pointer == "":
+        return doc
+    if not pointer.startswith("/"):
+        return None
+    current: object = doc
+    for part in pointer[1:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if part not in current:
+                return None
+            current = current[part]
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+def _node_path(parts: tuple) -> str:
+    if not parts:
+        return "root"
+    return "/".join(str(p) for p in parts)
+
+
+def walk_nodes(node: object, path: tuple = ()):
+    """Yield every node and its path in a nested JSON structure."""
+    yield node, path
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from walk_nodes(value, path + (key,))
+    elif isinstance(node, list):
+        for idx, value in enumerate(node):
+            yield from walk_nodes(value, path + (idx,))
+
+
+def _load_schemas_for_check(
+    schema_files: list[Path], errors: list[str]
+) -> dict[Path, dict]:
+    """Load a list of schema files and append structural errors."""
+    schemas: dict[Path, dict] = {}
+    for path in schema_files:
+        rel = path.relative_to(ROOT)
+        try:
+            data = load_json(path)
+        except Exception as exc:
+            errors.append(f"{rel}: JSON parse error: {exc}")
+            continue
+        if not isinstance(data, dict):
+            errors.append(f"{rel}: root is not a JSON object")
+            continue
+        schemas[path] = data
+    return schemas
+
+
+def _check_ref(
+    ref: str, source_path: Path, schema_dir: Path, schemas: dict[Path, dict]
+) -> str | None:
+    """Validate a single $ref. Returns an error message or None."""
+    if ref.startswith("#"):
+        target = schemas.get(source_path)
+        if target is None:
+            return f"cannot resolve local ref {ref}: source schema not loaded"
+        pointer = ref[1:]
+        if pointer == "":
+            return None
+        if resolve_json_pointer(target, pointer) is None:
+            return f"unresolved local JSON Pointer {ref}"
+        return None
+
+    if "#" in ref:
+        uri, fragment = ref.split("#", 1)
+    else:
+        uri, fragment = ref, ""
+
+    if uri.startswith(("http://", "https://")):
+        if uri == METASCHEMA_URI:
+            return None
+        return f"external ref not allowed: {ref}"
+
+    if uri.startswith("file:") or uri.startswith("/") or ".." in Path(uri).parts:
+        return f"ref outside schema dir: {ref}"
+
+    target_path = schema_dir / uri
+    if not target_path.exists():
+        return f"ref target missing: {ref}"
+
+    target_schema = schemas.get(target_path)
+    if target_schema is None:
+        try:
+            target_schema = load_json(target_path)
+        except Exception as exc:
+            return f"ref target {ref} cannot be parsed: {exc}"
+
+    if fragment == "":
+        return None
+    if not fragment.startswith("/"):
+        return f"ref fragment not a JSON Pointer: {ref}"
+    if resolve_json_pointer(target_schema, fragment) is None:
+        return f"unresolved JSON Pointer in ref {ref}"
+    return None
+
+
+def _type_of_json_value(value: object) -> str | None:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return None
+
+
+def check_schema_structure(schema_files: list[Path] | None = None) -> list[str]:
+    """Validate structural integrity of required JSON schemas."""
+    if schema_files is None:
+        schema_files = REQUIRED_SCHEMA_FILES
+    if not schema_files:
+        return []
+
+    schema_dir = schema_files[0].parent
+    errors: list[str] = []
+    schemas = _load_schemas_for_check(schema_files, errors)
+
+    # Root checks: $schema, $id, type, properties, required subset.
+    seen_ids: dict[str, Path] = {}
+    for path, schema in schemas.items():
+        rel = path.relative_to(ROOT)
+
+        if schema.get("$schema") != METASCHEMA_URI:
+            errors.append(
+                f"{rel}: $schema is not {METASCHEMA_URI}"
+            )
+
+        sid = schema.get("$id")
+        if not sid:
+            errors.append(f"{rel}: missing $id")
+        elif not isinstance(sid, str) or not sid.startswith("https://"):
+            errors.append(f"{rel}: $id is not a stable absolute URI: {sid}")
+        else:
+            if sid in seen_ids:
+                errors.append(
+                    f"{rel}: duplicate $id {sid} (also in {seen_ids[sid].relative_to(ROOT)})"
+                )
+            else:
+                seen_ids[sid] = path
+
+        if schema.get("type") != "object":
+            errors.append(f"{rel}: root type is not 'object'")
+
+        properties = schema.get("properties")
+        if properties is not None and not isinstance(properties, dict):
+            errors.append(f"{rel}: properties is not an object")
+
+        required = schema.get("required")
+        if required is not None:
+            if not isinstance(required, list):
+                errors.append(f"{rel}: required is not an array")
+            else:
+                if properties is None:
+                    errors.append(f"{rel}: required present but properties missing")
+                else:
+                    for field in required:
+                        if field not in properties:
+                            errors.append(
+                                f"{rel}: required field {field} not in properties"
+                            )
+
+    # Reference checks: local pointers and sibling refs must resolve; no external refs.
+    for path, schema in schemas.items():
+        rel = path.relative_to(ROOT)
+        for ref in collect_refs(schema):
+            err = _check_ref(ref, path, schema_dir, schemas)
+            if err:
+                errors.append(f"{rel}: {err}")
+
+    # Enum checks: nonempty, unique, scalar, type-consistent.
+    for path, schema in schemas.items():
+        rel = path.relative_to(ROOT)
+        for node, node_path in walk_nodes(schema):
+            if not isinstance(node, dict):
+                continue
+            enum = node.get("enum")
+            if enum is None:
+                continue
+            path_str = _node_path(node_path)
+            if not isinstance(enum, list):
+                errors.append(f"{rel}: enum at {path_str} is not an array")
+                continue
+            if not enum:
+                errors.append(f"{rel}: enum at {path_str} is empty")
+                continue
+
+            seen_values: set[object] = set()
+            duplicates: list[object] = []
+            for value in enum:
+                key = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else value
+                if key in seen_values:
+                    duplicates.append(value)
+                seen_values.add(key)
+            if duplicates:
+                errors.append(
+                    f"{rel}: enum at {path_str} has duplicate values: {duplicates}"
+                )
+
+            non_scalar = [v for v in enum if isinstance(v, (dict, list))]
+            if non_scalar:
+                errors.append(
+                    f"{rel}: enum at {path_str} contains non-scalar values"
+                )
+
+            declared_type = node.get("type")
+            if declared_type is not None:
+                allowed = {declared_type} if isinstance(declared_type, str) else set(declared_type)
+                for value in enum:
+                    value_type = _type_of_json_value(value)
+                    if value_type is None:
+                        continue
+                    if value_type not in allowed:
+                        errors.append(
+                            f"{rel}: enum at {path_str} value {value!r} contradicts type {declared_type}"
+                        )
+                        break
+
+    return errors
+
+
 CORE_INTENT_FIELDS = {
     "intent_id",
     "principal_id",
@@ -143,6 +401,92 @@ def check_proto_alignment() -> list[str]:
             errors.append(
                 f"schema drift: ferrum-proto IntentEnvelope has '{field}' but intent-envelope.json does not"
             )
+
+    return errors
+
+
+def check_monitoring_auth() -> list[str]:
+    """Verify OpenAPI declares /v1/readyz/deep and /v1/metrics as auth-protected."""
+    openapi_text = read_text(ROOT / "openapi" / "ferrumgate-control-api.v1.yaml")
+    openapi = load_yaml(ROOT / "openapi" / "ferrumgate-control-api.v1.yaml")
+    errors: list[str] = []
+
+    info = openapi.get("info", {}).get("description", "")
+    if "readyz/deep" in info and "metrics" in info:
+        if "except `/v1/healthz` and `/v1/readyz`" not in info:
+            errors.append(
+                "openapi info description does not correctly limit unauthenticated endpoints to healthz/readyz"
+            )
+    if "single-principal" not in info.lower() and "authactor" not in info.lower():
+        errors.append("openapi info description missing single-principal/bearer trust-domain note")
+
+    paths = openapi.get("paths", {})
+    for route in ["/v1/readyz/deep", "/v1/metrics"]:
+        path_item = paths.get(route, {})
+        get_op = path_item.get("get", {})
+        security = get_op.get("security")
+        if security is None or {"BearerAuth": []} not in [dict(s) for s in security]:
+            errors.append(f"openapi {route} is not declared as BearerAuth-protected")
+        summary = get_op.get("summary", "")
+        if "requires auth" not in summary.lower() and "authenticated" not in summary.lower():
+            errors.append(f"openapi {route} summary does not signal auth requirement")
+
+    # healthz and shallow readyz must remain unauthenticated
+    for route in ["/v1/healthz", "/v1/readyz"]:
+        path_item = paths.get(route, {})
+        get_op = path_item.get("get", {})
+        security = get_op.get("security")
+        if security != []:
+            errors.append(f"openapi {route} must remain security: [] (unauthenticated)")
+
+    return errors
+
+
+def check_recovery_terms() -> list[str]:
+    agent_contract = read_text(ROOT / "contracts" / "ferrumgate-agent-contract.v1.yaml")
+    integrator_contract = read_text(
+        ROOT / "contracts" / "ferrumgate-integrator-contract.v1.yaml"
+    )
+    openapi_text = read_text(ROOT / "openapi" / "ferrumgate-control-api.v1.yaml")
+    rollback_schema = load_json(ROOT / "schemas" / "jsonschema" / "rollback-contract.json")
+
+    errors: list[str] = []
+    required_agent_terms = [
+        "RecoveryRequired",
+        "R2Compensatable",
+        "R3IrreversibleHighConsequence",
+        "HttpMutation",
+        "SqlMutation",
+        "ErrorRaised",
+    ]
+    for term in required_agent_terms:
+        if term not in agent_contract:
+            errors.append(f"agent contract missing recovery term: {term}")
+
+    required_integrator_terms = [
+        "RecoveryRequired",
+        "R2",
+        "R3",
+        "owner_only",
+        "HttpMutation",
+        "SqlMutation",
+    ]
+    for term in required_integrator_terms:
+        if term not in integrator_contract:
+            errors.append(f"integrator contract missing recovery term: {term}")
+
+    if "RecoveryRequired" not in openapi_text:
+        errors.append("openapi missing RecoveryRequired term")
+    if "recovery_required" not in openapi_text:
+        errors.append("openapi missing recovery_required response field")
+    if "HTTP" not in openapi_text or "SQLite" not in openapi_text:
+        errors.append("openapi missing adapter-specific recovery warning context")
+
+    schema_states = rollback_schema.get("properties", {}).get("state", {})
+    if "RecoveryRequired" not in schema_states.get("enum", []):
+        errors.append("rollback-contract.json missing RecoveryRequired state")
+    if "RecoveryRequired" not in schema_states.get("description", ""):
+        errors.append("rollback-contract.json state missing RecoveryRequired description")
 
     return errors
 
@@ -326,10 +670,13 @@ def main() -> int:
     checks = [
         check_required_files,
         check_schema_inventory,
+        check_schema_structure,
         check_intent_schema,
         check_openapi_drift,
         check_proto_alignment,
         check_contract_structure,
+        check_recovery_terms,
+        check_monitoring_auth,
         check_enum_drift,
         check_route_coverage,
     ]

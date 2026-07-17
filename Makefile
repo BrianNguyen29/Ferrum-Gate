@@ -72,10 +72,10 @@ docs:
 
 test-python-validators:
 	@echo "Running Python validator tests..."
-	@python3 -m unittest discover -s tests -p 'test_validate_*.py' -v
+	@python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 validate:
-	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + docs-links + CI badges + monitoring templates + advisory ratchet + python-validator-tests)..."
+	@echo "Running local validation (layout + contract consistency + MCP required-tools + evidence templates + toml + openapi + adapter-maturity + roadmap-matrix + runbook-adr-status + adr-catalog + docs-links + CI badges + monitoring templates + container image pins + advisory ratchet + python-validator-tests)..."
 	@bash scripts/validate_repo_layout.sh
 	@python3 scripts/check_contract_consistency.py
 	@bash scripts/validate_mcp_required_tools.sh
@@ -85,9 +85,11 @@ validate:
 	@python3 scripts/validate_adapter_maturity.py
 	@python3 scripts/validate_roadmap_matrix.py
 	@python3 scripts/validate_runbook_adr_status.py
+	@python3 scripts/validate_adr_catalog.py
 	@python3 scripts/validate_docs_links.py
 	@python3 scripts/validate_ci_badges.py
 	@python3 scripts/validate_monitoring_templates.py
+	@python3 scripts/validate_container_image_pins.py
 	@$(MAKE) advisory-ratchet
 	@$(MAKE) test-python-validators
 	@$(MAKE) site-check

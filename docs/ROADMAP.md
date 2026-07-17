@@ -70,7 +70,7 @@ These require broader design decisions, additional evidence, or an ADR before th
 - **MCP resumability** — Session resumability. Not implemented; no committed timeline.
   - Acceptance: Resume checkpoint persisted to store; session ID rehydration restores tool context and pending capability state.
 - **Production MCP HTTP/SSE** — Production-ready Streamable HTTP / SSE transport. Requires target-host smoke, load, and reconnect evidence first.
-  - Acceptance: Load test evidence (≥100 concurrent sessions, 0% errors over 5 min); reconnect test evidence; ADR 005 updated to Accepted.
+  - Acceptance: Load test evidence (≥100 concurrent sessions, 0% errors over 5 min); reconnect test evidence; ADR 005 is Accepted.
 - **Azure Blob adapter** — Object-store adapter. Deferred until GCS adapter semantics are stable.
   - Acceptance: Adapter implements `AdapterPort` with put/delete/get; versioning-based rollback; local emulator integration tests.
 - **HA follow-ups** — Leader election and multi-node coordination remain future; the opt-in stale in-flight reconciler exists.

@@ -7,17 +7,17 @@ set -euo pipefail
 # Each entry is "category:package:target_args:test_name".
 # target_args is either "--lib" or "--test <target_name>".
 TESTS=(
-  "TTL enforcement (gateway HTTP):ferrum-integration-tests:--test integration_gateway_flow:test_gateway_rejects_capability_ttl_over_300"
+  "TTL enforcement (gateway HTTP):ferrum-integration-tests:--test integration_gateway_capabilities:test_gateway_rejects_capability_ttl_over_300"
   "TTL enforcement (store service):ferrum-gateway:--lib:capabilities::tests::test_ttl_301_rejected"
-  "Single-use CAS/reuse (gateway HTTP):ferrum-integration-tests:--test integration_gateway_flow:test_single_use_capability_cannot_be_reused_via_gateway"
+  "Single-use CAS/reuse (gateway HTTP):ferrum-integration-tests:--test integration_gateway_capabilities:test_single_use_capability_cannot_be_reused_via_gateway"
   "Single-use CAS/concurrent (store service):ferrum-gateway:--lib:capabilities::tests::test_mark_used_concurrent_single_use"
   "Minimum lineage chain:ferrum-integration-tests:--test integration_lineage_chain:test_lineage_chain_minimum_provenance_events"
-  "Rollback/verify ordering:ferrum-integration-tests:--test integration_gateway_flow:test_verify_after_compensate_returns_409"
-  "Provenance emission (approval):ferrum-integration-tests:--test integration_gateway_flow:test_resolve_approval_provenance_event_emitted"
-  "Provenance emission (policy bundle):ferrum-integration-tests:--test integration_gateway_flow:test_policy_bundle_active_switch_emits_provenance"
-  "R3 never auto-commit:ferrum-integration-tests:--test integration_gateway_flow:test_r3_contracts_have_auto_commit_false"
-  "I11 output sanitization:ferrum-integration-tests:--test integration_gateway_flow:test_i11_sanitizes_execution_response_with_control_characters"
-  "I5 scope constraints:ferrum-integration-tests:--test integration_gateway_flow:test_i5_scope_validation_resource_bindings_exceed_intent_scope"
+  "Rollback/verify ordering:ferrum-integration-tests:--test integration_gateway_execution:test_verify_after_compensate_returns_409"
+  "Provenance emission (approval):ferrum-integration-tests:--test integration_gateway_approvals:test_resolve_approval_provenance_event_emitted"
+  "Provenance emission (policy bundle):ferrum-integration-tests:--test integration_gateway_bridges:test_policy_bundle_active_switch_emits_provenance"
+  "R3 never auto-commit:ferrum-integration-tests:--test integration_gateway_execution:test_r3_contracts_have_auto_commit_false"
+  "I11 output sanitization:ferrum-integration-tests:--test integration_gateway_execution:test_i11_sanitizes_execution_response_with_control_characters"
+  "I5 scope constraints:ferrum-integration-tests:--test integration_gateway_outcomes:test_i5_scope_validation_resource_bindings_exceed_intent_scope"
 )
 
 total_passed=0

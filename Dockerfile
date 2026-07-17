@@ -6,7 +6,7 @@
 #
 
 # --- Build stage ---
-FROM rust:1.95-bookworm AS builder
+FROM rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS builder
 
 WORKDIR /app
 COPY . .
@@ -15,7 +15,7 @@ ARG FEATURES=""
 RUN cargo build --release --bin ferrumd ${FEATURES:+--features "$FEATURES"}
 
 # --- Runtime stage ---
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 # OCI image metadata (overridable at build time). Local demo defaults only.
 ARG REVISION="unknown"

@@ -32,16 +32,16 @@ echo "=== FerrumGate Security Audit Gate ==="
 echo ""
 
 if [[ "${DENY_AVAILABLE}" == "true" ]]; then
-    echo "[cargo-deny] Found. Running 'cargo deny check advisories' ..."
-    if cargo deny check advisories; then
+    echo "[cargo-deny] Found. Running full policy check: 'cargo deny --all-features check' ..."
+    if cargo deny --all-features check; then
         echo "[cargo-deny] PASS"
     else
-        echo "[cargo-deny] FAIL — advisory check found issues"
+        echo "[cargo-deny] FAIL — policy check found issues (licenses, sources, bans, or advisories)"
         FAILURES=$((FAILURES + 1))
     fi
     echo ""
 else
-    echo "[cargo-deny] NOT FOUND. Skipping dependency advisory check."
+    echo "[cargo-deny] NOT FOUND. Skipping full cargo-deny policy check."
 fi
 
 if [[ "${AUDIT_AVAILABLE}" == "true" ]]; then

@@ -12,7 +12,8 @@
     "trust_labels",
     "sensitivity_labels",
     "parent_edges",
-    "hash_chain"
+    "hash_chain",
+    "metadata"
   ],
   "properties": {
     "event_id": {
@@ -48,6 +49,9 @@
         "PolicyBundleDeactivated",
         "PolicyBundleRolledBack",
         "Quarantined",
+        "QuarantineHoldCreated",
+        "QuarantineResolved",
+        "QuarantineTimedOut",
         "ErrorRaised",
         "ExternalEventReceived"
       ]

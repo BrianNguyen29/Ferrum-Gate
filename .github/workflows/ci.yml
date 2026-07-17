@@ -4,15 +4,18 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   release-governance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Hardcoded secrets scan
         run: bash scripts/run_secret_scan.sh
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       - name: Install cargo security audit tools
         run: |
           cargo install --locked cargo-deny
@@ -23,7 +26,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Show repository tree
         run: find . -maxdepth 3 | sort
       - name: Local validation
@@ -39,24 +42,24 @@ jobs:
           docker run --rm
           --entrypoint /bin/promtool
           --volume "$PWD/configs/monitoring:/rules:ro"
-          prom/prometheus:v2.53.5
+          prom/prometheus:v2.53.5@sha256:7a34573f0b9c952286b33d537f233cd5b708e12263733aa646e50c33f598f16c
           check rules /rules/ferrumgate-alerts.yaml
       - name: Prometheus scrape config syntax
         run: >-
           docker run --rm
           --entrypoint /bin/promtool
           --volume "$PWD/configs/monitoring:/configs:ro"
-          prom/prometheus:v2.53.5
+          prom/prometheus:v2.53.5@sha256:7a34573f0b9c952286b33d537f233cd5b708e12263733aa646e50c33f598f16c
           check config /configs/prometheus-scrape-config.yaml
       - name: Alertmanager config syntax
         run: >-
           docker run --rm
           --entrypoint /bin/amtool
           --volume "$PWD/configs/monitoring:/configs:ro"
-          prom/alertmanager:v0.27.0
+          prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
           check-config /configs/alertmanager-config.yaml
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: Helm chart lint and render
         run: |
           helm lint deploy/helm/ferrumgate \
@@ -73,7 +76,7 @@ jobs:
             echo "::warning::Helm readinessProbe defaults to shallow /v1/readyz (always 200); it does NOT gate store/queue health. Override to /v1/readyz/deep where auth constraints allow."
           fi
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
       - name: Cargo check
@@ -106,6 +109,11 @@ jobs:
         run: cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
       - name: Cargo clippy (postgres feature)
         run: cargo clippy -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres -- -D warnings
+      - name: Invariant smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          make invariant-smoke
       - name: Release profile smoke
         run: bash scripts/validate_release_feature_profile.sh
       - name: ferrum-stress machine-readable smoke
@@ -155,7 +163,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
         env:
           POSTGRES_USER: ferrumgate_dev
           POSTGRES_PASSWORD: ferrumgate_dev_password
@@ -168,9 +176,9 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       - name: Cargo test (PostgreSQL live, no skips)
         shell: bash
         run: |
@@ -258,14 +266,14 @@ jobs:
   s3-live-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Start MinIO
         run: |
           docker run -d --name ferrum-minio \
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-01-20T14-49-07Z \
+            minio/minio:RELEASE.2025-01-20T14-49-07Z@sha256:ed9be66eb5f2636c18289c34c3b725ddf57815f2777c77b5938543b78a44f144 \
             server /data --console-address ":9001"
       - name: Wait for MinIO
         run: |
@@ -290,7 +298,7 @@ jobs:
             --bucket ferrum-test-bucket \
             --versioning-configuration Status=Enabled
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       - name: Cargo test (S3 MinIO live, ignored tests)
         shell: bash
         run: |
@@ -303,13 +311,13 @@ jobs:
   coverage-and-sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
           tool: cargo-llvm-cov
       - name: Install cargo-cyclonedx
@@ -364,7 +372,7 @@ jobs:
         run: cargo cyclonedx --all
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: |
@@ -373,7 +381,7 @@ jobs:
           retention-days: 30
       - name: Upload SBOM artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: target/cyclonedx/*

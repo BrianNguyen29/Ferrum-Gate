@@ -17,6 +17,9 @@
     "default_rollback_class",
     "time_budget",
     "trust_context",
+    "derived_from_event_ids",
+    "tags",
+    "metadata",
     "status",
     "created_at",
     "expires_at"
@@ -358,6 +361,12 @@
     "expires_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "owner_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "metadata": {
       "type": "object"
