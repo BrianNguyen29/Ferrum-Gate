@@ -2289,6 +2289,12 @@ async fn postgres_rollback_update_state() {
     let contract = make_test_rollback_contract(contract_id, exec_id);
 
     repo.insert(&contract).await.unwrap();
+
+    // Prepared -> Verified is not a legal rollback transition; step through
+    // ExecutedAwaitingVerify first.
+    repo.update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+        .await
+        .unwrap();
     repo.update_state(contract_id, RollbackState::Verified)
         .await
         .unwrap();
