@@ -1636,7 +1636,7 @@ async fn test_compensate_with_valid_http_replay_v1_succeeds() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract(
         &url,
@@ -1688,7 +1688,7 @@ async fn test_rollback_with_valid_http_replay_v1_succeeds() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract =
         create_replay_contract(&url, payload, "rollback-key-67890", &request_digest, &[200]);
@@ -1735,7 +1735,7 @@ async fn test_compensate_returns_enriched_audit_metadata() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract(
         &url,
@@ -1817,7 +1817,7 @@ async fn test_rollback_returns_enriched_audit_metadata() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract(
         &url,
@@ -1899,7 +1899,7 @@ async fn test_compensate_response_truncated_flag_when_body_large() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract(&url, payload, "trunc-test-key", &request_digest, &[200]);
 
@@ -1940,7 +1940,7 @@ async fn test_rollback_response_truncated_flag_when_body_large() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract =
         create_replay_contract(&url, payload, "trunc-rollback-key", &request_digest, &[200]);
@@ -1982,7 +1982,7 @@ async fn test_compensate_enriched_metadata_has_multiple_expected_statuses() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses [200, 201, 202] - 202 is valid
     let contract = create_replay_contract(
@@ -2170,7 +2170,7 @@ async fn test_compensate_with_expected_statuses_validation() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with expected_statuses [200, 201, 202]
     let mut contract =
@@ -2220,7 +2220,7 @@ async fn test_compensate_fails_on_status_mismatch() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with expected_statuses [200, 201]
     let mut contract =
@@ -2312,7 +2312,7 @@ async fn test_compensate_fails_on_url_mismatch() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let mut contract = create_replay_contract(
         "http://example.com/test",
@@ -2432,7 +2432,7 @@ async fn test_compensate_fails_on_unknown_args_keys() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let mut contract = create_replay_contract(
         "http://example.com/test",
@@ -2480,7 +2480,7 @@ async fn test_compensate_fails_on_multiple_compensation_steps() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let mut contract = create_replay_contract(
         "http://example.com/test",
@@ -2542,7 +2542,7 @@ async fn test_execute_emits_idempotency_key_with_valid_replay_contract() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with valid http.replay_v1 compensation plan
     let contract = create_replay_contract(
@@ -2684,7 +2684,7 @@ async fn test_compensate_fails_on_empty_expected_statuses_array() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract(
         "http://example.com/test",
@@ -2709,7 +2709,7 @@ async fn test_rollback_fails_on_empty_expected_statuses_array() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract(
         "http://example.com/test",
@@ -2734,7 +2734,7 @@ async fn test_compensate_fails_on_out_of_range_status_0() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses with 0 is out of valid range
     let contract = create_replay_contract(
@@ -2760,7 +2760,7 @@ async fn test_rollback_fails_on_out_of_range_status_0() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses with 0 is out of valid range
     let contract = create_replay_contract(
@@ -2786,7 +2786,7 @@ async fn test_compensate_fails_on_out_of_range_status_700() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses with 700 is out of valid range (max is 599)
     let contract = create_replay_contract(
@@ -2812,7 +2812,7 @@ async fn test_rollback_fails_on_out_of_range_status_700() {
     d.update(b"Post");
     d.update("http://example.com/test".as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses with 700 is out of valid range (max is 599)
     let contract = create_replay_contract(
@@ -2845,7 +2845,7 @@ async fn test_compensate_succeeds_on_valid_listed_statuses() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses [200, 201, 202] - 202 is valid and in the list
     let contract =
@@ -2877,7 +2877,7 @@ async fn test_rollback_succeeds_on_valid_listed_statuses() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // expected_statuses [200, 201, 202] - 202 is valid and in the list
     let contract =
@@ -3022,7 +3022,7 @@ async fn test_http_put_replay_compensate_succeeds() {
     d.update(b"Put");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract_with_method(
         &url,
@@ -3075,7 +3075,7 @@ async fn test_http_patch_replay_compensate_succeeds() {
     d.update(b"Patch");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract_with_method(
         &url,
@@ -3128,7 +3128,7 @@ async fn test_http_put_replay_rollback_succeeds() {
     d.update(b"Put");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract_with_method(
         &url,
@@ -3167,7 +3167,7 @@ async fn test_http_patch_replay_rollback_succeeds() {
     d.update(b"Patch");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     let contract = create_replay_contract_with_method(
         &url,
@@ -3200,7 +3200,7 @@ async fn test_http_delete_replay_still_fails_closed() {
     d.update(b"Delete");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Contract with DELETE method should fail - DELETE is not supported for replay
     let contract = RollbackContract {
@@ -3263,7 +3263,7 @@ async fn test_http_get_replay_still_fails_closed() {
     d.update(b"Get");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Contract with GET method should fail - GET is not supported for replay
     let contract = RollbackContract {
@@ -3332,7 +3332,7 @@ async fn test_http_put_replay_validates_digest() {
     d.update(b"Put");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let _correct_digest = format!("{:x}", d.finalize());
+    let _correct_digest = hex::encode(d.finalize());
 
     // Use wrong digest in contract
     let wrong_digest = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
@@ -3377,7 +3377,7 @@ async fn test_http_put_replay_validates_url() {
     d.update(b"Put");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with WRONG URL in args (but correct URL in target)
     let wrong_url = format!("http://test.local:{}/api/items/999", port);
@@ -3441,7 +3441,7 @@ async fn test_http_put_replay_requires_idempotency_key() {
     d.update(b"Put");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with EMPTY idempotency key
     let contract = RollbackContract {
@@ -3508,7 +3508,7 @@ async fn test_http_patch_replay_requires_expected_statuses() {
     d.update(b"Patch");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with PATCH method but MISSING expected_statuses
     let contract = RollbackContract {
@@ -3979,7 +3979,7 @@ async fn test_retry_preserves_idempotency_key_across_attempts() {
     d.update(b"Post");
     d.update(url.as_bytes());
     d.update(&body_bytes);
-    let request_digest = format!("{:x}", d.finalize());
+    let request_digest = hex::encode(d.finalize());
 
     // Create contract with valid http.replay_v1 compensation plan
     let contract = create_replay_contract(

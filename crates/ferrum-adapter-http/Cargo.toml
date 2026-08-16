@@ -22,6 +22,7 @@ sha2 = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 ferrum-proto = { path = "../ferrum-proto" }
 ferrum-rollback = { path = "../ferrum-rollback" }
+hex = { workspace = true }
 
 [dev-dependencies]
 axum = { workspace = true }

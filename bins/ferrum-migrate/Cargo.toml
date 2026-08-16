@@ -23,6 +23,7 @@ ferrum-store = { path = "../../crates/ferrum-store" }
 ferrum-proto = { path = "../../crates/ferrum-proto" }
 chrono = { workspace = true }
 sha2 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true

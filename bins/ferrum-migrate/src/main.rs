@@ -334,7 +334,7 @@ where
 fn aggregate_hash(mut hashes: Vec<String>) -> String {
     hashes.sort_unstable();
     let joined = hashes.join("\n");
-    format!("{:x}", Sha256::digest(joined.as_bytes()))
+    hex::encode(Sha256::digest(joined.as_bytes()))
 }
 
 /// Compute the aggregate content hash for a PostgreSQL target table.
@@ -358,7 +358,7 @@ async fn compute_target_hash(
         let rows = sqlx::query(&sql).fetch_all(pg).await?;
         for row in &rows {
             let canonical = canonical_row(row, select_columns)?;
-            let hash = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+            let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
             hashes.push(hash);
         }
     }
@@ -386,7 +386,7 @@ async fn compute_source_hash(
         let rows = sqlx::query(&sql).fetch_all(sqlite).await?;
         for row in &rows {
             let canonical = canonical_row(row, select_columns)?;
-            let hash = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+            let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
             hashes.push(hash);
         }
     }
@@ -576,7 +576,7 @@ async fn migrate_table(
             for row in &rows {
                 match canonical_row(row, tm.select_columns) {
                     Ok(canonical) => {
-                        let hash = format!("{:x}", Sha256::digest(canonical.as_bytes()));
+                        let hash = hex::encode(Sha256::digest(canonical.as_bytes()));
                         source_hashes.push(hash);
                     }
                     Err(e) => {

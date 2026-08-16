@@ -1073,7 +1073,7 @@ impl HttpAdapter {
         if let Some(b) = body {
             d.update(b);
         }
-        format!("{:x}", d.finalize())
+        hex::encode(d.finalize())
     }
 
     /// Parses and validates the compensation plan for a supported http.replay_v1 contract.
@@ -1464,13 +1464,13 @@ impl RollbackAdapter for HttpAdapter {
                 d.update(format!("{:?}", method).as_bytes());
                 d.update(url.as_bytes());
                 d.update(body);
-                format!("{:x}", d.finalize())
+                hex::encode(d.finalize())
             }
             None => {
                 let mut d = Sha256::new();
                 d.update(format!("{:?}", method).as_bytes());
                 d.update(url.as_bytes());
-                format!("{:x}", d.finalize())
+                hex::encode(d.finalize())
             }
         };
 
@@ -1534,7 +1534,7 @@ impl RollbackAdapter for HttpAdapter {
             let mut d = Sha256::new();
             d.update(status.to_string().as_bytes());
             d.update(response_body_for_digest);
-            format!("{:x}", d.finalize())
+            hex::encode(d.finalize())
         };
 
         // Build receipt metadata
@@ -1824,7 +1824,7 @@ impl RollbackAdapter for HttpAdapter {
             let mut d = Sha256::new();
             d.update(status.to_string().as_bytes());
             d.update(response_body_for_digest);
-            format!("{:x}", d.finalize())
+            hex::encode(d.finalize())
         };
         let response_body_truncated = response_body.len() > MAX_RESPONSE_DIGEST_BYTES;
 
@@ -1995,7 +1995,7 @@ impl RollbackAdapter for HttpAdapter {
             let mut d = Sha256::new();
             d.update(status.to_string().as_bytes());
             d.update(response_body_for_digest);
-            format!("{:x}", d.finalize())
+            hex::encode(d.finalize())
         };
         let response_body_truncated = response_body.len() > MAX_RESPONSE_DIGEST_BYTES;
 
