@@ -1,15 +1,17 @@
 use async_trait::async_trait;
 use ferrum_proto::{
-    ActionProposal, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
+    ActionProposal, ActorRef, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
     AuditLogEntry, AuditMerkleRoot, AuditResourceType, CapabilityId, CapabilityLease,
     CapabilityStatus, EventId, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope,
     IntentId, IntentStatus, JsonMap, LifecycleOutboxId, LifecycleOutboxRecord,
-    LifecycleOutboxStatus, MfaCredentialRecord, PolicyBundle, PolicyBundleVersion, ProposalId,
-    ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest, RollbackContract, RollbackContractId,
-    RollbackState, Timestamp,
+    LifecycleOutboxStatus, MfaAgentLockoutRecord, MfaCredentialRecord, PolicyBundle,
+    PolicyBundleVersion, ProposalId, ProvenanceEdge, ProvenanceEvent, ProvenanceQueryRequest,
+    QuarantineHold, QuarantineHoldId, RollbackContract, RollbackContractId, RollbackState,
+    Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::Result;
 
@@ -137,12 +139,25 @@ pub trait ExecutionRepo: Send + Sync {
     async fn get(&self, execution_id: ExecutionId) -> Result<Option<ExecutionRecord>>;
     async fn update(&self, execution: &ExecutionRecord) -> Result<()>;
     async fn update_state(&self, execution_id: ExecutionId, state: ExecutionState) -> Result<()>;
+    /// Atomically transition `execution_id` to `new_state` iff its current state
+    /// is in `expected_states`. When `new_state` is terminal, also set
+    /// `finished_at` to the current time in both the column and `raw_json`.
+    /// Returns true if the row was updated.
     async fn compare_and_set_state(
         &self,
         execution_id: ExecutionId,
         expected_states: &[ExecutionState],
         new_state: ExecutionState,
     ) -> Result<bool>;
+    /// List in-flight executions in `states` whose `started_at` is before
+    /// `stale_before` and whose `finished_at` is NULL, ordered by `started_at`
+    /// ASC and limited to `limit`.
+    async fn list_stale_in_flight(
+        &self,
+        stale_before: Timestamp,
+        states: &[ExecutionState],
+        limit: u32,
+    ) -> Result<Vec<ExecutionRecord>>;
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>>;
     async fn list_by_capability(&self, capability_id: CapabilityId)
     -> Result<Vec<ExecutionRecord>>;
@@ -258,7 +273,21 @@ pub trait ApprovalRepo: Send + Sync {
     async fn insert(&self, approval: &ApprovalRequest) -> Result<()>;
     async fn get(&self, approval_id: ApprovalId) -> Result<Option<ApprovalRequest>>;
     async fn update(&self, approval: &ApprovalRequest) -> Result<()>;
-    async fn resolve(&self, approval_id: ApprovalId, state: ApprovalState) -> Result<()>;
+    /// Atomically resolve a pending approval to `state`.
+    ///
+    /// The transition is applied with a compare-and-swap predicate that requires
+    /// the row to still be `Pending` and not yet expired (`expires_at > now`) at
+    /// write time. Returns `Ok(true)` when the row was transitioned (this caller
+    /// won) and `Ok(false)` when the row was not in a resolvable state (already
+    /// terminal, expired, or missing) so callers can surface a client conflict.
+    /// Only one concurrent resolver can observe `Ok(true)`; the loser observes
+    /// `Ok(false)`. Real storage errors still surface as `Err`.
+    async fn resolve(
+        &self,
+        approval_id: ApprovalId,
+        state: ApprovalState,
+        now: Timestamp,
+    ) -> Result<bool>;
     async fn list_pending(&self) -> Result<Vec<ApprovalRequest>>;
     async fn list_pending_paginated(&self, limit: u32, offset: u32)
     -> Result<Vec<ApprovalRequest>>;
@@ -286,6 +315,47 @@ pub trait ApprovalRepo: Send + Sync {
         approval_id_after: ApprovalId,
         limit: u32,
     ) -> Result<Vec<ApprovalRequest>>;
+    /// Find pending approvals that are stale and transition them to `Expired`.
+    ///
+    /// An approval is considered stale when its `expires_at` is before `now`,
+    /// or when its `created_at` is older than `max_age_seconds` relative to `now`.
+    /// Only approvals in the `Pending` state are considered; terminal approvals
+    /// are never re-transitioned. Returns the approvals that were expired.
+    async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> Result<Vec<ApprovalRequest>>;
+}
+
+#[async_trait]
+pub trait QuarantineHoldRepo: Send + Sync {
+    async fn insert(&self, hold: &QuarantineHold) -> Result<()>;
+    async fn get(&self, hold_id: QuarantineHoldId) -> Result<Option<QuarantineHold>>;
+    async fn get_by_proposal(&self, proposal_id: ProposalId) -> Result<Option<QuarantineHold>>;
+    async fn list_pending(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<QuarantineHold>, Option<String>)>;
+    /// Resolve a pending hold to Allowed or Denied once, returning true if the
+    /// row was updated. The conditional update protects against concurrent resolves.
+    async fn resolve(
+        &self,
+        hold_id: QuarantineHoldId,
+        allow: bool,
+        actor: &ActorRef,
+        reason: Option<&str>,
+        resolved_at: Timestamp,
+    ) -> Result<bool>;
+    /// Atomically expire stale Pending holds. Returns the holds that were transitioned.
+    async fn expire_stale_pending(
+        &self,
+        now: Timestamp,
+        max_age_seconds: u64,
+        batch_size: u32,
+    ) -> Result<Vec<QuarantineHold>>;
 }
 
 #[async_trait]
@@ -337,6 +407,17 @@ pub trait AuditLogRepo: Send + Sync {
         limit: u32,
         since: Option<chrono::DateTime<chrono::Utc>>,
         until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
+
+    /// List audit log entries with id greater than `after_id` in ascending order.
+    ///
+    /// This is a bounded chronological scan used by the WORM sink worker. Returns
+    /// at most `limit` entries and an optional next cursor equal to the last
+    /// returned entry id when more entries are available.
+    async fn list_since_id(
+        &self,
+        after_id: i64,
+        limit: u32,
     ) -> Result<(Vec<AuditLogEntry>, Option<String>)>;
 
     /// Verify the audit log hash chain integrity.
@@ -546,8 +627,52 @@ pub trait MfaCredentialRepo: Send + Sync {
         counter: u64,
     ) -> Result<bool>;
 
+    /// Record a failed verification attempt and optionally lock the factor.
+    ///
+    /// Increments `failed_attempts`, sets `last_failed_at` to now.
+    /// If the new `failed_attempts` reaches `max_attempts`, sets `locked_until`
+    /// to `now + duration_secs` and increments `lockout_count`.
+    /// Returns `true` if the factor was locked by this call.
+    async fn record_failed_attempt(
+        &self,
+        mfa_factor_id: ferrum_proto::MfaFactorId,
+        max_attempts: u32,
+        lockout_duration_secs: u64,
+    ) -> Result<bool>;
+
+    /// Reset lockout state after a successful verification.
+    ///
+    /// Sets `failed_attempts = 0`, `locked_until = NULL`, `last_failed_at = NULL`.
+    /// Preserves `lockout_count`.
+    async fn reset_lockout(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
+
     /// Revoke a credential by setting `revoked_at`.
     async fn revoke(&self, mfa_factor_id: ferrum_proto::MfaFactorId) -> Result<bool>;
+
+    /// Get the agent-scoped MFA lockout record, if any.
+    async fn get_agent_lockout(&self, agent_id: &str) -> Result<Option<MfaAgentLockoutRecord>>;
+
+    /// Record a failed verification attempt for the agent and lock the agent
+    /// if the threshold is crossed.
+    ///
+    /// If the existing lockout has expired, the failed-attempt counter is reset
+    /// before incrementing so that the agent is not re-locked unless the new
+    /// failure crosses the threshold again.
+    ///
+    /// Returns the updated lockout record.
+    async fn record_agent_failed_attempt(
+        &self,
+        agent_id: &str,
+        max_attempts: u32,
+        lockout_duration_secs: u64,
+    ) -> Result<MfaAgentLockoutRecord>;
+
+    /// Reset the agent's lockout state after a successful verification.
+    ///
+    /// Sets `failed_attempts = 0`, `locked_until = NULL`, `last_failed_at = NULL`.
+    /// Preserves `lockout_count`.
+    /// Returns `true` if a record existed and was updated.
+    async fn reset_agent_lockout(&self, agent_id: &str) -> Result<bool>;
 }
 
 /// Facade trait that bundles all repository accessors.
@@ -561,6 +686,7 @@ pub trait StoreFacade: Send + Sync {
     fn rollback_contracts(&self) -> Arc<dyn RollbackRepo>;
     fn lifecycle_outbox(&self) -> Arc<dyn LifecycleOutboxRepo>;
     fn approvals(&self) -> Arc<dyn ApprovalRepo>;
+    fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo>;
     fn provenance(&self) -> Arc<dyn ProvenanceRepo>;
     fn ledger(&self) -> Arc<dyn LedgerRepo>;
     fn intents(&self) -> Arc<dyn IntentRepo>;
@@ -596,5 +722,72 @@ pub trait StoreFacade: Send + Sync {
     /// for them to drain. The default implementation is a no-op.
     async fn shutdown(&self) -> crate::Result<()> {
         Ok(())
+    }
+}
+
+/// Shared nonce cache for agent-auth replay protection.
+///
+/// Implementations must be thread-safe and `Send + Sync`. The trait is
+/// intentionally small: a single `check_and_insert` call atomically decides
+/// whether a nonce is fresh (returns `Ok(true)`), a replay (`Ok(false)`), or
+/// encounters an internal error (`Err`). Callers must treat any error as
+/// fail-closed and reject the request.
+///
+/// A separate `vacuum` method allows background reconcilers to reclaim
+/// expired entries so the cache does not grow without bound.
+#[async_trait]
+pub trait NonceCache: Send + Sync {
+    /// Atomically check whether `nonce` is present and, if not, insert it.
+    ///
+    /// `ttl` is the duration the nonce must be retained. After `ttl` has
+    /// elapsed the same nonce may be accepted again.
+    ///
+    /// Returns `Ok(true)` when the nonce was newly inserted, `Ok(false)` when
+    /// it is a replay, and `Err` on cache failure.
+    async fn check_and_insert(&self, nonce: &str, ttl: Duration) -> Result<bool>;
+
+    /// Remove expired entries and return the number of rows/evictions.
+    ///
+    /// Implementations should treat this as best-effort; errors are logged by
+    /// the caller and do not fail the gateway.
+    async fn vacuum(&self) -> Result<usize>;
+}
+
+/// Configuration backend selector for the nonce cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NonceCacheBackend {
+    /// Select `Postgres` when the store backend is PostgreSQL, otherwise
+    /// `Memory`.
+    #[default]
+    Auto,
+    /// Process-local in-memory cache.
+    Memory,
+    /// PostgreSQL-backed shared cache.
+    Postgres,
+}
+
+impl std::fmt::Display for NonceCacheBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NonceCacheBackend::Auto => write!(f, "auto"),
+            NonceCacheBackend::Memory => write!(f, "memory"),
+            NonceCacheBackend::Postgres => write!(f, "postgres"),
+        }
+    }
+}
+
+impl std::str::FromStr for NonceCacheBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(NonceCacheBackend::Auto),
+            "memory" => Ok(NonceCacheBackend::Memory),
+            "postgres" => Ok(NonceCacheBackend::Postgres),
+            _ => Err(format!(
+                "invalid nonce cache backend: {} (expected 'auto', 'memory', or 'postgres')",
+                s
+            )),
+        }
     }
 }

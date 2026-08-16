@@ -77,6 +77,18 @@
     "created_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "resolver_evidence_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0,
+      "description": "Durable resolution-evidence version stamped by the hardened resolver. Absent on pre-hardening historical records; present on new-code resolutions, which require authenticated resolver evidence for role-bound approval binding. Omitted from JSON when unset."
+    },
+    "owner_actor_id": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   }
 }

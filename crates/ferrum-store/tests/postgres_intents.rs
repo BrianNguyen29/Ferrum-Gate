@@ -14,16 +14,18 @@ use ferrum_proto::{
     ActionProposal, ActionType, ActorRef, ActorType, ApprovalId, ApprovalRequest, ApprovalState,
     CapabilityId, CapabilityLease, CapabilityStatus, Decision, EffectType, EventId, ExecutionId,
     ExecutionRecord, ExecutionState, HashChainRef, IntentEnvelope, IntentId, IntentStatus, JsonMap,
-    LifecycleOutboxRecord, LifecycleOutboxStatus, ObjectRef, ObjectType, OutcomeClause,
-    PolicyBundle, PolicyBundleId, PrincipalId, ProposalId, ProvenanceEdge, ProvenanceEdgeType,
-    ProvenanceEvent, ProvenanceEventKind, ProvenanceQueryRequest, RiskTier, RollbackClass,
-    RollbackContract, RollbackContractId, RollbackState, RollbackTarget, Timestamp,
+    LifecycleOutboxRecord, LifecycleOutboxStatus, MfaCredentialRecord, MfaFactorType, ObjectRef,
+    ObjectType, OutcomeClause, PolicyBundle, PolicyBundleId, PrincipalId, ProposalId,
+    ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceEventKind,
+    ProvenanceQueryRequest, RiskTier, RollbackClass, RollbackContract, RollbackContractId,
+    RollbackState, RollbackTarget, Timestamp,
 };
 use ferrum_store::{
     ApprovalRepo, CapabilityRepo, ExecutionRepo, IntentRepo, LedgerEntry, LedgerRepo,
-    LifecycleOutboxRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade,
-    postgres::PostgresStore,
+    LifecycleOutboxRepo, MfaCredentialRepo, PolicyBundleRepo, ProposalRepo, ProvenanceRepo,
+    RollbackRepo, StoreFacade, postgres::PostgresStore,
 };
+use sqlx::{Connection, Row};
 use std::sync::Arc;
 
 const TEST_DSN: &str =
@@ -79,20 +81,48 @@ fn make_test_intent(intent_id: IntentId, status: IntentStatus) -> IntentEnvelope
         status,
         created_at: now,
         expires_at: now + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     }
 }
 
+/// Cross-process advisory lock key used to serialize Postgres live tests across
+/// separate cargo processes/binaries that share the same test database.
+const PG_TEST_ADVISORY_LOCK_KEY: i64 = 0x4665_7272_756d_4761; // "FerrumGa" in ASCII
+
 /// Attempt to connect to the local Postgres and bootstrap the schema.
 /// Returns `None` if the database is unreachable so tests can skip.
-/// Tests are serialized via a global lock to avoid concurrent table drops.
+/// Tests are serialized via a process-local mutex and a Postgres advisory lock
+/// to avoid concurrent table drops across separate cargo test processes.
 /// The returned guard must be held for the entire test body.
-async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)> {
+async fn setup() -> Option<(
+    PostgresStore,
+    (
+        tokio::sync::MutexGuard<'static, ()>,
+        sqlx::postgres::PgConnection,
+    ),
+)> {
     let guard = pg_lock().lock().await;
 
     let store = match PostgresStore::connect(TEST_DSN).await {
         Ok(s) => s,
         Err(_) => return None,
     };
+
+    // Hold a dedicated connection with an advisory lock for the entire test.
+    // This prevents two separate cargo test processes from dropping and
+    // recreating the shared tables while one another's tests are running.
+    let mut lock_conn = match sqlx::postgres::PgConnection::connect(TEST_DSN).await {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    if let Err(e) = sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(PG_TEST_ADVISORY_LOCK_KEY)
+        .execute(&mut lock_conn)
+        .await
+    {
+        eprintln!("advisory lock acquisition failed: {}", e);
+        return None;
+    }
 
     // Clean slate for each test
     let _ = sqlx::query("DROP TABLE IF EXISTS executions CASCADE")
@@ -125,6 +155,12 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
     let _ = sqlx::query("DROP TABLE IF EXISTS policy_bundles CASCADE")
         .execute(store.pool())
         .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS mfa_agent_lockouts CASCADE")
+        .execute(store.pool())
+        .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS mfa_credentials CASCADE")
+        .execute(store.pool())
+        .await;
     let _ = sqlx::query("DROP TABLE IF EXISTS intents CASCADE")
         .execute(store.pool())
         .await;
@@ -137,7 +173,236 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
         return None;
     }
 
-    Some((store, guard))
+    Some((store, (guard, lock_conn)))
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_threshold_and_reset() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    // No lockout record initially.
+    assert!(repo.get_agent_lockout("agent-1").await.unwrap().is_none());
+
+    // After 4 failed attempts, still not locked.
+    for _ in 0..4 {
+        let record = repo
+            .record_agent_failed_attempt("agent-1", 5, 900)
+            .await
+            .unwrap();
+        assert!(record.locked_until.is_none());
+    }
+
+    let r = repo.get_agent_lockout("agent-1").await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 4);
+    assert!(r.locked_until.is_none());
+    assert_eq!(r.lockout_count, 0);
+
+    // 5th attempt triggers lockout.
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 5, 900)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_some());
+    assert!(r.locked_until.unwrap() > chrono::Utc::now());
+    assert_eq!(r.failed_attempts, 5);
+    assert_eq!(r.lockout_count, 1);
+
+    // Reset clears the lockout.
+    assert!(repo.reset_agent_lockout("agent-1").await.unwrap());
+    let r = repo.get_agent_lockout("agent-1").await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 0);
+    assert!(r.locked_until.is_none());
+    assert!(r.last_failed_at.is_none());
+    assert_eq!(r.lockout_count, 1); // preserved
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_expired_retry_does_not_immediately_relock() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    for _ in 0..3 {
+        let r = repo
+            .record_agent_failed_attempt("agent-1", 3, 1)
+            .await
+            .unwrap();
+        assert!(r.locked_until.is_some() || r.failed_attempts < 3);
+    }
+    let r = repo.get_agent_lockout("agent-1").await.unwrap().unwrap();
+    assert!(r.locked_until.is_some());
+    assert_eq!(r.lockout_count, 1);
+    assert_eq!(r.failed_attempts, 3);
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 3, 1)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_none(), "expired retry should not re-lock");
+    assert_eq!(r.failed_attempts, 1);
+    assert_eq!(r.lockout_count, 1);
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 3, 1)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_none());
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 3, 1)
+        .await
+        .unwrap();
+    assert!(r.locked_until.is_some());
+    assert_eq!(r.lockout_count, 2);
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_extends_while_locked() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 1, 600)
+        .await
+        .unwrap();
+    let first_locked_until = r.locked_until.unwrap();
+
+    let r = repo
+        .record_agent_failed_attempt("agent-1", 1, 600)
+        .await
+        .unwrap();
+    let second_locked_until = r.locked_until.unwrap();
+    assert!(second_locked_until > first_locked_until);
+    assert_eq!(r.lockout_count, 1);
+}
+
+#[tokio::test]
+async fn postgres_mfa_factor_lockout_parity_with_agent_lockout() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+
+    let record = MfaCredentialRecord::new(
+        "agent-1",
+        MfaFactorType::Totp,
+        "encrypted-secret-b64",
+        "nonce-b64",
+        "key-1",
+    );
+    repo.insert(&record).await.unwrap();
+
+    // After 4 failed attempts, still not locked.
+    for _ in 0..4 {
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 5, 900)
+            .await
+            .unwrap();
+        assert!(!locked);
+    }
+
+    let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 4);
+    assert!(r.locked_until.is_none());
+
+    // 5th attempt triggers lockout.
+    let locked = repo
+        .record_failed_attempt(record.mfa_factor_id, 5, 900)
+        .await
+        .unwrap();
+    assert!(locked);
+
+    let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 5);
+    assert!(r.locked_until.is_some());
+    assert_eq!(r.lockout_count, 1);
+
+    // Reset clears the lockout.
+    repo.reset_lockout(record.mfa_factor_id).await.unwrap();
+    let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+    assert_eq!(r.failed_attempts, 0);
+    assert!(r.locked_until.is_none());
+    assert!(r.last_failed_at.is_none());
+    assert_eq!(r.lockout_count, 1);
+}
+
+#[tokio::test]
+async fn postgres_mfa_agent_lockout_concurrent_first_attempts_count_correctly() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.mfa_credentials();
+    let agent_id = "concurrent-agent";
+    let max_attempts = 5;
+    let lockout_duration_secs = 900;
+
+    // Fire 10 concurrent first attempts for an agent with no existing lockout
+    // row. The retry-on-conflict path must ensure every attempt is counted.
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..10 {
+        let repo = repo.clone();
+        set.spawn(async move {
+            repo.record_agent_failed_attempt(agent_id, max_attempts, lockout_duration_secs)
+                .await
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(res) = set.join_next().await {
+        results.push(res);
+    }
+
+    let failures = results.iter().filter(|r| r.is_err()).count();
+    assert_eq!(
+        failures, 0,
+        "concurrent attempts should not fail: {:?}",
+        results
+    );
+
+    let record = repo
+        .get_agent_lockout(agent_id)
+        .await
+        .unwrap()
+        .expect("lockout record should exist after concurrent attempts");
+    assert_eq!(
+        record.failed_attempts, 10,
+        "all concurrent attempts must be counted"
+    );
+    assert!(record.locked_until.is_some(), "threshold should be crossed");
+    assert!(record.locked_until.unwrap() > chrono::Utc::now());
+    assert_eq!(record.lockout_count, 1);
 }
 
 #[tokio::test]
@@ -469,6 +734,7 @@ fn make_test_proposal(
         taint_inputs: vec![],
         metadata: JsonMap::new(),
         created_at: ts_offset(0),
+        owner_actor_id: None,
     }
 }
 
@@ -554,6 +820,7 @@ fn make_test_execution(
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -588,6 +855,26 @@ async fn postgres_execution_insert_and_get_roundtrip() {
     assert_eq!(fetched.execution_id, exec_id);
     assert_eq!(fetched.intent_id, intent_id);
     assert_eq!(fetched.capability_id, cap_id);
+
+    // Verify TEXT started_at is stored as an RFC3339 string in both column and raw_json.
+    let row = sqlx::query("SELECT started_at, raw_json FROM executions WHERE execution_id = $1")
+        .bind(exec_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    let started_at_col: String = row.try_get("started_at").unwrap();
+    assert!(
+        started_at_col.ends_with('Z'),
+        "started_at TEXT column must store RFC3339: got {}",
+        started_at_col
+    );
+    let raw_json: serde_json::Value =
+        serde_json::from_str(row.try_get::<String, _>("raw_json").unwrap().as_str()).unwrap();
+    assert_eq!(
+        raw_json["started_at"].as_str(),
+        Some(started_at_col.as_str()),
+        "raw_json started_at must match column value"
+    );
 }
 
 #[tokio::test]
@@ -819,6 +1106,202 @@ async fn postgres_execution_list_by_capability() {
     assert_eq!(for_cap2[0].execution_id, e3);
 }
 
+#[tokio::test]
+async fn postgres_execution_list_stale_in_flight_filters_and_orders() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.executions();
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let stale_before = ts_offset(-300);
+
+    let mut oldest = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Running,
+    );
+    oldest.started_at = ts_offset(-1200);
+    repo.insert(&oldest).await.unwrap();
+
+    let mut newer = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Proposed,
+    );
+    newer.started_at = ts_offset(-600);
+    repo.insert(&newer).await.unwrap();
+
+    let mut fresh = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Proposed,
+    );
+    fresh.started_at = ts_offset(-60);
+    repo.insert(&fresh).await.unwrap();
+
+    let mut terminal = make_test_execution(
+        ExecutionId::new(),
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Committed,
+    );
+    terminal.started_at = ts_offset(-1800);
+    terminal.finished_at = Some(ts_offset(0));
+    repo.insert(&terminal).await.unwrap();
+
+    let states = &[
+        ExecutionState::Proposed,
+        ExecutionState::Running,
+        ExecutionState::AwaitingApproval,
+    ];
+    let stale = repo
+        .list_stale_in_flight(stale_before, states, 100)
+        .await
+        .unwrap();
+
+    assert_eq!(stale.len(), 2);
+    assert_eq!(stale[0].execution_id, oldest.execution_id);
+    assert_eq!(stale[1].execution_id, newer.execution_id);
+
+    let limited = repo
+        .list_stale_in_flight(stale_before, states, 1)
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].execution_id, oldest.execution_id);
+}
+
+#[tokio::test]
+async fn postgres_execution_compare_and_set_terminal_state_sets_finished_at() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.executions();
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let exec_id = ExecutionId::new();
+    let exec = make_test_execution(
+        exec_id,
+        intent_id,
+        proposal_id,
+        capability_id,
+        ExecutionState::Proposed,
+    );
+    repo.insert(&exec).await.unwrap();
+
+    let first = repo
+        .compare_and_set_state(
+            exec_id,
+            &[ExecutionState::Proposed],
+            ExecutionState::Canceled,
+        )
+        .await
+        .unwrap();
+    assert!(first);
+
+    let second = repo
+        .compare_and_set_state(
+            exec_id,
+            &[ExecutionState::Proposed],
+            ExecutionState::Canceled,
+        )
+        .await
+        .unwrap();
+    assert!(!second);
+
+    let fetched = repo.get(exec_id).await.unwrap().unwrap();
+    assert_eq!(fetched.state, ExecutionState::Canceled);
+    assert!(
+        fetched.finished_at.is_some(),
+        "terminal CAS must set finished_at"
+    );
+
+    let row = sqlx::query("SELECT finished_at, raw_json FROM executions WHERE execution_id = $1")
+        .bind(exec_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    let finished_at_col: Option<String> = row.try_get("finished_at").unwrap();
+    assert!(finished_at_col.is_some());
+    let finished_at_str = finished_at_col.unwrap();
+    assert!(
+        finished_at_str.ends_with('Z'),
+        "finished_at TEXT column must store RFC3339: got {}",
+        finished_at_str
+    );
+    let raw_json: serde_json::Value =
+        serde_json::from_str(row.try_get::<String, _>("raw_json").unwrap().as_str()).unwrap();
+    assert_eq!(
+        raw_json["finished_at"].as_str(),
+        Some(finished_at_str.as_str()),
+        "raw_json finished_at must match column value"
+    );
+}
+
 fn make_test_capability(
     capability_id: CapabilityId,
     intent_id: IntentId,
@@ -852,6 +1335,7 @@ fn make_test_capability(
         expires_at: ts_offset(3600),
         revoked_at: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     }
 }
 
@@ -1112,6 +1596,7 @@ async fn seed_lifecycle_outbox_graph(store: &PostgresStore) -> (ExecutionRecord,
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
     store.executions().insert(&execution).await.unwrap();
 
@@ -1440,6 +1925,293 @@ async fn postgres_lifecycle_concurrent_claims_are_disjoint_and_fenced() {
 }
 
 #[tokio::test]
+async fn postgres_lifecycle_authorization_stores_rfc3339_and_is_stale_visible() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    store
+        .capabilities()
+        .insert(&make_test_capability(
+            capability_id,
+            intent_id,
+            proposal_id,
+            CapabilityStatus::Active,
+        ))
+        .await
+        .unwrap();
+
+    let execution_id = ExecutionId::new();
+    let started_at = ts_offset(-600);
+    let execution = ExecutionRecord {
+        execution_id,
+        proposal_id,
+        intent_id,
+        capability_id,
+        rollback_contract_id: None,
+        decision: Decision::Allow,
+        state: ExecutionState::Prepared,
+        started_at,
+        finished_at: None,
+        result_digest: None,
+        metadata: JsonMap::new(),
+        owner_actor_id: None,
+    };
+
+    let outbox = LifecycleOutboxRecord::pending(
+        execution_id,
+        None,
+        None,
+        ExecutionState::Prepared,
+        None,
+        None,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        format!("authorize:{}", execution_id),
+    );
+
+    let repo = store.lifecycle_outbox();
+    let authorized = repo
+        .record_authorization(
+            &make_test_capability(
+                capability_id,
+                intent_id,
+                proposal_id,
+                CapabilityStatus::Active,
+            ),
+            &execution,
+            &outbox,
+        )
+        .await
+        .unwrap();
+    assert!(
+        authorized,
+        "record_authorization should mark capability used"
+    );
+
+    // Verify TEXT started_at stores RFC3339 and raw_json matches.
+    let row = sqlx::query("SELECT started_at, raw_json FROM executions WHERE execution_id = $1")
+        .bind(execution_id.to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    let started_at_col: String = row.try_get("started_at").unwrap();
+    assert!(
+        started_at_col.ends_with('Z'),
+        "started_at TEXT column must store RFC3339: got {}",
+        started_at_col
+    );
+    let raw_json: serde_json::Value =
+        serde_json::from_str(row.try_get::<String, _>("raw_json").unwrap().as_str()).unwrap();
+    assert_eq!(
+        raw_json["started_at"].as_str(),
+        Some(started_at_col.as_str()),
+        "raw_json started_at must match column value"
+    );
+
+    // Capability JSON mutation path must have updated status to Used.
+    let used_cap = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should exist");
+    assert!(
+        matches!(used_cap.status, CapabilityStatus::Used),
+        "capability status should be Used after authorization"
+    );
+
+    // HA stale selection must see the authorized execution when stale_before is after started_at.
+    let stale_before = ts_offset(-300);
+    let states = &[
+        ExecutionState::Proposed,
+        ExecutionState::Authorized,
+        ExecutionState::Prepared,
+        ExecutionState::AwaitingApproval,
+        ExecutionState::Running,
+        ExecutionState::AwaitingVerification,
+    ];
+    let stale = store
+        .executions()
+        .list_stale_in_flight(stale_before, states, 100)
+        .await
+        .unwrap();
+    assert_eq!(stale.len(), 1, "expected one stale in-flight execution");
+    assert_eq!(stale[0].execution_id, execution_id);
+}
+
+#[tokio::test]
+async fn postgres_record_authorization_rejects_expired_active_capability() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    // Active in status but already past its expires_at: the CAS must refuse it.
+    let mut capability = make_test_capability(
+        capability_id,
+        intent_id,
+        proposal_id,
+        CapabilityStatus::Active,
+    );
+    capability.expires_at = ts_offset(-60);
+    store.capabilities().insert(&capability).await.unwrap();
+
+    let execution_id = ExecutionId::new();
+    let execution = ExecutionRecord {
+        execution_id,
+        proposal_id,
+        intent_id,
+        capability_id,
+        rollback_contract_id: None,
+        decision: Decision::Allow,
+        state: ExecutionState::Prepared,
+        started_at: ts_offset(0),
+        finished_at: None,
+        result_digest: None,
+        metadata: JsonMap::new(),
+        owner_actor_id: None,
+    };
+    let outbox = LifecycleOutboxRecord::pending(
+        execution_id,
+        None,
+        None,
+        ExecutionState::Prepared,
+        None,
+        None,
+        ProvenanceEventKind::ActionProposalSubmitted,
+        format!("authorize:{}", execution_id),
+    );
+
+    let repo = store.lifecycle_outbox();
+    let authorized = repo
+        .record_authorization(&capability, &execution, &outbox)
+        .await
+        .unwrap();
+    assert!(
+        !authorized,
+        "expired-but-active capability must not transition to Used"
+    );
+
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should still exist");
+    assert!(
+        matches!(stored.status, CapabilityStatus::Active),
+        "capability must remain Active after a lost expiry CAS"
+    );
+    assert!(
+        store
+            .executions()
+            .get(execution_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "no execution row must be inserted after expiry CAS loss"
+    );
+    assert!(
+        repo.get(outbox.outbox_id).await.unwrap().is_none(),
+        "no lifecycle outbox row must be inserted after expiry CAS loss"
+    );
+}
+
+/// Guards the same TEXT->timestamptz expiry predicate used by
+/// `update_status_if_active` (and shared by `revoke_if_active`). A non-macro
+/// `sqlx::query` cannot catch a `text > timestamptz` operator mismatch at
+/// compile time, so this live test proves the cast resolves to a true
+/// timestamp comparison and refuses an expired-but-Active capability.
+#[tokio::test]
+async fn postgres_update_status_if_active_rejects_expired_capability() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let intent_id = IntentId::new();
+    let proposal_id = ProposalId::new();
+    let capability_id = CapabilityId::new();
+    store
+        .intents()
+        .insert(&make_test_intent(intent_id, IntentStatus::Active))
+        .await
+        .unwrap();
+    store
+        .proposals()
+        .insert(&make_test_proposal(proposal_id, intent_id, 0))
+        .await
+        .unwrap();
+    // Active status but already past expires_at: the CAS predicate must compare
+    // instants (via the TEXT::timestamptz cast), not text, and refuse the row.
+    let mut capability = make_test_capability(
+        capability_id,
+        intent_id,
+        proposal_id,
+        CapabilityStatus::Active,
+    );
+    capability.expires_at = ts_offset(-60);
+    store.capabilities().insert(&capability).await.unwrap();
+
+    let updated = store
+        .capabilities()
+        .update_status_if_active(capability_id, CapabilityStatus::Used)
+        .await
+        .unwrap();
+    assert!(
+        !updated,
+        "expired-but-active capability must not transition via update_status_if_active"
+    );
+
+    let stored = store
+        .capabilities()
+        .get(capability_id)
+        .await
+        .unwrap()
+        .expect("capability should still exist");
+    assert!(
+        matches!(stored.status, CapabilityStatus::Active),
+        "capability must remain Active after the expiry CAS refuses"
+    );
+}
+
+#[tokio::test]
 async fn postgres_rollback_insert_and_get_roundtrip() {
     let (store, _guard) = match setup().await {
         Some(s) => s,
@@ -1517,6 +2289,12 @@ async fn postgres_rollback_update_state() {
     let contract = make_test_rollback_contract(contract_id, exec_id);
 
     repo.insert(&contract).await.unwrap();
+
+    // Prepared -> Verified is not a legal rollback transition; step through
+    // ExecutedAwaitingVerify first.
+    repo.update_state(contract_id, RollbackState::ExecutedAwaitingVerify)
+        .await
+        .unwrap();
     repo.update_state(contract_id, RollbackState::Verified)
         .await
         .unwrap();
@@ -1630,6 +2408,8 @@ fn make_test_approval(
         expires_at: ts_offset(3600),
         state,
         created_at: ts_offset(0),
+        resolver_evidence_version: None,
+        owner_actor_id: None,
     }
 }
 
@@ -1705,9 +2485,11 @@ async fn postgres_approval_resolve_valid_transition() {
     let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
 
     repo.insert(&approval).await.unwrap();
-    repo.resolve(approval_id, ApprovalState::Granted)
+    let won = repo
+        .resolve(approval_id, ApprovalState::Granted, Utc::now())
         .await
         .unwrap();
+    assert!(won, "Pending->Granted resolve should win the CAS");
 
     let fetched = repo
         .get(approval_id)
@@ -1737,13 +2519,189 @@ async fn postgres_approval_resolve_invalid_transition() {
 
     repo.insert(&approval).await.unwrap();
     let err = repo
-        .resolve(approval_id, ApprovalState::Pending)
+        .resolve(approval_id, ApprovalState::Pending, Utc::now())
         .await
         .unwrap_err();
     assert!(
         matches!(err, ferrum_store::StoreError::InvalidState(_)),
         "expected InvalidState error for transition out of terminal state, got: {}",
         err
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_terminal_loser_returns_false() {
+    // An opposing resolver against an already-terminal approval must lose the
+    // CAS with Ok(false) (never Err) and must not overwrite the winning
+    // decision. This is what lets the gateway map a lost race to 409 on Postgres.
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Granted);
+
+    repo.insert(&approval).await.unwrap();
+
+    let lost = repo
+        .resolve(approval_id, ApprovalState::Denied, Utc::now())
+        .await;
+    assert!(
+        matches!(lost, Ok(false)),
+        "opposing resolve against a terminal approval must lose with Ok(false), got: {:?}",
+        lost
+    );
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    assert!(
+        matches!(fetched.state, ApprovalState::Granted),
+        "terminal Granted decision must not be overwritten, got: {:?}",
+        fetched.state
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_expired_pending_returns_false() {
+    // A Pending approval whose expires_at is already in the past must lose the
+    // CAS with Ok(false) (never Err), and its state must be preserved. The
+    // store's compare-and-swap predicate requires `expires_at > now` at write
+    // time, so an expired row can never be resolved even though it still reads
+    // Pending on the pre-write snapshot.
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    // Force the approval to be expired while still Pending.
+    approval.expires_at = ts_offset(-60);
+    repo.insert(&approval).await.unwrap();
+
+    let lost = repo
+        .resolve(approval_id, ApprovalState::Granted, Utc::now())
+        .await;
+    assert!(
+        matches!(lost, Ok(false)),
+        "expired Pending approval must lose the CAS with Ok(false), got: {:?}",
+        lost
+    );
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    assert!(
+        matches!(fetched.state, ApprovalState::Pending),
+        "expired approval state must remain Pending (preserved), got: {:?}",
+        fetched.state
+    );
+}
+
+#[tokio::test]
+async fn postgres_approval_resolve_concurrent_mixed_decisions_exactly_one_wins() {
+    // Concurrent resolvers issuing a mix of Grant/Deny decisions against the
+    // same Pending approval: exactly one must win the CAS with Ok(true), every
+    // other must lose with Ok(false), and none may error. The row must end in
+    // the single winning terminal decision. This is the Postgres parity proof
+    // for the SQLite single-winner guarantee (see approval_resolve_cas.rs).
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    repo.insert(&approval).await.unwrap();
+
+    let now = Utc::now();
+    let targets = [
+        ApprovalState::Granted,
+        ApprovalState::Denied,
+        ApprovalState::Granted,
+        ApprovalState::Denied,
+        ApprovalState::Granted,
+        ApprovalState::Denied,
+    ];
+    // A shared barrier forces every resolver to arrive before any of them is
+    // released into `resolve`, so the CAS races truly run concurrently rather
+    // than serially.
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(targets.len()));
+    let mut set = tokio::task::JoinSet::new();
+    for target in targets {
+        let repo = repo.clone();
+        let barrier = barrier.clone();
+        set.spawn(async move {
+            barrier.wait().await;
+            let outcome = repo.resolve(approval_id, target.clone(), now).await;
+            (target, outcome)
+        });
+    }
+
+    let mut winners = 0;
+    let mut losers = 0;
+    let mut winner_target: Option<ApprovalState> = None;
+    while let Some(res) = set.join_next().await {
+        let (target, outcome) = res.unwrap();
+        match outcome {
+            Ok(true) => {
+                winners += 1;
+                winner_target = Some(target);
+            }
+            Ok(false) => losers += 1,
+            Err(e) => panic!("concurrent resolver must not error on a lost CAS, got: {e:?}"),
+        }
+    }
+    assert_eq!(
+        winners, 1,
+        "exactly one concurrent resolver must win the CAS, got {}",
+        winners
+    );
+    assert_eq!(
+        losers, 5,
+        "every other concurrent resolver must lose with Ok(false), got {}",
+        losers
+    );
+    let winner_target = winner_target.expect("the single winner must record its target state");
+
+    let fetched = repo
+        .get(approval_id)
+        .await
+        .unwrap()
+        .expect("approval should exist");
+    // `ApprovalState` has no `PartialEq` derive, so compare via pattern
+    // match; only Grant/Deny are valid targets in this test.
+    assert!(
+        matches!(
+            (&fetched.state, &winner_target),
+            (ApprovalState::Granted, ApprovalState::Granted)
+                | (ApprovalState::Denied, ApprovalState::Denied)
+        ),
+        "approval must end in the unique winning resolver's terminal decision, \
+         got: persisted={:?} winner_target={:?}",
+        fetched.state,
+        winner_target
     );
 }
 
@@ -1956,6 +2914,87 @@ async fn postgres_approval_list_pending_by_proposal_cursor() {
         .await
         .unwrap();
     assert!(page.is_empty());
+}
+
+#[tokio::test]
+async fn postgres_approval_expire_stale_pending_by_expires_at() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let now = chrono::Utc::now();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    approval.created_at = now - chrono::Duration::hours(2);
+    approval.expires_at = now - chrono::Duration::minutes(1);
+
+    repo.insert(&approval).await.unwrap();
+
+    let expired = repo.expire_stale_pending(now, 3600, 100).await.unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0].approval_id, approval_id);
+    assert!(matches!(expired[0].state, ApprovalState::Expired));
+
+    let fetched = repo.get(approval_id).await.unwrap().unwrap();
+    assert!(matches!(fetched.state, ApprovalState::Expired));
+}
+
+#[tokio::test]
+async fn postgres_approval_expire_stale_pending_by_max_age() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let now = chrono::Utc::now();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    approval.created_at = now - chrono::Duration::hours(2);
+    approval.expires_at = now + chrono::Duration::hours(1);
+
+    repo.insert(&approval).await.unwrap();
+
+    let expired = repo.expire_stale_pending(now, 3600, 100).await.unwrap();
+    assert_eq!(expired.len(), 1);
+    assert!(matches!(expired[0].state, ApprovalState::Expired));
+}
+
+#[tokio::test]
+async fn postgres_approval_expire_stale_pending_leaves_fresh() {
+    let (store, _guard) = match setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Skipping postgres live test: database not reachable");
+            return;
+        }
+    };
+
+    let repo = store.approvals();
+    let proposal_id = ProposalId::new();
+    let approval_id = ApprovalId::new();
+    let now = chrono::Utc::now();
+    let mut approval = make_test_approval(approval_id, proposal_id, ApprovalState::Pending);
+    approval.created_at = now - chrono::Duration::minutes(30);
+    approval.expires_at = now + chrono::Duration::hours(1);
+
+    repo.insert(&approval).await.unwrap();
+
+    let expired = repo.expire_stale_pending(now, 3600, 100).await.unwrap();
+    assert!(expired.is_empty());
+
+    let fetched = repo.get(approval_id).await.unwrap().unwrap();
+    assert!(matches!(fetched.state, ApprovalState::Pending));
 }
 
 fn make_test_provenance_event(

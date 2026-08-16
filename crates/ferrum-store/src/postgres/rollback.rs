@@ -80,9 +80,16 @@ impl RollbackRepo for PostgresRollbackRepo {
         contract_id: RollbackContractId,
         state: RollbackState,
     ) -> Result<()> {
-        let Some(mut contract) = self.get(contract_id).await? else {
+        let Some(contract) = self.get(contract_id).await? else {
             return Ok(());
         };
+        if !crate::transitions::is_valid_rollback_transition(&contract.state, &state) {
+            return Err(crate::StoreError::InvalidState(format!(
+                "invalid rollback transition from {:?} to {:?}",
+                contract.state, state
+            )));
+        }
+        let mut contract = contract;
         contract.state = state;
         let raw_json = to_json(&contract)?;
         sqlx::query(

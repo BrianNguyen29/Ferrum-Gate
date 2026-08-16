@@ -53,6 +53,7 @@ strong_id!(RollbackContractId);
 strong_id!(LifecycleOutboxId);
 strong_id!(ApprovalId);
 strong_id!(PolicyBundleId);
+strong_id!(QuarantineHoldId);
 strong_id!(PrincipalId);
 strong_id!(SessionId);
 strong_id!(ChannelId);

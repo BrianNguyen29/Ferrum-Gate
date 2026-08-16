@@ -7,12 +7,16 @@ info:
 
     ## Authentication
 
-    When auth mode is set to "bearer", all endpoints except `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, and `/v1/metrics`
+    When auth mode is set to "bearer", all endpoints except `/v1/healthz` and `/v1/readyz`
     require a Bearer token in the Authorization header:
 
     ```
     Authorization: Bearer <token>
     ```
+
+    Bearer mode is a single-principal trust domain: it validates the configured token but does
+    not mint per-request `AuthActor` identities or object ownership. Multi-actor authorization,
+    scoped ownership, and per-object access control require `scoped`, `oidc`, or `agent` auth mode.
 
     ## TLS
 
@@ -54,14 +58,18 @@ paths:
 
   /v1/readyz/deep:
     get:
-      summary: Deep readiness check with component status (unauthenticated)
+      summary: Deep readiness check with component status (requires auth when auth is enabled)
       description: |
         Returns detailed component-level readiness including store health and write queue backpressure.
         The write_queue component provides bounded backpressure detection only; it does not
         indicate full dependency health, ledger scan status, adapter health, rollback health,
         connection pool saturation, or schema integrity.
+
+        Requires a valid bearer token when auth mode is enabled. Unauthenticated only when
+        `auth_mode` is `disabled` (local development).
       operationId: readyzDeep
-      security: []
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: All components healthy
@@ -78,7 +86,7 @@ paths:
 
   /v1/metrics:
     get:
-      summary: Bounded Prometheus-style metrics (unauthenticated)
+      summary: Bounded Prometheus-style metrics (requires auth when auth is enabled)
       operationId: metrics
       description: |
         Returns Prometheus text exposition format with the following metric families:
@@ -89,13 +97,18 @@ paths:
         - `ferrumgate_metrics_scrapes_total` - Metrics endpoint scrape counter
         - `ferrumgate_governance_errors_total` - Governance error counters by route and method
         - `ferrumgate_governance_success_total` - Governance success counters by route and method
-        - `ferrumgate_request_duration_seconds` - Latency histogram for public endpoints with bounded labels: route, method, status, le (bucket boundary). Emits _bucket, _sum, and _count lines per route/status combination.
+        - `ferrumgate_request_duration_seconds` - Latency histogram for monitoring endpoints with bounded labels: route, method, status, le (bucket boundary). Emits _bucket, _sum, and _count lines per route/status combination.
 
         **Note**: This endpoint is intentionally bounded. Latency histograms are
-        implemented for public endpoints only (healthz, readyz, readyz/deep, metrics).
-        Governance route latency instrumentation is out of scope. HTTP status labels
-        are implemented for public endpoints only (bounded change, per-handler instrumentation).
-      security: []
+        implemented for monitoring endpoints only (`/v1/healthz`, `/v1/readyz`,
+        `/v1/readyz/deep`, `/v1/metrics`). Governance route latency instrumentation
+        is out of scope. HTTP status labels are implemented for monitoring endpoints
+        only (bounded change, per-handler instrumentation).
+
+        Requires a valid bearer token when auth mode is enabled. Unauthenticated only when
+        `auth_mode` is `disabled` (local development).
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: Metrics in Prometheus text exposition format
@@ -294,6 +307,12 @@ paths:
         Executes the adapter operation for the given execution. The execution must be in
         Prepared or Authorized state and the rollback contract must be in Prepared state.
         Payload format is adapter-specific (e.g., `{"content": "..."}` for FileWrite).
+
+        On a recoverable adapter error, the execution transitions to `RecoveryRequired`.
+        `RecoveryRequired` is a non-terminal, owner-review state: the gateway does not
+        auto-commit, auto-compensate, or replay the side effect. Only explicit
+        policy-approved R3 actions may use HTTP/SQLite mutation adapters; R2 compensation
+        or replay is rejected for those adapters.
       operationId: executeExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
@@ -305,7 +324,13 @@ paths:
               $ref: '#/components/schemas/ExecuteExecutionRequest'
       responses:
         '200':
-          description: Execution completed
+          description: Execution completed and awaiting verification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteExecutionResponse'
+        '202':
+          description: Execution adapter reported a recoverable error; recovery required
           content:
             application/json:
               schema:
@@ -324,12 +349,23 @@ paths:
       description: |
         Runs verify checks on the rollback contract to confirm the side effect
         was applied correctly. Returns verified=true if all checks pass.
+
+        If the verification outcome is indeterminate, the execution transitions to
+        `RecoveryRequired`, a non-terminal owner-review state. HTTP/SQLite mutation
+        adapters are not eligible for automatic compensation or replay; only R3 actions
+        with explicit manual verification and commit are supported.
       operationId: verifyExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
       responses:
         '200':
           description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyExecutionResponse'
+        '202':
+          description: Verification outcome indeterminate; recovery required
           content:
             application/json:
               schema:
@@ -457,11 +493,17 @@ paths:
       description: |
         Resolves a pending approval by granting or denying it.
         Only pending approvals can be resolved; terminal approvals return 409 Conflict.
-        Expired approvals return 403 Forbidden.
+        Expired approvals return 403 Forbidden. Pending approvals are also
+        automatically transitioned to `Expired` by the background reconciler when
+        their `expires_at` passes or when they exceed `approval_timeout_seconds`.
         When `approval_mfa_required` is enabled, the request must include a valid
         active `mfa_factor` with a correct `code` (e.g. TOTP code). Missing factor
         returns 403 with `MfaRequired`; invalid factor or code returns 403 with
-        `MfaInvalid`.
+        `MfaInvalid` and increments both the factor-level and the agent-level
+        failed-attempt counters. Repeated failures across any factor for the same
+        agent can lock the agent's MFA challenge surface, returning 403 with
+        `MfaLocked` and a `retry_after_seconds` detail. A successful verification
+        resets both the agent and factor lockout counters.
       operationId: resolveApproval
       parameters:
         - $ref: '#/components/parameters/ApprovalId'
@@ -488,6 +530,113 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '403':
           description: Approval has expired, MFA is required, or MFA verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines:
+    get:
+      summary: List quarantine holds
+      operationId: listQuarantineHolds
+      parameters:
+        - name: proposal_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filter to the hold for this proposal (exact match)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of holds to return
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of holds to skip
+      responses:
+        '200':
+          description: List of quarantine holds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineListEnvelope'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines/{hold_id}:
+    get:
+      summary: Get quarantine hold
+      operationId: getQuarantineHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+      responses:
+        '200':
+          description: Quarantine hold object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineHold'
+        '404':
+          $ref: '#/components/responses/ApiError'
+      security:
+        - BearerAuth: []
+
+  /v1/quarantines/{hold_id}/resolve:
+    post:
+      summary: Resolve quarantine hold
+      description: |
+        Resolves a pending quarantine hold by allowing or denying it.
+        Only pending holds can be resolved; terminal holds return 409 Conflict.
+        Expired holds return 403 Forbidden. Pending holds are also automatically
+        transitioned to `Expired` by the background reconciler when their
+        `expires_at` passes or when they exceed `quarantine_timeout_seconds`.
+        When `approval_mfa_required` is enabled, the request must include a valid
+        active `mfa_factor` with a correct `code`. Missing factor returns 403 with
+        `MfaRequired`; invalid factor or code returns 403 with `MfaInvalid` and
+        increments both the factor-level and the agent-level failed-attempt
+        counters. Repeated failures across any factor for the same agent can lock
+        the agent's MFA challenge surface, returning 403 with `MfaLocked` and a
+        `retry_after_seconds` detail. A successful verification resets both the
+        agent and factor lockout counters.
+      operationId: resolveQuarantineHold
+      parameters:
+        - $ref: '#/components/parameters/HoldId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuarantineResolveRequest'
+      responses:
+        '200':
+          description: Updated quarantine hold object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineHold'
+        '403':
+          description: Hold has expired or MFA verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '409':
+          description: Hold is in terminal state
           content:
             application/json:
               schema:
@@ -628,12 +777,27 @@ paths:
   /v1/executions/{execution_id}/compensate:
     post:
       summary: Compensate (rollback) an execution via its rollback contract
+      description: |
+        Runs the compensation plan defined in the rollback contract to undo a side effect.
+        Compensation is only available for rollback classes that support it; HTTP and
+        SQLite mutation adapters are R3-only and do not support automatic compensation
+        or replay.
+
+        If the side effect is already in `RecoveryRequired`, the endpoint may return 202
+        and the execution remains in that non-terminal owner-review state until the
+        operator resolves it.
       operationId: compensateExecution
       parameters:
         - $ref: '#/components/parameters/ExecutionId'
       responses:
         '200':
           description: Compensation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompensateExecutionResponse'
+        '202':
+          description: Compensation incomplete while in recovery; execution remains in recovery
           content:
             application/json:
               schema:
@@ -1158,6 +1322,12 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/verify:
     post:
       summary: Verify a pending MFA factor
+      description: |
+        Verifies a pending MFA factor for the agent. If the agent's MFA challenge
+        surface is locked due to repeated failed attempts on any factor, the
+        request returns 403 with `MfaLocked` and a `retry_after_seconds` detail
+        before the factor secret is verified. A successful verification resets
+        both the agent-level and factor-level lockout counters.
       operationId: verifyMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1186,6 +1356,15 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/disable:
     post:
       summary: Disable an active MFA factor
+      description: |
+        Disables the agent's active MFA factor. When an active factor exists and
+        a `code` is provided, the code is verified against the factor secret.
+        Agent-level and factor-level lockout checks apply before verification.
+        Repeated failures across any factor for the same agent can lock the
+        agent's MFA challenge surface, returning 403 with `MfaLocked`. A
+        successful verification resets both lockout counters. Alternatively,
+        a caller with the `admin:mfa:breakglass` scope may provide a non-empty
+        `reason` to bypass verification.
       operationId: disableMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1213,6 +1392,16 @@ paths:
   /v1/admin/agents/{agent_id}/mfa/rotate:
     post:
       summary: Rotate an active MFA factor
+      description: |
+        Rotates the agent's active MFA factor by revoking it and creating a new
+        pending factor. When an active factor exists and a `code` is provided,
+        the code is verified against the current factor secret. Agent-level and
+        factor-level lockout checks apply before verification. Repeated failures
+        across any factor for the same agent can lock the agent's MFA challenge
+        surface, returning 403 with `MfaLocked`. A successful verification resets
+        both lockout counters. Alternatively, a caller with the
+        `admin:mfa:breakglass` scope may provide a non-empty `reason` to bypass
+        verification.
       operationId: rotateMfa
       parameters:
         - $ref: '#/components/parameters/AgentId'
@@ -1658,6 +1847,13 @@ components:
       schema:
         type: string
         format: uuid
+    HoldId:
+      name: hold_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     EventId:
       name: event_id
       in: path
@@ -1737,6 +1933,7 @@ components:
             - Unauthorized
             - MfaRequired
             - MfaInvalid
+            - MfaLocked
             - Misconfigured
         message:
           type: string
@@ -1884,6 +2081,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -2270,6 +2468,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -2277,6 +2476,12 @@ components:
             - Quarantined
             - Failed
             - Canceled
+          description: |
+            Execution lifecycle state. `RecoveryRequired` is a non-terminal
+            owner-review state: the gateway does not auto-commit,
+            auto-compensate, or auto-fail the side effect. HTTP and SQLite
+            mutation adapters must be R3-only and require manual verification
+            and commit.
         started_at:
           type: string
           format: date-time
@@ -2364,6 +2569,9 @@ components:
             - S3DeleteObject
             - S3GetObject
             - S3CopyObject
+            - GcsPutObject
+            - GcsDeleteObject
+            - GcsGetObject
             - Unknown
         rollback_class:
           type: string
@@ -2450,6 +2658,15 @@ components:
         created_at:
           type: string
           format: date-time
+        resolver_evidence_version:
+          type: integer
+          format: uint32
+          minimum: 0
+          description: >-
+            Durable resolution-evidence version stamped by the hardened resolver.
+            Absent on pre-hardening historical records; present on new-code
+            resolutions, which require authenticated resolver evidence for
+            role-bound approval binding. Omitted from responses when unset.
 
     ApprovalResolveRequest:
       type: object
@@ -2458,6 +2675,90 @@ components:
         actor:
           $ref: '#/components/schemas/Actor'
         approve:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        mfa_factor:
+          $ref: '#/components/schemas/MfaFactor'
+          nullable: true
+
+    QuarantineHold:
+      type: object
+      required:
+        - hold_id
+        - intent_id
+        - proposal_id
+        - reason
+        - matched_rule_ids
+        - state
+        - expires_at
+        - created_at
+      properties:
+        hold_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        proposal_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        matched_rule_ids:
+          type: array
+          items:
+            type: string
+        policy_bundle_id:
+          type: string
+          nullable: true
+        state:
+          type: string
+          enum:
+            - Pending
+            - Allowed
+            - Denied
+            - Expired
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          $ref: '#/components/schemas/Actor'
+          nullable: true
+        resolution_reason:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    QuarantineListEnvelope:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuarantineHold'
+        next_cursor:
+          type: string
+          nullable: true
+
+    QuarantineResolveRequest:
+      type: object
+      required: [actor, allow]
+      properties:
+        actor:
+          $ref: '#/components/schemas/Actor'
+        allow:
           type: boolean
         reason:
           type: string
@@ -2600,6 +2901,20 @@ components:
           type: string
           format: date-time
           nullable: true
+        failed_attempts:
+          type: integer
+          default: 0
+        locked_until:
+          type: string
+          format: date-time
+          nullable: true
+        last_failed_at:
+          type: string
+          format: date-time
+          nullable: true
+        lockout_count:
+          type: integer
+          default: 0
 
     ProvenanceQueryRequest:
       type: object
@@ -2629,6 +2944,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2702,6 +3021,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2854,6 +3177,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -2964,13 +3291,16 @@ components:
 
     CompensateExecutionResponse:
       type: object
-      required: [execution_id, compensated, warnings]
+      required: [execution_id, compensated, recovery_required, warnings]
       properties:
         execution_id:
           type: string
           format: uuid
         compensated:
           type: boolean
+        recovery_required:
+          type: boolean
+          description: True when compensation did not recover the side effect and the execution remains in RecoveryRequired.
         rollback_contract:
           $ref: '#/components/schemas/RollbackContract'
           nullable: true
@@ -2995,6 +3325,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -3012,6 +3343,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -3080,13 +3412,16 @@ components:
 
     ExecuteExecutionResponse:
       type: object
-      required: [execution_id, executed, warnings]
+      required: [execution_id, executed, recovery_required, warnings]
       properties:
         execution_id:
           type: string
           format: uuid
         executed:
           type: boolean
+        recovery_required:
+          type: boolean
+          description: True when the adapter reported a recoverable error and the execution requires manual recovery.
         result_digest:
           type: string
           nullable: true
@@ -3100,13 +3435,16 @@ components:
 
     VerifyExecutionResponse:
       type: object
-      required: [execution_id, verified, warnings]
+      required: [execution_id, verified, recovery_required, warnings]
       properties:
         execution_id:
           type: string
           format: uuid
         verified:
           type: boolean
+        recovery_required:
+          type: boolean
+          description: True when the verification outcome is indeterminate and the execution requires manual recovery.
         rollback_contract:
           $ref: '#/components/schemas/RollbackContract'
           nullable: true
@@ -3518,6 +3856,8 @@ components:
             - JsonPredicate
             - S3ObjectExists
             - S3VersionIdMatches
+            - GcsObjectExists
+            - GcsGenerationMatches
         config:
           type: object
 
@@ -3986,6 +4326,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4016,6 +4360,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted
@@ -4086,6 +4434,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -4103,6 +4452,7 @@ components:
             - Running
             - AwaitingApproval
             - AwaitingVerification
+            - RecoveryRequired
             - Committed
             - Compensated
             - RolledBack
@@ -4117,6 +4467,7 @@ components:
             - Prepared
             - ExecutedAwaitingVerify
             - Verified
+            - RecoveryRequired
             - Committed
             - CompensationPending
             - Compensated
@@ -4131,6 +4482,7 @@ components:
             - Prepared
             - ExecutedAwaitingVerify
             - Verified
+            - RecoveryRequired
             - Committed
             - CompensationPending
             - Compensated
@@ -4151,6 +4503,10 @@ components:
             - ApprovalRequested
             - ApprovalGranted
             - ApprovalDenied
+            - ApprovalTimedOut
+            - QuarantineHoldCreated
+            - QuarantineResolved
+            - QuarantineTimedOut
             - ToolCallPrepared
             - ToolCallIntercepted
             - ToolCallExecuted

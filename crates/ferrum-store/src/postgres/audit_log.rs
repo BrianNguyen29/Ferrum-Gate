@@ -188,6 +188,32 @@ impl AuditLogRepo for PostgresAuditLogRepo {
         Ok((entries, next_cursor))
     }
 
+    async fn list_since_id(
+        &self,
+        after_id: i64,
+        limit: u32,
+    ) -> Result<(Vec<AuditLogEntry>, Option<String>)> {
+        let rows = sqlx::query("SELECT * FROM audit_log WHERE id > $1 ORDER BY id ASC LIMIT $2")
+            .bind(after_id)
+            .bind((limit + 1) as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut entries = Vec::new();
+        for row in &rows {
+            entries.push(row_to_entry(row)?);
+        }
+
+        let next_cursor = if entries.len() > limit as usize {
+            entries.pop();
+            entries.last().map(|e| e.id.to_string())
+        } else {
+            None
+        };
+
+        Ok((entries, next_cursor))
+    }
+
     async fn verify_chain(&self) -> Result<()> {
         let rows = sqlx::query("SELECT * FROM audit_log ORDER BY id ASC")
             .fetch_all(&self.pool)

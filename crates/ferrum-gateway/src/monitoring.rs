@@ -2,10 +2,11 @@
 //!
 //! The shallow `/v1/healthz` and `/v1/readyz` routes remain public when gateway auth
 //! is enabled; deep readiness and metrics are protected by the top-level auth
-//! middleware. This module owns the `Metrics` aggregate, the governance
-//! route catalog (`GovernanceRoute`), the per-endpoint latency routing (`PublicRoute`),
-//! and the Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`) used by both
-//! the handlers and `Metrics::record_latency`.
+//! middleware. This module owns the monitoring endpoint handlers and the
+//! Prometheus histogram boundary table (`HISTOGRAM_BOUNDARIES`). The `Metrics`
+//! aggregate, governance route catalog (`GovernanceRoute`), and per-endpoint
+//! latency routing (`PublicRoute`) live in `crate::metrics` and are re-exported
+//! here for handler use.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -30,7 +31,7 @@ pub(crate) const HISTOGRAM_BOUNDARIES: &[f64] = &[
 ];
 const LIFECYCLE_OUTBOX_METRIC_LIMIT: u32 = 10_000;
 
-pub(crate) use crate::server::{GovernanceRoute, PublicRoute};
+pub(crate) use crate::metrics::{GovernanceRoute, PublicRoute};
 
 pub(crate) async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     let start = Instant::now();
@@ -286,6 +287,50 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         .readyz_deep_requests_503
         .load(Ordering::Relaxed);
     let metrics_count = state.metrics.metrics_scrapes.load(Ordering::Relaxed);
+    let approval_timeouts_total = state
+        .metrics
+        .approval_timeouts_total
+        .load(Ordering::Relaxed);
+    let quarantine_timeouts_total = state
+        .metrics
+        .quarantine_timeouts_total
+        .load(Ordering::Relaxed);
+    let ha_reconciler_canceled_total = state
+        .metrics
+        .ha_reconciler_canceled_total
+        .load(Ordering::Relaxed);
+    let ha_reconciler_recovery_required_total = state
+        .metrics
+        .ha_reconciler_recovery_required_total
+        .load(Ordering::Relaxed);
+    let ha_reconciler_errors_total = state
+        .metrics
+        .ha_reconciler_errors_total
+        .load(Ordering::Relaxed);
+    let behavioral_anomaly_warnings_total = state
+        .metrics
+        .behavioral_anomaly_warnings_total
+        .load(Ordering::Relaxed);
+    let behavioral_anomaly_critical_total = state
+        .metrics
+        .behavioral_anomaly_critical_total
+        .load(Ordering::Relaxed);
+    let audit_fail_closed_rejections = state
+        .metrics
+        .audit_fail_closed_rejections
+        .load(Ordering::Relaxed);
+    let audit_worm_sink_exports_total = state
+        .metrics
+        .audit_worm_sink_exports_total
+        .load(Ordering::Relaxed);
+    let audit_worm_sink_failures_total = state
+        .metrics
+        .audit_worm_sink_failures_total
+        .load(Ordering::Relaxed);
+    let audit_worm_sink_last_success_timestamp_seconds = state
+        .metrics
+        .audit_worm_sink_last_success_timestamp_seconds
+        .load(Ordering::Relaxed);
     let store_up = state.metrics.store_health_up.load(Ordering::Relaxed);
     let write_queue_depth = state.runtime.store.write_queue_depth();
     let pool_status = state.runtime.store.pool_status();
@@ -373,6 +418,18 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     let gov_err_approvals_resolve = state
         .metrics
         .governance_errors_v1_approvals_resolve
+        .load(Ordering::Relaxed);
+    let gov_err_quarantines = state
+        .metrics
+        .governance_errors_v1_quarantines
+        .load(Ordering::Relaxed);
+    let gov_err_quarantines_hold_id = state
+        .metrics
+        .governance_errors_v1_quarantines_hold_id
+        .load(Ordering::Relaxed);
+    let gov_err_quarantines_resolve = state
+        .metrics
+        .governance_errors_v1_quarantines_resolve
         .load(Ordering::Relaxed);
     let gov_err_policy_bundles_create = state
         .metrics
@@ -543,6 +600,18 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
     let gov_ok_approvals_resolve = state
         .metrics
         .governance_success_v1_approvals_resolve
+        .load(Ordering::Relaxed);
+    let gov_ok_quarantines = state
+        .metrics
+        .governance_success_v1_quarantines
+        .load(Ordering::Relaxed);
+    let gov_ok_quarantines_hold_id = state
+        .metrics
+        .governance_success_v1_quarantines_hold_id
+        .load(Ordering::Relaxed);
+    let gov_ok_quarantines_resolve = state
+        .metrics
+        .governance_success_v1_quarantines_resolve
         .load(Ordering::Relaxed);
     let gov_ok_policy_bundles_create = state
         .metrics
@@ -804,6 +873,12 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          # HELP ferrumgate_metrics_scrapes_total Number of times /v1/metrics was scraped\n\
          # TYPE ferrumgate_metrics_scrapes_total counter\n\
          ferrumgate_metrics_scrapes_total {}\n\
+         # HELP ferrumgate_approval_timeouts_total Number of pending approvals automatically expired due to timeout\n\
+         # TYPE ferrumgate_approval_timeouts_total counter\n\
+         ferrumgate_approval_timeouts_total {}\n\
+         # HELP ferrumgate_quarantine_timeouts_total Number of pending quarantine holds automatically expired due to timeout\n\
+         # TYPE ferrumgate_quarantine_timeouts_total counter\n\
+         ferrumgate_quarantine_timeouts_total {}\n\
          # HELP ferrumgate_governance_errors_total Governance errors by route and method\n\
          # TYPE ferrumgate_governance_errors_total counter\n\
          ferrumgate_governance_errors_total{{route=\"/v1/intents/compile\",method=\"POST\"}} {}\n\
@@ -823,6 +898,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          ferrumgate_governance_errors_total{{route=\"/v1/approvals\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/approvals/{{approval_id}}/resolve\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/quarantines\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/quarantines/{{hold_id}}\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_errors_total{{route=\"/v1/quarantines/{{hold_id}}/resolve\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\",method=\"POST\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles\",method=\"GET\"}} {}\n\
          ferrumgate_governance_errors_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"GET\"}} {}\n\
@@ -867,6 +945,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
          ferrumgate_governance_success_total{{route=\"/v1/approvals\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/approvals/{{approval_id}}/resolve\",method=\"POST\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/quarantines\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/quarantines/{{hold_id}}\",method=\"GET\"}} {}\n\
+         ferrumgate_governance_success_total{{route=\"/v1/quarantines/{{hold_id}}/resolve\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\",method=\"POST\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles\",method=\"GET\"}} {}\n\
          ferrumgate_governance_success_total{{route=\"/v1/policy-bundles/{{bundle_id}}\",method=\"GET\"}} {}\n\
@@ -903,6 +984,8 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         state.server_config.rate_limit_burst,
         lifecycle_outbox_operator_review,
         metrics_count,
+        approval_timeouts_total,
+        quarantine_timeouts_total,
         gov_err_intents_compile,
         gov_err_intents_list,
         gov_err_proposals_evaluate,
@@ -920,6 +1003,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_err_approvals,
         gov_err_approvals_approval_id,
         gov_err_approvals_resolve,
+        gov_err_quarantines,
+        gov_err_quarantines_hold_id,
+        gov_err_quarantines_resolve,
         gov_err_policy_bundles_create,
         gov_err_policy_bundles_list,
         gov_err_policy_bundles_get,
@@ -962,6 +1048,9 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_ok_approvals,
         gov_ok_approvals_approval_id,
         gov_ok_approvals_resolve,
+        gov_ok_quarantines,
+        gov_ok_quarantines_hold_id,
+        gov_ok_quarantines_resolve,
         gov_ok_policy_bundles_create,
         gov_ok_policy_bundles_list,
         gov_ok_policy_bundles_get,
@@ -988,6 +1077,66 @@ pub(crate) async fn metrics_handler(State(state): State<Arc<AppState>>) -> Respo
         gov_ok_mfa_list,
         gov_ok_mfa_get,
     );
+
+    // Append HA reconciler counters
+    body.push_str("# HELP ferrumgate_ha_reconciler_canceled_total Number of stale pre-side-effect executions transitioned to Canceled by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_canceled_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_ha_reconciler_canceled_total {}\n",
+        ha_reconciler_canceled_total
+    ));
+    body.push_str("# HELP ferrumgate_ha_reconciler_recovery_required_total Number of stale paired Running+Prepared executions transitioned to RecoveryRequired by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_recovery_required_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_ha_reconciler_recovery_required_total {}\n",
+        ha_reconciler_recovery_required_total
+    ));
+    body.push_str("# HELP ferrumgate_ha_reconciler_errors_total Number of errors encountered by the HA reconciler\n");
+    body.push_str("# TYPE ferrumgate_ha_reconciler_errors_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_ha_reconciler_errors_total {}\n",
+        ha_reconciler_errors_total
+    ));
+
+    // Append behavioral anomaly advisory counters
+    body.push_str("# HELP ferrumgate_behavioral_anomaly_detected_total Behavioral anomaly detections by severity\n");
+    body.push_str("# TYPE ferrumgate_behavioral_anomaly_detected_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_behavioral_anomaly_detected_total{{severity=\"warning\"}} {}\n",
+        behavioral_anomaly_warnings_total
+    ));
+    body.push_str(&format!(
+        "ferrumgate_behavioral_anomaly_detected_total{{severity=\"critical\"}} {}\n",
+        behavioral_anomaly_critical_total
+    ));
+
+    // Append audit fail-closed rejection counter
+    body.push_str("# HELP ferrumgate_audit_fail_closed_rejections_total Number of requests rejected because audit append failed in fail-closed mode\n");
+    body.push_str("# TYPE ferrumgate_audit_fail_closed_rejections_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_fail_closed_rejections_total {}\n",
+        audit_fail_closed_rejections
+    ));
+
+    // Append WORM sink counters
+    body.push_str("# HELP ferrumgate_audit_worm_sink_exports_total Number of audit bundles successfully exported to the WORM sink\n");
+    body.push_str("# TYPE ferrumgate_audit_worm_sink_exports_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_worm_sink_exports_total {}\n",
+        audit_worm_sink_exports_total
+    ));
+    body.push_str("# HELP ferrumgate_audit_worm_sink_failures_total Number of failed WORM sink export attempts\n");
+    body.push_str("# TYPE ferrumgate_audit_worm_sink_failures_total counter\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_worm_sink_failures_total {}\n",
+        audit_worm_sink_failures_total
+    ));
+    body.push_str("# HELP ferrumgate_audit_worm_sink_last_success_timestamp_seconds Unix timestamp of the last successful WORM sink export\n");
+    body.push_str("# TYPE ferrumgate_audit_worm_sink_last_success_timestamp_seconds gauge\n");
+    body.push_str(&format!(
+        "ferrumgate_audit_worm_sink_last_success_timestamp_seconds {}\n",
+        audit_worm_sink_last_success_timestamp_seconds
+    ));
 
     // Append histogram output to body
     body.push_str("# HELP ferrumgate_request_duration_seconds HTTP request latency histogram by route, method, and status\n");

@@ -1,11 +1,42 @@
+//! Minimal test fixtures and assertion helpers for FerrumGate workspace tests.
+//!
+//! ## Fixtures
+//!
+//! `IntentFixture`, `ProposalFixture`, and `ApprovalFixture` are builder-style
+//! fixtures that produce minimal, valid protocol values. They default to a
+//! deterministic `test_now()` timestamp and common placeholder values; override
+//! individual fields with `with_*` methods.
+//!
+//! ## Gateway harness
+//!
+//! Enable the optional `gateway` feature for an opt-in `SqliteGateway` harness
+//! that wires an in-memory SQLite store to a `GatewayRuntime`.
+
 use ferrum_proto::{
     CapabilityMintRequest, Decision, EvaluateProposalResponse, IntentCompileRequest, JsonMap,
     RiskTier, ToolBinding,
 };
 
-/// Returns a sample intent title for use in tests.
-pub fn sample_intent_title() -> &'static str {
-    "Create invoice email draft"
+mod approval_fixture;
+mod intent_fixture;
+mod proposal_fixture;
+
+#[cfg(feature = "gateway")]
+pub mod gateway;
+
+pub use approval_fixture::ApprovalFixture;
+pub use intent_fixture::IntentFixture;
+pub use proposal_fixture::ProposalFixture;
+
+/// Returns a deterministic UTC timestamp for tests.
+///
+/// Fixtures use this value as their default `now` so records are reproducible
+/// across runs. Tests that require wall-clock time (e.g. approvals that must
+/// not be expired) can override `with_now(chrono::Utc::now())` explicitly.
+pub fn test_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00+00:00")
+        .expect("fixed test timestamp is valid")
+        .with_timezone(&chrono::Utc)
 }
 
 /// Builds a minimal `IntentCompileRequest` for testing.
@@ -26,6 +57,11 @@ pub fn sample_intent_compile_request() -> IntentCompileRequest {
         approval_mode: None,
         metadata: JsonMap::new(),
     }
+}
+
+/// Returns a sample intent title for use in tests.
+pub fn sample_intent_title() -> &'static str {
+    "Create invoice email draft"
 }
 
 /// Builds a minimal `EvaluateProposalResponse` with `Allow` decision for testing.

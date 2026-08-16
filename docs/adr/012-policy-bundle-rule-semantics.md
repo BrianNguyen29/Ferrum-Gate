@@ -1,7 +1,7 @@
 # ADR 012 — PolicyBundle PDP Rule Semantics
 
 ## Status
-Proposed (blocked until accepted; `PolicyBundlePdpEngine` implementation cannot proceed without these semantics)
+Accepted (Phase 1 implemented)
 
 ## Context
 

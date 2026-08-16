@@ -10,6 +10,7 @@
 
 use ferrum_proto::{IntentEnvelope, IntentId, IntentStatus};
 use ferrum_store::postgres::PostgresStore;
+use sqlx::Connection;
 use std::time::{Duration, Instant};
 
 const TEST_DSN: &str =
@@ -56,18 +57,43 @@ fn make_test_intent(intent_id: IntentId, status: IntentStatus) -> IntentEnvelope
         status,
         created_at: now,
         expires_at: now + chrono::Duration::minutes(15),
+        owner_actor_id: None,
     }
 }
 
+/// Cross-process advisory lock key shared with `postgres_intents.rs` so the two
+/// live Postgres test binaries cannot drop and recreate tables concurrently.
+const PG_TEST_ADVISORY_LOCK_KEY: i64 = 0x4665_7272_756d_4761; // "FerrumGa" in ASCII
+
 /// Attempt to connect to the local Postgres and bootstrap the schema.
 /// Returns `None` if the database is unreachable so tests can skip.
-async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)> {
+async fn setup() -> Option<(
+    PostgresStore,
+    (
+        tokio::sync::MutexGuard<'static, ()>,
+        sqlx::postgres::PgConnection,
+    ),
+)> {
     let guard = pg_lock().lock().await;
 
     let store = match PostgresStore::connect(TEST_DSN).await {
         Ok(s) => s,
         Err(_) => return None,
     };
+
+    // Hold a dedicated connection with an advisory lock for the entire test.
+    let mut lock_conn = match sqlx::postgres::PgConnection::connect(TEST_DSN).await {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    if let Err(e) = sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(PG_TEST_ADVISORY_LOCK_KEY)
+        .execute(&mut lock_conn)
+        .await
+    {
+        eprintln!("advisory lock acquisition failed: {}", e);
+        return None;
+    }
 
     // Clean slate for benchmark
     let _ = sqlx::query("DROP TABLE IF EXISTS executions CASCADE")
@@ -100,13 +126,16 @@ async fn setup() -> Option<(PostgresStore, tokio::sync::MutexGuard<'static, ()>)
     let _ = sqlx::query("DROP TABLE IF EXISTS intents CASCADE")
         .execute(store.pool())
         .await;
+    let _ = sqlx::query("DROP TABLE IF EXISTS _schema_version CASCADE")
+        .execute(store.pool())
+        .await;
 
     if let Err(e) = store.apply_embedded_migrations().await {
         eprintln!("apply_embedded_migrations failed: {}", e);
         return None;
     }
 
-    Some((store, guard))
+    Some((store, (guard, lock_conn)))
 }
 
 #[tokio::test]

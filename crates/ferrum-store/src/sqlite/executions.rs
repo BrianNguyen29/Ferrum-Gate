@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use ferrum_proto::{CapabilityId, ExecutionId, ExecutionRecord, ExecutionState, IntentId};
+use ferrum_proto::{
+    CapabilityId, ExecutionId, ExecutionRecord, ExecutionState, IntentId, Timestamp,
+};
 use sqlx::SqlitePool;
 use tokio::sync::oneshot;
 
@@ -43,8 +45,8 @@ impl ExecutionRepo for SqliteExecutionRepo {
         sqlx::query(
             "INSERT INTO executions (
                 execution_id, intent_id, proposal_id, capability_id, rollback_contract_id,
-                decision, state, started_at, finished_at, result_digest, raw_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                decision, state, started_at, finished_at, result_digest, owner_actor_id, raw_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .bind(execution.execution_id.to_string())
         .bind(execution.intent_id.to_string())
@@ -56,6 +58,7 @@ impl ExecutionRepo for SqliteExecutionRepo {
         .bind(execution.started_at)
         .bind(execution.finished_at)
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -89,7 +92,8 @@ impl ExecutionRepo for SqliteExecutionRepo {
                  state = ?4,
                  finished_at = ?5,
                  result_digest = ?6,
-                 raw_json = ?7
+                 owner_actor_id = ?7,
+                 raw_json = ?8
              WHERE execution_id = ?1",
         )
         .bind(execution.execution_id.to_string())
@@ -98,6 +102,7 @@ impl ExecutionRepo for SqliteExecutionRepo {
         .bind(enum_text(&execution.state)?)
         .bind(execution.finished_at)
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(raw_json)
         .execute(&self.pool)
         .await?;
@@ -142,23 +147,82 @@ impl ExecutionRepo for SqliteExecutionRepo {
             .iter()
             .map(enum_text)
             .collect::<Result<Vec<_>>>()?;
+        let terminal = transitions::execution_state_is_terminal(&new_state);
         let placeholders = std::iter::repeat_n("?", expected.len())
             .collect::<Vec<_>>()
             .join(", ");
-        let sql = format!(
-            "UPDATE executions
-             SET state = ?2,
-                 raw_json = json_set(raw_json, '$.state', ?2)
-             WHERE execution_id = ?1 AND state IN ({placeholders})"
-        );
-        let mut query = sqlx::query(&sql)
-            .bind(execution_id.to_string())
-            .bind(new_state_text);
+        let sql = if terminal {
+            format!(
+                "UPDATE executions
+                 SET state = ?,
+                     finished_at = ?,
+                     raw_json = json_set(
+                         raw_json,
+                         '$.state', ?,
+                         '$.finished_at', ?
+                     )
+                 WHERE execution_id = ? AND state IN ({placeholders})"
+            )
+        } else {
+            format!(
+                "UPDATE executions
+                 SET state = ?,
+                     raw_json = json_set(raw_json, '$.state', ?)
+                 WHERE execution_id = ? AND state IN ({placeholders})"
+            )
+        };
+        let mut query = if terminal {
+            let finished_at = chrono::Utc::now().to_rfc3339();
+            sqlx::query(&sql)
+                .bind(new_state_text.clone())
+                .bind(finished_at.clone())
+                .bind(new_state_text.clone())
+                .bind(finished_at)
+                .bind(execution_id.to_string())
+        } else {
+            sqlx::query(&sql)
+                .bind(new_state_text.clone())
+                .bind(new_state_text)
+                .bind(execution_id.to_string())
+        };
         for state in expected {
             query = query.bind(state);
         }
         let result = query.execute(&self.pool).await?;
         Ok(result.rows_affected() == 1)
+    }
+
+    async fn list_stale_in_flight(
+        &self,
+        stale_before: Timestamp,
+        states: &[ExecutionState],
+        limit: u32,
+    ) -> Result<Vec<ExecutionRecord>> {
+        if states.is_empty() {
+            return Ok(Vec::new());
+        }
+        let state_texts = states.iter().map(enum_text).collect::<Result<Vec<_>>>()?;
+        let placeholders = std::iter::repeat_n("?", state_texts.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let stale_param = state_texts.len() + 1;
+        let limit_param = state_texts.len() + 2;
+        let sql = format!(
+            "SELECT raw_json FROM executions \
+             WHERE state IN ({placeholders}) \
+               AND started_at < ?{stale_param} \
+               AND finished_at IS NULL \
+             ORDER BY started_at ASC \
+             LIMIT ?{limit_param}"
+        );
+        fetch_entities(&self.pool, &sql, |mut query| {
+            for state in state_texts {
+                query = query.bind(state);
+            }
+            query = query.bind(stale_before).bind(i64::from(limit));
+            query
+        })
+        .await
     }
 
     async fn list_by_intent(&self, intent_id: IntentId) -> Result<Vec<ExecutionRecord>> {
@@ -190,6 +254,7 @@ mod tests {
         ActionProposal, CapabilityLease, CapabilityStatus, Decision, ExecutionId, ExecutionRecord,
         ExecutionState, IntentEnvelope, PrincipalId, ProposalId,
     };
+    use sqlx::Row;
 
     fn create_test_intent() -> IntentEnvelope {
         IntentEnvelope {
@@ -225,6 +290,7 @@ mod tests {
             status: ferrum_proto::IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 
@@ -243,6 +309,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -277,6 +344,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -297,6 +365,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -333,5 +402,144 @@ mod tests {
         // get() deserializes from raw_json; if raw_json is stale, state will be wrong
         let retrieved = store.executions().get(execution_id).await.unwrap().unwrap();
         assert_eq!(retrieved.state, ExecutionState::Running);
+    }
+
+    #[tokio::test]
+    async fn test_list_stale_in_flight_filters_states_and_timestamps() {
+        use crate::sqlite::SqliteStore;
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let intent = create_test_intent();
+        let intent_id = intent.intent_id;
+        store.intents().insert(&intent).await.unwrap();
+
+        let proposal = create_test_proposal(intent_id);
+        let proposal_id = proposal.proposal_id;
+        store.proposals().insert(&proposal).await.unwrap();
+
+        let capability = create_test_capability(intent_id, proposal_id);
+        let capability_id = capability.capability_id;
+        store.capabilities().insert(&capability).await.unwrap();
+
+        let now = chrono::Utc::now();
+        let stale_before = now - chrono::Duration::minutes(5);
+
+        let mut stale_proposed = create_test_execution(intent_id, proposal_id, capability_id);
+        stale_proposed.state = ExecutionState::Proposed;
+        stale_proposed.started_at = now - chrono::Duration::minutes(10);
+        store.executions().insert(&stale_proposed).await.unwrap();
+
+        let mut stale_running = create_test_execution(intent_id, proposal_id, capability_id);
+        stale_running.state = ExecutionState::Running;
+        stale_running.started_at = now - chrono::Duration::minutes(20);
+        store.executions().insert(&stale_running).await.unwrap();
+
+        // Not stale (recent)
+        let mut recent_proposed = create_test_execution(intent_id, proposal_id, capability_id);
+        recent_proposed.state = ExecutionState::Proposed;
+        recent_proposed.started_at = now - chrono::Duration::minutes(1);
+        store.executions().insert(&recent_proposed).await.unwrap();
+
+        // Terminal/finished should be excluded
+        let mut finished_committed = create_test_execution(intent_id, proposal_id, capability_id);
+        finished_committed.state = ExecutionState::Committed;
+        finished_committed.started_at = now - chrono::Duration::minutes(30);
+        finished_committed.finished_at = Some(now);
+        store
+            .executions()
+            .insert(&finished_committed)
+            .await
+            .unwrap();
+
+        let states = &[
+            ExecutionState::Proposed,
+            ExecutionState::Running,
+            ExecutionState::AwaitingApproval,
+        ];
+        let stale = store
+            .executions()
+            .list_stale_in_flight(stale_before, states, 100)
+            .await
+            .unwrap();
+
+        assert_eq!(stale.len(), 2);
+        assert_eq!(stale[0].execution_id, stale_running.execution_id);
+        assert_eq!(stale[1].execution_id, stale_proposed.execution_id);
+
+        // Limit is respected
+        let limited = store
+            .executions()
+            .list_stale_in_flight(stale_before, states, 1)
+            .await
+            .unwrap();
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].execution_id, stale_running.execution_id);
+    }
+
+    #[tokio::test]
+    async fn test_compare_and_set_state_is_idempotent() {
+        use crate::sqlite::SqliteStore;
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let intent = create_test_intent();
+        let intent_id = intent.intent_id;
+        store.intents().insert(&intent).await.unwrap();
+
+        let proposal = create_test_proposal(intent_id);
+        let proposal_id = proposal.proposal_id;
+        store.proposals().insert(&proposal).await.unwrap();
+
+        let capability = create_test_capability(intent_id, proposal_id);
+        let capability_id = capability.capability_id;
+        store.capabilities().insert(&capability).await.unwrap();
+
+        let execution = create_test_execution(intent_id, proposal_id, capability_id);
+        let execution_id = execution.execution_id;
+        store.executions().insert(&execution).await.unwrap();
+
+        let first = store
+            .executions()
+            .compare_and_set_state(
+                execution_id,
+                &[ExecutionState::Proposed],
+                ExecutionState::Canceled,
+            )
+            .await
+            .unwrap();
+        assert!(first);
+
+        let second = store
+            .executions()
+            .compare_and_set_state(
+                execution_id,
+                &[ExecutionState::Proposed],
+                ExecutionState::Canceled,
+            )
+            .await
+            .unwrap();
+        assert!(!second);
+
+        let retrieved = store.executions().get(execution_id).await.unwrap().unwrap();
+        assert_eq!(retrieved.state, ExecutionState::Canceled);
+        assert!(
+            retrieved.finished_at.is_some(),
+            "terminal CAS must set finished_at"
+        );
+
+        // Verify the dedicated column and raw_json are both updated.
+        let row =
+            sqlx::query("SELECT finished_at, raw_json FROM executions WHERE execution_id = ?1")
+                .bind(execution_id.to_string())
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        let finished_at_col: Option<String> = row.try_get("finished_at").unwrap();
+        assert!(finished_at_col.is_some());
+        let raw_json: String = row.try_get("raw_json").unwrap();
+        assert!(raw_json.contains("finished_at"));
     }
 }

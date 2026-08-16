@@ -36,10 +36,44 @@ pub struct VerifyReceipt {
     pub adapter_metadata: JsonMap,
 }
 
+/// Tri-state outcome of a verification attempt.
+///
+/// - `Applied`: the side effect was conclusively applied.
+/// - `NotApplied`: the side effect was conclusively not applied (e.g. the
+///   mutation was rolled back by the target system or never reached it).
+/// - `Indeterminate`: the adapter cannot determine whether the side effect
+///   took place; recovery is required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyOutcome {
+    Applied,
+    NotApplied,
+    Indeterminate,
+}
+
+/// Receipt returned by adapters that implement tri-state verification.
+#[derive(Debug, Clone)]
+pub struct VerifyOutcomeReceipt {
+    pub outcome: VerifyOutcome,
+    pub adapter_metadata: JsonMap,
+}
+
 #[derive(Debug, Clone)]
 pub struct RecoveryReceipt {
     pub recovered: bool,
     pub adapter_metadata: JsonMap,
+}
+
+impl VerifyReceipt {
+    /// Compatibility mapping used by the default `verify_with_outcome`:
+    /// `true` means the side effect was applied, `false` means the outcome
+    /// is indeterminate (not a conclusive failure).
+    pub fn outcome(&self) -> VerifyOutcome {
+        if self.verified {
+            VerifyOutcome::Applied
+        } else {
+            VerifyOutcome::Indeterminate
+        }
+    }
 }
 
 #[async_trait]
@@ -56,6 +90,23 @@ pub trait RollbackAdapter: Send + Sync {
         payload: &serde_json::Value,
     ) -> Result<ExecuteReceipt, AdapterError>;
     async fn verify(&self, contract: &RollbackContract) -> Result<VerifyReceipt, AdapterError>;
+
+    /// Tri-state verification hook. The default implementation delegates to
+    /// the legacy boolean `verify` and maps `true` -> `Applied` and `false` ->
+    /// `Indeterminate`, preserving existing adapters without forcing them to
+    /// change constructors in this slice. Adapters that can conclusively report
+    /// `NotApplied` should override this method.
+    async fn verify_with_outcome(
+        &self,
+        contract: &RollbackContract,
+    ) -> Result<VerifyOutcomeReceipt, AdapterError> {
+        let receipt = self.verify(contract).await?;
+        Ok(VerifyOutcomeReceipt {
+            outcome: receipt.outcome(),
+            adapter_metadata: receipt.adapter_metadata,
+        })
+    }
+
     async fn compensate(
         &self,
         contract: &RollbackContract,

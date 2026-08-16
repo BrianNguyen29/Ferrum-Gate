@@ -8,8 +8,8 @@
 //! from `crate::server`.
 //!
 //! Helpers grouped here:
-//! - Policy bundle evaluation: [`evaluate_active_policy_bundles`],
-//!   [`evaluate_bundle_rules`], [`evaluate_rule_matchers`], [`evaluate_matcher`].
+//! - Policy bundle evaluation: [`evaluate_active_policy_bundles`] (pure rule
+//!   evaluation now lives in `ferrum_pdp::matchers`).
 //! - Firewall context derivation: [`build_firewall_context`],
 //!   [`intent_has_external_label`], [`proposal_has_external_metadata`],
 //!   [`has_tool_output_label`], [`has_untrusted_text_label`].
@@ -17,13 +17,14 @@
 
 use chrono::{Duration, Utc};
 use ferrum_firewall::FirewallContext;
-use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::{
-    EvaluateProposalResponse, IntentEnvelope, Matcher, OutcomeClause, PolicyBundle, PolicyRule,
-    RiskTier, RollbackClass, TimeBudget, TrustContextSummary, TrustLabel as ProtoTrustLabel,
+    EvaluateProposalResponse, IntentEnvelope, OutcomeClause, RiskTier, RollbackClass, TimeBudget,
+    TrustContextSummary, TrustLabel as ProtoTrustLabel,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use ferrum_pdp::evaluate_bundle_rules;
 
 // ---------------------------------------------------------------------------
 // Policy bundle evaluation helpers
@@ -46,94 +47,19 @@ pub(crate) async fn evaluate_active_policy_bundles(
     };
 
     for bundle in active_bundles {
-        if let Some(response) = evaluate_bundle_rules(&bundle, intent, proposal, trust) {
-            return Some(response);
-        }
-    }
-
-    None
-}
-
-/// Evaluate all rules in a policy bundle, sorted by descending priority.
-/// Returns `Some(EvaluateProposalResponse)` if a rule matches, `None` otherwise.
-pub(crate) fn evaluate_bundle_rules(
-    bundle: &PolicyBundle,
-    intent: &IntentEnvelope,
-    proposal: &ferrum_proto::ActionProposal,
-    trust: &TrustContextSummary,
-) -> Option<EvaluateProposalResponse> {
-    // Sort rules by descending priority
-    let mut rules = bundle.rules.clone();
-    rules.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
-
-    for rule in rules {
-        if evaluate_rule_matchers(&rule, intent, proposal, trust) {
-            let matched_rule_id = format!("policy_bundle:{}:{}", bundle.bundle_id, rule.id);
+        if let Some((rule_id, decision, reason)) =
+            evaluate_bundle_rules(&bundle, intent, proposal, trust)
+        {
             return Some(EvaluateProposalResponse {
-                decision: rule.decision.clone(),
-                reason: format!(
-                    "policy bundle {} matched rule {}: {}",
-                    bundle.bundle_id, rule.id, rule.description
-                ),
-                matched_rule_ids: vec![matched_rule_id],
+                decision,
+                reason,
+                matched_rule_ids: vec![rule_id],
                 warnings: Vec::new(),
             });
         }
     }
 
     None
-}
-
-/// Evaluate all matchers in a rule. All matchers must match for the rule to apply.
-pub(crate) fn evaluate_rule_matchers(
-    rule: &PolicyRule,
-    intent: &IntentEnvelope,
-    proposal: &ferrum_proto::ActionProposal,
-    trust: &TrustContextSummary,
-) -> bool {
-    rule.matchers
-        .iter()
-        .all(|m| evaluate_matcher(m, intent, proposal, trust))
-}
-
-/// Evaluate a single matcher against the given context.
-pub(crate) fn evaluate_matcher(
-    matcher: &Matcher,
-    intent: &IntentEnvelope,
-    proposal: &ferrum_proto::ActionProposal,
-    trust: &TrustContextSummary,
-) -> bool {
-    match matcher {
-        Matcher::ScopeMismatch => {
-            // True if intent has no resource scope and proposal is a mutation (non-R0)
-            intent.resource_scope.is_empty()
-                && !matches!(
-                    proposal.requested_rollback_class,
-                    RollbackClass::R0NativeReversible
-                )
-        }
-        Matcher::TaintAtLeast { value } => trust.taint_score >= *value,
-        Matcher::ActionIsMutation => !matches!(
-            proposal.requested_rollback_class,
-            RollbackClass::R0NativeReversible
-        ),
-        Matcher::RollbackClassEquals { value } => {
-            // Compare against debug format (e.g., "R3IrreversibleHighConsequence")
-            let class_debug = format!("{:?}", proposal.requested_rollback_class);
-            class_debug == *value
-        }
-        Matcher::ActionTypeEquals { value } => {
-            // Infer effect type and compare against the provided value
-            let inferred_effect = StaticPdpEngine::infer_effect_type(proposal);
-            let effect_debug = format!("{:?}", inferred_effect);
-            effect_debug == *value
-        }
-        Matcher::Unknown { .. } => {
-            // Unknown matchers should not match; add warning only if needed
-            tracing::warn!("encountered unknown matcher type");
-            false
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,5 +212,6 @@ pub(crate) fn minimal_intent_for(
         status: ferrum_proto::IntentStatus::Active,
         created_at: now,
         expires_at: now + Duration::minutes(15),
+        owner_actor_id: None,
     }
 }

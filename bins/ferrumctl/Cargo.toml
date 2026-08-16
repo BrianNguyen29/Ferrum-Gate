@@ -3,6 +3,7 @@ publish = false
 name = "ferrumctl"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -22,3 +23,4 @@ sha2 = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
+ferrum-audit-bundle = { path = "../../crates/ferrum-audit-bundle" }

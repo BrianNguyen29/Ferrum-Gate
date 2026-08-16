@@ -22,12 +22,28 @@ Before tagging a release, verify:
 - [ ] `make validate` passes (layout, contracts, MCP tools, evidence templates)
 - [ ] `make audit` passes (cargo-deny / cargo-audit)
 - [ ] `make pretarget` passes (config examples, restore drill, evidence skeleton, bearer-auth smoke)
-- [ ] `make perf-gate` passes (advisory performance regression check; see ADR 011)
-- [ ] `make coverage-threshold-hard` passes (optional hard coverage check for critical crates; see below)
 - [ ] `CHANGELOG.md` is updated with the new version section (must include release date and non-trivial content)
 - [ ] Version strings in `Cargo.toml` workspace packages are bumped if needed
 - [ ] `docs/ROADMAP.md` status table is updated if any items changed status
 - [ ] SBOM is generated (`cargo cyclonedx --all`) and attached to the release
+
+### Checklist classification
+
+Mandatory, blocking checks (must pass before tagging):
+
+- `cargo check --workspace`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+- `cargo check --workspace --all-features`, postgres feature checks, and s3 feature checks
+- `make docs`, `make validate`, `make audit`, `make pretarget`
+- Release profile smoke test and local backup/restore DR drill (via `prepare_release.sh`)
+- `CHANGELOG.md`, version bump, `docs/ROADMAP.md` update, and SBOM attachment
+
+Advisory, non-blocking evidence / blocked future gates (visibility only; not executed by `prepare_release.sh`):
+
+- `make perf-gate` — advisory performance regression check (ADR 011). Current baselines are `sample_*` and `authoritative:false`; the gate cannot be treated as enforceable until promoted on a controlled runner.
+- `make coverage-threshold-hard` — local opt-in hard coverage check for critical crates. Full-workspace coverage is currently blocked by known integration failures, and the existing evidence is `library-only` / non-authoritative. The advisory ratchet (`make advisory-ratchet`) records this blocked state explicitly.
+- `make advisory-ratchet` — read-only manifest that consumes existing evidence metadata and emits one of the approved advisory statuses. It does not run coverage or perf tests and is safe for ordinary CI.
+
+No release checklist item may be interpreted as G2/pilot authorization, production-ready signoff, or SLO closure.
 
 ## Release automation (preflight)
 
@@ -42,7 +58,10 @@ make release-preflight
 # With SBOM generation (still no push/publish)
 make release-preflight-execute
 
-# Optional: hard coverage threshold check for critical crates (local only; requires cargo-llvm-cov)
+# Optional/local-only: hard coverage threshold check for critical crates (requires cargo-llvm-cov).
+# This is a developer opt-in gate and is NOT a blocking CI or release gate. The advisory
+# ratchet (`make advisory-ratchet`) records whether full-workspace coverage evidence exists
+# without running expensive coverage tests in CI.
 make coverage-threshold-hard
 ```
 
@@ -50,8 +69,9 @@ The script validates:
 - `CHANGELOG.md` contains a section for the target version
 - `Cargo.toml` workspace version matches the target version
 - All cargo checks, formatting, clippy, and tests pass
-- `make docs`, `make validate`, `make audit`, `make pretarget`, and `make perf-gate` pass
-- Release profile smoke test passes
+- `make docs`, `make validate`, `make audit`, `make pretarget`, and release profile smoke pass
+- Local backup/restore DR drill passes
+- (Optional/advisory) `make perf-gate` and `make coverage-threshold-hard` are **not** executed by `prepare_release.sh`; run them manually if you want visibility, but they are non-blocking until baselines are promoted per ADR 011 and the coverage gate is stable
 
 ### Manual GitHub workflow
 

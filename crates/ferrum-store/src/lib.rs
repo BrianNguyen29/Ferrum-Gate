@@ -1,5 +1,6 @@
 pub mod error;
 pub mod merkle;
+pub mod nonce_cache;
 pub mod reconciliation;
 pub mod repos;
 pub mod sqlite;
@@ -11,6 +12,7 @@ pub mod transitions;
 pub mod postgres;
 
 pub use error::{Result, StoreError};
+pub use nonce_cache::InMemoryNonceCache;
 pub use reconciliation::{LifecycleReconciliationReport, reconcile_lifecycle_outbox};
 pub use repos::StoreFacade;
 pub use repos::*;

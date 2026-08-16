@@ -27,3 +27,23 @@ updates:
       prefix: "chore(ci)"
     reviewers:
       - "@BrianNguyen29"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+    reviewers:
+      - "@BrianNguyen29"
+    # Limitations: Dependabot Docker updates cover the Dockerfile at the repo
+    # root. Image references in docker-compose files, Helm charts, GitHub Actions
+    # service blocks, and shell-script variables are not automatically managed by
+    # Dependabot; they are statically validated by
+    # scripts/validate_container_image_pins.py and must be updated manually or
+    # via another approved automation path.

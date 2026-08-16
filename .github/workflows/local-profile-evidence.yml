@@ -21,6 +21,9 @@ on:
       - 'docs/guides/'
       - 'docs/PRODUCTION_NOTES.md'
 
+permissions:
+  contents: read
+
 jobs:
   local-profile:
     name: Local Profile Evidence (CI-hosted RC only)
@@ -35,17 +38,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Show repository tree
         run: find . -maxdepth 3 | sort
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: "false"
           shared-key: "ferrumgate-local-profile"
           cache-targets: false
 
@@ -71,7 +77,7 @@ jobs:
             --output-dir "${{ runner.temp }}/ferrumgate-local-profile"
 
       - name: Upload local profile evidence artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ferrumgate-local-profile-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/ferrumgate-local-profile/

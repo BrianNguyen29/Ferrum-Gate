@@ -35,9 +35,11 @@ mod ledger;
 mod lifecycle_outbox;
 mod mfa_credentials;
 mod migrations;
+mod nonce_cache;
 mod policy_bundles;
 mod proposals;
 mod provenance;
+mod quarantine;
 mod rollback;
 mod tokens;
 
@@ -52,9 +54,11 @@ pub use intents::PostgresIntentRepo;
 pub use ledger::PostgresLedgerRepo;
 pub use lifecycle_outbox::PostgresLifecycleOutboxRepo;
 pub use mfa_credentials::PostgresMfaCredentialRepo;
+pub use nonce_cache::PostgresNonceCache;
 pub use policy_bundles::PostgresPolicyBundleRepo;
 pub use proposals::PostgresProposalRepo;
 pub use provenance::PostgresProvenanceRepo;
+pub use quarantine::PostgresQuarantineHoldRepo;
 pub use rollback::PostgresRollbackRepo;
 pub use tokens::PostgresTokenRepo;
 
@@ -62,7 +66,8 @@ use crate::Result;
 use crate::repos::{
     AgentRepo, ApprovalRepo, AuditCheckpointRepo, AuditLogRepo, AuditMerkleRootRepo,
     CapabilityRepo, ExecutionRepo, IntentRepo, LedgerRepo, LifecycleOutboxRepo, MfaCredentialRepo,
-    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, RollbackRepo, StoreFacade, TokenRepo,
+    PolicyBundleRepo, ProposalRepo, ProvenanceRepo, QuarantineHoldRepo, RollbackRepo, StoreFacade,
+    TokenRepo,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -304,6 +309,10 @@ impl PostgresStore {
         PostgresApprovalRepo::new(self.pool.clone())
     }
 
+    pub fn quarantine_holds(&self) -> PostgresQuarantineHoldRepo {
+        PostgresQuarantineHoldRepo::new(self.pool.clone())
+    }
+
     pub fn provenance(&self) -> PostgresProvenanceRepo {
         PostgresProvenanceRepo::new(self.pool.clone())
     }
@@ -455,6 +464,10 @@ impl StoreFacade for PostgresStore {
         Arc::new(self.approvals())
     }
 
+    fn quarantine_holds(&self) -> Arc<dyn QuarantineHoldRepo> {
+        Arc::new(self.quarantine_holds())
+    }
+
     fn provenance(&self) -> Arc<dyn ProvenanceRepo> {
         Arc::new(self.provenance())
     }
@@ -531,6 +544,17 @@ impl StoreFacade for PostgresStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrum_proto::{
+        ActionProposal, ActionType, ApprovalMode, CapabilityId, CapabilityLease, CapabilityStatus,
+        Decision, ExecutionId, ExecutionRecord, ExecutionState, IntentEnvelope, IntentId,
+        IntentStatus, JsonMap, LifecycleOutboxId, LifecycleOutboxRecord, LifecycleOutboxStatus,
+        PolicyBundleId, PrincipalId, ProposalId, ProvenanceEventKind, RiskTier, RollbackClass,
+        RollbackContract, RollbackContractId, RollbackState, RollbackTarget, TaintBudget,
+        TimeBudget, ToolBinding, TrustContextSummary,
+    };
+
+    const PG_URL: &str =
+        "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test";
 
     #[tokio::test]
     async fn postgres_store_connect_errors_when_unreachable() {
@@ -653,7 +677,7 @@ mod tests {
 
     #[test]
     fn postgres_current_schema_version_is_set() {
-        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(super::migrations::CURRENT_SCHEMA_VERSION, 17);
     }
 
     #[test]
@@ -785,14 +809,14 @@ mod tests {
 
         let repo = store.mfa_credentials();
         let r1 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-list-by-agent",
             ferrum_proto::MfaFactorType::Totp,
             "s1",
             "n1",
             "k1",
         );
         let r2 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-list-by-agent",
             ferrum_proto::MfaFactorType::Totp,
             "s2",
             "n2",
@@ -801,7 +825,7 @@ mod tests {
         repo.insert(&r1).await.unwrap();
         repo.insert(&r2).await.unwrap();
 
-        let list = repo.list_by_agent("agent-1").await.unwrap();
+        let list = repo.list_by_agent("agent-list-by-agent").await.unwrap();
         assert_eq!(list.len(), 2);
     }
 
@@ -909,14 +933,14 @@ mod tests {
         store.apply_embedded_migrations().await.unwrap();
 
         let record1 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-activate-revokes",
             ferrum_proto::MfaFactorType::Totp,
             "s1",
             "n1",
             "k1",
         );
         let record2 = ferrum_proto::MfaCredentialRecord::new(
-            "agent-1",
+            "agent-activate-revokes",
             ferrum_proto::MfaFactorType::Totp,
             "s2",
             "n2",
@@ -942,7 +966,569 @@ mod tests {
         assert!(revoked1.revoked_at.is_some());
 
         // Only one active factor per agent
-        let active = repo.get_active_for_agent("agent-1").await.unwrap().unwrap();
+        let active = repo
+            .get_active_for_agent("agent-activate-revokes")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(active.mfa_factor_id, record2.mfa_factor_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_record_failed_attempt_and_lockout() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        for _ in 0..4 {
+            let locked = repo
+                .record_failed_attempt(record.mfa_factor_id, 5, 900)
+                .await
+                .unwrap();
+            assert!(!locked);
+        }
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 4);
+        assert!(r.locked_until.is_none());
+
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 5, 900)
+            .await
+            .unwrap();
+        assert!(locked);
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert_eq!(r.failed_attempts, 5);
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.lockout_count, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_lockout_then_expired() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Lock with 1 second duration
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+
+        // Wait for lock to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        let now = chrono::Utc::now();
+        // locked_until should be in the past
+        assert!(r.locked_until.map(|lu| lu <= now).unwrap_or(true));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_mfa_credential_lockout_recovery_one_strike_relock() {
+        let store = PostgresStore::connect(
+            "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test",
+        )
+        .await
+        .unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let record = ferrum_proto::MfaCredentialRecord::new(
+            "agent-1",
+            ferrum_proto::MfaFactorType::Totp,
+            "s",
+            "n",
+            "k",
+        );
+        let repo = store.mfa_credentials();
+        repo.insert(&record).await.unwrap();
+
+        // Lock with 1 second duration
+        repo.record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+        assert_eq!(r.failed_attempts, 1);
+
+        // Wait for lock to expire
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // After expiry, a single failed attempt re-locks immediately because
+        // failed_attempts is still 1 (equal to max_attempts). This is the
+        // post-expiry one-strike re-lock behavior.
+        let locked = repo
+            .record_failed_attempt(record.mfa_factor_id, 1, 1)
+            .await
+            .unwrap();
+        assert!(
+            locked,
+            "expected immediate re-lock after expiry with one strike"
+        );
+
+        let r = repo.get(record.mfa_factor_id).await.unwrap().unwrap();
+        assert!(r.locked_until.is_some());
+        assert!(r.locked_until.unwrap() > chrono::Utc::now());
+        assert_eq!(r.lockout_count, 2);
+    }
+
+    // ----------------------------------------------------------------------
+    // Recovery Slice 4: paired RecoveryRequired persistence on PostgreSQL
+    // ----------------------------------------------------------------------
+
+    /// Seed an execution/rollback-contract pair in states that the recovery
+    /// transition expects as the CAS baseline.
+    async fn seed_authorized_execution(
+        store: &PostgresStore,
+    ) -> (ExecutionRecord, RollbackContract) {
+        let now = chrono::Utc::now();
+        let intent = IntentEnvelope {
+            intent_id: IntentId::new(),
+            principal_id: PrincipalId::new(),
+            session_id: None,
+            channel_id: None,
+            title: "test".to_string(),
+            goal: "test".to_string(),
+            normalized_goal: "test".to_string(),
+            allowed_outcomes: vec![],
+            forbidden_outcomes: vec![],
+            resource_scope: vec![],
+            risk_tier: RiskTier::Low,
+            approval_mode: ApprovalMode::None,
+            default_rollback_class: RollbackClass::R0NativeReversible,
+            time_budget: TimeBudget {
+                max_duration_ms: 30_000,
+                max_steps: 8,
+                max_retries_per_step: 1,
+            },
+            trust_context: TrustContextSummary {
+                input_labels: vec![],
+                sensitivity_labels: vec![],
+                taint_score: 0,
+                contains_external_metadata: false,
+                contains_tool_output: false,
+                contains_untrusted_text: false,
+            },
+            derived_from_event_ids: vec![],
+            tags: vec![],
+            metadata: JsonMap::new(),
+            status: IntentStatus::Active,
+            created_at: now,
+            expires_at: now + chrono::Duration::minutes(15),
+            owner_actor_id: None,
+        };
+        store.intents().insert(&intent).await.unwrap();
+
+        let proposal = ActionProposal {
+            proposal_id: ProposalId::new(),
+            intent_id: intent.intent_id,
+            step_index: 0,
+            title: "test proposal".to_string(),
+            tool_name: "test_tool".to_string(),
+            server_name: "test_server".to_string(),
+            raw_arguments: serde_json::json!({}),
+            expected_effect: "test".to_string(),
+            estimated_risk: RiskTier::Low,
+            requested_rollback_class: RollbackClass::R0NativeReversible,
+            taint_inputs: vec![],
+            metadata: JsonMap::new(),
+            created_at: now,
+            owner_actor_id: None,
+        };
+        store.proposals().insert(&proposal).await.unwrap();
+
+        let capability = CapabilityLease {
+            capability_id: CapabilityId::new(),
+            intent_id: intent.intent_id,
+            proposal_id: proposal.proposal_id,
+            tool_binding: ToolBinding {
+                server_name: "test_server".to_string(),
+                tool_name: "test_tool".to_string(),
+                tool_version: None,
+            },
+            resource_bindings: vec![],
+            argument_constraints: vec![],
+            taint_budget: TaintBudget {
+                max_taint_score: 0,
+                allow_external_tool_output: false,
+                allow_external_metadata: false,
+                allow_untrusted_text: false,
+            },
+            approval_binding: None,
+            issued_by: "test".to_string(),
+            policy_bundle_id: PolicyBundleId::new(),
+            tool_manifest_id: None,
+            manifest_hash: None,
+            status: CapabilityStatus::Active,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(5),
+            revoked_at: None,
+            metadata: JsonMap::new(),
+            owner_actor_id: None,
+        };
+        store.capabilities().insert(&capability).await.unwrap();
+
+        let mut execution = ExecutionRecord {
+            execution_id: ExecutionId::new(),
+            intent_id: intent.intent_id,
+            proposal_id: proposal.proposal_id,
+            capability_id: capability.capability_id,
+            rollback_contract_id: None,
+            decision: Decision::Allow,
+            state: ExecutionState::Authorized,
+            started_at: now,
+            finished_at: None,
+            result_digest: None,
+            metadata: JsonMap::new(),
+            owner_actor_id: None,
+        };
+        store.executions().insert(&execution).await.unwrap();
+
+        let contract = RollbackContract {
+            contract_id: RollbackContractId::new(),
+            intent_id: execution.intent_id,
+            proposal_id: execution.proposal_id,
+            execution_id: execution.execution_id,
+            action_type: ActionType::FileWrite,
+            rollback_class: RollbackClass::R1SnapshotRecoverable,
+            adapter_key: "noop".to_string(),
+            target: RollbackTarget::Generic {
+                namespace: "test".to_string(),
+                identifier: "target".to_string(),
+            },
+            prepare_checks: vec![],
+            verify_checks: vec![],
+            compensation_plan: vec![],
+            auto_commit: false,
+            state: RollbackState::PendingPrepare,
+            created_at: now,
+            expires_at: None,
+            metadata: JsonMap::new(),
+        };
+        store.rollback_contracts().insert(&contract).await.unwrap();
+
+        execution.rollback_contract_id = Some(contract.contract_id);
+        store.executions().update(&execution).await.unwrap();
+
+        (execution, contract)
+    }
+
+    fn recovery_outbox(
+        execution: &ExecutionRecord,
+        contract: &RollbackContract,
+    ) -> LifecycleOutboxRecord {
+        LifecycleOutboxRecord::pending_with_obligations(
+            execution.execution_id,
+            Some(contract.contract_id),
+            Some(ExecutionState::Running),
+            ExecutionState::RecoveryRequired,
+            Some(RollbackState::Prepared),
+            Some(RollbackState::RecoveryRequired),
+            vec![ProvenanceEventKind::ErrorRaised],
+            format!("recovery:{}", execution.execution_id),
+        )
+    }
+
+    async fn pending_outbox_ids(store: &PostgresStore) -> Vec<LifecycleOutboxId> {
+        store
+            .lifecycle_outbox()
+            .list_pending_reconciliation(100)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.outbox_id)
+            .collect()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_paired_recovery_transition_persists() {
+        let store = PostgresStore::connect(PG_URL).await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let (mut execution, mut contract) = seed_authorized_execution(&store).await;
+        store
+            .executions()
+            .update_state(execution.execution_id, ExecutionState::Running)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Prepared)
+            .await
+            .unwrap();
+
+        execution.state = ExecutionState::RecoveryRequired;
+        contract.state = RollbackState::RecoveryRequired;
+        let outbox = recovery_outbox(&execution, &contract);
+
+        store
+            .lifecycle_outbox()
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap();
+
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_execution.state, ExecutionState::RecoveryRequired);
+        assert_eq!(stored_contract.state, RollbackState::RecoveryRequired);
+
+        let stored_outbox = store
+            .lifecycle_outbox()
+            .get(outbox.outbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored_outbox.status,
+            LifecycleOutboxStatus::PendingProvenance
+        );
+        let kinds: Vec<_> = stored_outbox
+            .provenance_obligations
+            .iter()
+            .map(|o| o.event_kind.clone())
+            .collect();
+        assert!(kinds.contains(&ProvenanceEventKind::ErrorRaised));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_paired_recovery_rolls_back_on_lost_execution_cas() {
+        let store = PostgresStore::connect(PG_URL).await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let (mut execution, mut contract) = seed_authorized_execution(&store).await;
+        store
+            .executions()
+            .update_state(execution.execution_id, ExecutionState::Running)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Prepared)
+            .await
+            .unwrap();
+
+        // A concurrent writer commits the execution before the recovery
+        // transition runs, so the CAS against `Running` must fail.
+        store
+            .executions()
+            .update_state(execution.execution_id, ExecutionState::Committed)
+            .await
+            .unwrap();
+
+        execution.state = ExecutionState::RecoveryRequired;
+        contract.state = RollbackState::RecoveryRequired;
+        let outbox = recovery_outbox(&execution, &contract);
+
+        let before = pending_outbox_ids(&store).await;
+        let err = store
+            .lifecycle_outbox()
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        let after = pending_outbox_ids(&store).await;
+        let new_ids: Vec<_> = after.iter().filter(|id| !before.contains(id)).collect();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("state changed") || msg.contains("execution"),
+            "expected lost execution CAS error, got: {err}"
+        );
+        assert!(
+            new_ids.is_empty(),
+            "expected no new outbox records after failed CAS, got new ids: {:?}",
+            new_ids
+        );
+
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_execution.state, ExecutionState::Committed);
+        assert_eq!(stored_contract.state, RollbackState::Prepared);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_paired_recovery_rolls_back_on_lost_contract_cas() {
+        let store = PostgresStore::connect(PG_URL).await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let (mut execution, mut contract) = seed_authorized_execution(&store).await;
+        store
+            .executions()
+            .update_state(execution.execution_id, ExecutionState::Running)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Prepared)
+            .await
+            .unwrap();
+
+        // A concurrent writer moves the contract out of Prepared before the
+        // recovery transition runs, so the CAS against `Prepared` must fail.
+        // ExecutedAwaitingVerify is a valid Prepared successor and is not the
+        // RecoveryRequired transition the outbox intends.
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::ExecutedAwaitingVerify)
+            .await
+            .unwrap();
+
+        execution.state = ExecutionState::RecoveryRequired;
+        contract.state = RollbackState::RecoveryRequired;
+        let outbox = recovery_outbox(&execution, &contract);
+
+        let before = pending_outbox_ids(&store).await;
+        let err = store
+            .lifecycle_outbox()
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        let after = pending_outbox_ids(&store).await;
+        let new_ids: Vec<_> = after.iter().filter(|id| !before.contains(id)).collect();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("state changed") || msg.contains("rollback contract"),
+            "expected lost contract CAS error, got: {err}"
+        );
+        assert!(
+            new_ids.is_empty(),
+            "expected no new outbox records after failed CAS, got new ids: {:?}",
+            new_ids
+        );
+
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_execution.state, ExecutionState::Running);
+        assert_eq!(stored_contract.state, RollbackState::ExecutedAwaitingVerify);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running PostgreSQL instance"]
+    async fn postgres_paired_recovery_rolls_back_on_outbox_insert_error() {
+        let store = PostgresStore::connect(PG_URL).await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let (mut execution, mut contract) = seed_authorized_execution(&store).await;
+        store
+            .executions()
+            .update_state(execution.execution_id, ExecutionState::Running)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Prepared)
+            .await
+            .unwrap();
+
+        execution.state = ExecutionState::RecoveryRequired;
+        contract.state = RollbackState::RecoveryRequired;
+        let outbox = recovery_outbox(&execution, &contract);
+
+        // Pre-insert an outbox with the same primary key but a different
+        // idempotency key. This bypasses the idempotency-key check while still
+        // forcing a duplicate primary-key violation on insert. Use a fresh key
+        // per run so the helper is not poisoned by previous failed runs against
+        // the same database.
+        let mut dupe = outbox.clone();
+        dupe.idempotency_key = format!("pre-insert-conflict:{}", LifecycleOutboxId::new());
+        store
+            .lifecycle_outbox()
+            .enqueue_lifecycle_transition(&dupe)
+            .await
+            .unwrap();
+
+        let err = store
+            .lifecycle_outbox()
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("duplicate")
+                || msg.contains("unique")
+                || msg.contains("violates")
+                || msg.contains("Primary"),
+            "expected duplicate-key error, got: {err}"
+        );
+
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored_execution.state, ExecutionState::Running);
+        assert_eq!(stored_contract.state, RollbackState::Prepared);
     }
 }

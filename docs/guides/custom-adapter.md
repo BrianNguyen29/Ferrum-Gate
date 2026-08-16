@@ -73,6 +73,15 @@ impl Adapter for MyAdapter {
 }
 ```
 
+## Maturity promotion
+
+New adapters start at P0/P1 and advance only as evidence is produced. See
+[`adapter-maturity-lifecycle.md`](./adapter-maturity-lifecycle.md) for the
+P0–P5 criteria, the evidence checklist at each level, and the current
+classification of first-party adapters. Promotion requires updating
+`docs/ROADMAP.md`, the adapter runbook or reference docs, and — if the public
+contract changes — the relevant ADR.
+
 ## Related docs
 
 - [`adapter-reference.md`](./adapter-reference.md) — First-party adapter operations and rollback behavior.

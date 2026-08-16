@@ -1,0 +1,69 @@
+# coverage-thresholds.toml
+#
+# Advisory per-crate coverage thresholds for FerrumGate.
+#
+# How to read this file:
+# - Crates under [thresholds] with a positive value are checked by
+#   scripts/check_coverage_threshold.py. Missing the threshold in soft mode
+#   emits a warning; in hard mode (--hard) it exits non-zero.
+# - A value of 0.0 means "monitor only" — the script will print the observed
+#   coverage when it appears in the report, but will not warn or fail on that
+#   crate. This lets us keep a complete manifest of workspace members without
+#   claiming coverage that is not yet meaningful.
+#
+# How to use:
+#   Soft check (CI, advisory, non-blocking):
+#     python3 scripts/check_coverage_threshold.py coverage.txt \
+#         --config coverage-thresholds.toml
+#
+#   Hard check (local gate before claiming release readiness):
+#     python3 scripts/check_coverage_threshold.py coverage.txt \
+#         --config coverage-thresholds.toml --hard
+#
+# Important caveats:
+# - These thresholds are advisory in CI. They do NOT claim that the codebase is
+#   sufficiently tested for any particular deployment or compliance level.
+# - The script parses the text output of `cargo llvm-cov --workspace --text`.
+#   That output is a heuristic aggregation of file-level coverage grouped by
+#   crate path; it is not as precise as per-crate `cargo llvm-cov` runs or an
+#   LCOV-based report. For authoritative per-crate numbers, run per-crate
+#   coverage jobs.
+# - Thresholds should be ratcheted only after they have been stable for at
+#   least two release cycles and the relevant ADR is updated.
+# - Coverage is not a substitute for safety-kernel, target-host, or operator
+#   validation evidence.
+
+[thresholds]
+# Safety-kernel / critical crates with aspirational thresholds.
+# These are conservative starting points and may be ratcheted upward based on
+# evidence. They are intended to catch large regressions, not to enforce
+# completeness.
+ferrum-pdp = 50.0
+ferrum-gateway = 45.0
+ferrum-store = 45.0
+ferrumd = 40.0
+ferrum-rollback = 40.0
+ferrum-cap = 40.0
+ferrum-firewall = 40.0
+
+# All other workspace members are monitored at 0.0. This keeps the config a
+# complete inventory of workspace crates while avoiding premature threshold
+# claims for tooling, integration, or experimental crates.
+ferrum-proto = 0.0
+ferrum-graph = 0.0
+ferrum-adapter-fs = 0.0
+ferrum-adapter-git = 0.0
+ferrum-adapter-sqlite = 0.0
+ferrum-adapter-http = 0.0
+ferrum-adapter-maildraft = 0.0
+ferrum-adapter-s3 = 0.0
+ferrum-adapter-gcs = 0.0
+ferrum-audit-bundle = 0.0
+ferrum-testkit = 0.0
+ferrum-integration-tests = 0.0
+ferrum-sync = 0.0
+ferrum-integrations-mcp = 0.0
+ferrumctl = 0.0
+ferrum-stress = 0.0
+ferrum-migrate = 0.0
+ferrum-tui = 0.0

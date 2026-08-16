@@ -60,7 +60,8 @@ Require TOTP re-verification for disable and rotate when an active factor exists
 - **Positive**: Break-glass is auditable and requires a non-empty operator reason.
 - **Positive**: CAS `record_use` prevents TOTP code replay across verify → disable/rotate sequences.
 - **Negative**: Slightly more complex handler logic; shared `verify_or_breakglass` helper is extracted to avoid duplication.
-- **Non-goal**: This does not add per-factor lockout, failed-attempt counters, or WebAuthn support.
+- **Non-goal**: This does not add WebAuthn support or backup codes.
+- Per-factor lockout is implemented in PR #213.
 
 ## Migration impact
 
@@ -79,6 +80,6 @@ Disable and rotate endpoints now require a JSON body with a `code` or `reason` w
 
 ## Non-goals
 
-- Per-factor lockout or failed-attempt counters (requires schema and config changes; deferred).
+- Per-factor lockout or failed-attempt counters is implemented in PR #213.
 - WebAuthn or backup codes (future MFA adapter work).
 - Broad auth redesign or changes to `required_scope_for_path`.

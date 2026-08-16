@@ -1,5 +1,48 @@
 # Runtime Configuration Notes — FerrumGate Governance Gateway
 
+## Production-Required Controls
+
+P0-1 introduced runtime fail-closed behavior for the production-required controls below. The static validation gate (`scripts/validate_toml_configs.py`) enforces that `configs/ferrumgate.prod.toml` explicitly enables all four. Dev and nonprod configs should keep them absent or disabled unless they are intentionally testing production-like behavior.
+
+| Control | Config key (under `[server]`) | Environment variable | Purpose |
+|---------|--------------------------------|---------------------|---------|
+| Lifecycle reconciliation | `lifecycle_reconciliation_enabled` | `FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED` | Reconcile lifecycle outbox work so orphaned side effects do not accumulate. |
+| Approval timeout | `approval_timeout_enabled` | `FERRUMD_APPROVAL_TIMEOUT_ENABLED` | Time out stale approval requests rather than leaving them pending indefinitely. |
+| Audit fail-closed | `audit_fail_closed` | `FERRUMD_AUDIT_FAIL_CLOSED` | Block operations when audit logging cannot be persisted, preventing silent loss of lineage. |
+| HA reconciler | `ha_reconciler_enabled` | `FERRUMD_HA_RECONCILER_ENABLED` | Transition stale in-flight side-effect pairs to `RecoveryRequired` so they are recoverable on restart. |
+
+All four values are TOML booleans and map to `FERRUMD_<UPPER_SNAKE_KEY>` environment variables. Config precedence is CLI > env > config file > defaults.
+
+Example `ferrumd.env.example` stanzas:
+
+```bash
+# Required in production; may be left unset or false in dev/nonprod for testing.
+# FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED=true
+# FERRUMD_APPROVAL_TIMEOUT_ENABLED=true
+# FERRUMD_AUDIT_FAIL_CLOSED=true
+# FERRUMD_HA_RECONCILER_ENABLED=true
+```
+
+## Recovery-Required Downgrade Safety
+
+Once a store has persisted rows in the `RecoveryRequired` state, do not downgrade to a gateway version that does not understand that state. Older binaries may fail to read or reconcile those rows, leaving ambiguous side effects in an unreadable state. Before any downgrade, either:
+
+- Resolve every `RecoveryRequired` execution to a terminal state (`Committed`, `Compensated`, `RolledBack`, or `Failed`), or
+- Migrate the rows to a state the target version understands.
+
+This constraint applies to both SQLite and PostgreSQL stores. Mixed-version clusters that share a store must also share the recovery state machine.
+
+## Container Image & Compose (Local Demo Only)
+
+The repository `Dockerfile` and `docker-compose*.yml` files are **local-demo
+packaging only**. Recent hardening (OCI image labels, `STOPSIGNAL SIGTERM`, an
+image-level `HEALTHCHECK` against `/v1/healthz`, `.dockerignore` secret and
+context-noise patterns, and `no-new-privileges` / `cap_drop: [ALL]` on the
+`ferrumd` demo services) reduces local risk but **does not constitute
+production-ready container hardening or signoff**. Production deployments remain
+operator-owned and must supply their own image build, scanning, signing,
+secrets, and orchestration policy.
+
 ## SQLite Configuration
 
 ### Connection Pool
@@ -96,22 +139,26 @@ PostgreSQL is recommended for deployments requiring materially higher sustained 
 
 ## Performance Regression Gate
 
-A conservative performance regression gate is available via `make perf-gate`. It runs short-duration `ferrum-stress` scenarios and compares JSON output against baselines in `baselines/`.
+A conservative performance regression gate is available via `make perf-gate`. This is **Phase A scaffolding**; it runs short-duration `ferrum-stress` scenarios and compares JSON output against baselines in `baselines/`.
 
 ### Baselines
 - Baselines are stored in `baselines/*.json` and keyed by scenario (e.g., `health`, `intent-compile`, `sqlite-contention`).
 - Each baseline contains:
   - Metric baseline values and relative thresholds (`min_ratio` for throughput, `max_ratio` for latency).
-  - A `meta` block with `last_validated_commit`, `validated_at`, and a `note`.
+  - A `meta` block with `authoritative` (boolean), `last_validated_commit`, `validated_at`, and a `note`.
 - Current baselines are **sample / non-authoritative**. They are labeled as such and should not be used for blocking gates until validated on a controlled runner.
+- Use `make perf-baseline-update` to regenerate sample baselines. Generated files are non-authoritative by default; the generator will only emit authoritative metadata when explicit promotion inputs are supplied.
 
 ### Running the gate locally
 ```bash
 # Advisory mode (default: short 5s duration, non-blocking)
 make perf-gate
 
-# Regenerate baselines after a deliberate optimization PR
+# Regenerate sample baselines after a deliberate optimization PR
 make perf-baseline-update
+
+# Enforced mode (requires authoritative baselines)
+make perf-gate-enforce
 ```
 
 ### Threshold policy
@@ -124,22 +171,33 @@ make perf-baseline-update
 ### Why advisory?
 CI runners have variable CPU and I/O performance. Relative thresholds reduce noise, but absolute thresholds require hardware-normalized baselines. The gate will become blocking only after baselines are validated on a representative runner class and the ADR is updated. See `docs/adr/011-performance-regression-gate.md`.
 
+### Enforced mode (`make perf-gate-enforce`)
+
+`make perf-gate-enforce` runs the comparator in enforced mode. It fails closed if any selected baseline is:
+- Missing
+- Malformed (invalid JSON or missing `scenario`)
+- Non-authoritative (`meta.authoritative` is not `true`, or the note contains "sample" / "non-authoritative")
+- Lacking validation metadata (`last_validated_commit`, `validated_at`)
+- Exceeding a metric threshold
+
+Enforced mode is intended for controlled environments and manual gates only. It is not enabled in regular CI or release workflows.
+
 ### Promoting Baselines from Advisory to Blocking
 
 To promote a performance baseline from SAMPLE/advisory to authoritative:
 
 1. **Controlled runner**: Run `make perf-baseline-update` on a representative, stable CI runner or dedicated benchmarking host. Document the hardware spec (CPU, RAM, disk type) in the baseline `meta.note`.
 2. **Statistical stability**: Execute at least 5 consecutive runs on the same commit. All runs must pass the relative thresholds against each other (within 10% variance).
-3. **Remove SAMPLE label**: Update the `meta.note` field from "SAMPLE / NON-AUTHORITATIVE" to a descriptive label (e.g., "Authoritative — validated on GitHub Actions ubuntu-latest runner"), set `last_validated_commit` to the exact commit SHA, and set `validated_at` to the current ISO 8601 timestamp.
+3. **Promote metadata**: Supply `PERF_BASELINE_AUTHORITATIVE_COMMIT` (required) and optionally `PERF_BASELINE_AUTHORITATIVE_AT` (defaults to the current UTC time) when generating, or manually set `meta.authoritative=true`, `last_validated_commit` to the exact commit SHA, and `validated_at` to the current ISO 8601 timestamp. Update the `meta.note` to a descriptive label (e.g., "Authoritative — validated on GitHub Actions ubuntu-latest runner").
 4. **Update thresholds**: Ensure `min_ratio` and `max_ratio` values are conservative enough to absorb runner variance without missing real regressions (typically `min_ratio >= 0.70` for throughput, `max_ratio <= 2.50` for latency).
 5. **ADR update**: If making the gate blocking, update `docs/adr/011-performance-regression-gate.md` to reflect the change from advisory to enforced.
 6. **Coverage gate parity**: Only promote perf baselines to blocking after the critical-crate coverage gate (`make coverage-threshold-hard`) has been stable for at least two release cycles.
 
 ## Authentication
-- **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config
-- Tokens are validated with constant-time comparison (timing-attack resistant)
-- `/v1/healthz` and `/v1/readyz` are always unauthenticated. `/v1/readyz/deep`
-  and `/v1/metrics` require auth when auth mode is enabled.
+- **Bearer token mode**: Set `auth_mode = "Bearer"` and `bearer_token` in config.
+- Tokens are validated with constant-time comparison (timing-attack resistant).
+- **Bearer mode is a single-principal trust domain**: it validates the configured global token but does not create per-request `AuthActor` identities or object ownership. It is suitable for pilot/single-operator deployments where the whole gateway is treated as one principal. Multi-actor authorization, scoped ownership, and per-object access control require `scoped`, `oidc`, or `agent` auth mode.
+- `/v1/healthz` and `/v1/readyz` are always unauthenticated. `/v1/readyz/deep` and `/v1/metrics` require auth when auth mode is enabled.
 
 ## Health and Readiness Endpoints
 
@@ -160,9 +218,19 @@ The `write_queue` component provides bounded backpressure detection only; it doe
 The `pool` component is emitted for all stores; SQLite/non-pool stores report `not applicable`.
 
 **Load balancer / Kubernetes guidance**:
-- Use **`/v1/readyz/deep`** for authenticated load balancer health checks and Kubernetes readiness probes.
-  This endpoint returns HTTP 503 when the SQLite store is unreachable, unhealthy, or when the write queue depth exceeds 100,
-  allowing load balancers to route traffic away from degraded instances.
+- **Ideal**: Use **`/v1/readyz/deep`** for authenticated load balancer health checks and
+  Kubernetes readiness probes. This endpoint returns HTTP 503 when the SQLite store is
+  unreachable, unhealthy, or when the write queue depth exceeds 100, allowing load
+  balancers to route traffic away from degraded instances. `/v1/readyz/deep` requires a
+  bearer token when authentication is enabled.
+- **Helm chart default (caveat)**: The bundled Helm chart (`deploy/helm/ferrumgate/`)
+  defaults its `readinessProbe` to the **shallow `/v1/readyz`** because the default
+  `authMode` is `"bearer"` and standard Kubernetes probes cannot present a bearer token.
+  The shallow probe always returns HTTP 200 and does **not** gate store or write-queue
+  health, so a pod may report `Ready` while the database or queue is unhealthy. Where your
+  auth model allows, override `readinessProbe.httpGet.path` to `/v1/readyz/deep`; otherwise
+  treat Helm default readiness as liveness-only and rely on a separate authenticated
+  deep-readiness check (e.g. load-balancer health check or `ferrumctl`) for store health.
 - **`/v1/healthz`** and **`/v1/readyz`** always return HTTP 200 — do NOT use these
   for load balancer or Kubernetes readiness probes. They do not check store health.
 - **`/v1/metrics`** (`GET /v1/metrics`) returns Prometheus text format with request counters,
@@ -243,9 +311,32 @@ store uses a persistent volume and is restricted to one replica; configure Postg
 enabling autoscaling or multiple replicas.
 
 ## Rate Limiting
-- Built-in via `tower_governor`: 2 req/s sustained, burst of 50
-- Applied per-IP using `GovernorLayer`
+- Built-in via `tower_governor`: dual-governor token bucket.
+- All workload routes are wrapped by an outer pre-auth IP-only governor.
+  The resolved client IP is used for bucketing.
+- For auth modes `scoped`, `oidc`, and `agent`, an inner `AuthActor`+IP
+  governor is also applied after authentication.
+- Auth modes `disabled` and `bearer` use only the outer governor.
+- Monitoring routes (`/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`,
+  `/v1/metrics`) bypass both governors.
 - Periodic cleanup of rate limiter entries (every 60s)
+
+### Trust model
+- `trusted_proxy_cidrs` defaults to `[]` (trust-none). This is the safest
+  default and the recommended starting point.
+- Only an immediate peer whose IP falls inside a configured CIDR may
+  supply a single `X-Real-IP` header. Malformed, multiple, or missing
+  values fall back to the transport peer IP.
+- `X-Forwarded-For` is ignored entirely.
+- Adding or removing a CIDR is a config change; removing `trusted_proxy_cidrs`
+  or setting it to `[]` safely reverts to peer-IP bucketing.
+- Universal CIDRs (`0.0.0.0/0`, `::/0`) are rejected at startup.
+
+### Pre-auth limits
+- The outer governor uses the `pre_auth_rate_limit_*` values when set.
+- When omitted, the outer governor inherits the `rate_limit_*` values
+  (2 req/s, burst 50 by default).
+- The pre-auth governor cannot be disabled; set to at least 1/1.
 
 ## Capability TTL
 - Maximum TTL: **300 seconds** (5 minutes, hardcoded in `ferrum-cap` service)
@@ -278,6 +369,25 @@ cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --fea
 **CI verifies:** `cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres` (see `.github/workflows/ci.yml`).
 
 **Note:** `ferrum-stress`, `ferrumctl`, and `ferrum-tui` do not depend on the postgres feature and do not need the flag.
+
+**GCS adapter feature propagation**
+
+Google Cloud Storage support is feature-gated with `--features gcs`. The flag must be propagated to the binary and crate packages that depend on the GCS adapter:
+
+```bash
+# Check all GCS-dependent packages
+cargo check -p ferrumd -p ferrum-gateway --features gcs
+```
+
+**Why multiple packages?**
+- `ferrum-gateway` — Gateway `ServerConfig` and action/target inference wiring.
+- `ferrumd` — Binary entrypoint that compiles the gateway and adapter.
+
+The GCS adapter defaults to shape-only validation (`live: false`). The `gcs-client` feature enables the live client seam, but live SDK integration is a planned follow-up. Azure Blob is explicitly deferred. See ADR-018.
+
+**CI verifies:** `cargo check -p ferrumd -p ferrum-gateway --features gcs`.
+
+**Note:** `ferrum-stress`, `ferrumctl`, and `ferrum-tui` do not depend on the GCS feature and do not need the flag.
 
 ## HA Configuration
 

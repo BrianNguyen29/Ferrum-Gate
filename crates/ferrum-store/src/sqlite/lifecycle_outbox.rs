@@ -82,6 +82,19 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
                 expected_execution_state, execution.state
             )));
         }
+        if let Some(contract) = rollback_contract {
+            if let Some(expected_rollback_state) = outbox.previous_rollback_state.as_ref() {
+                if !crate::transitions::is_valid_rollback_transition(
+                    expected_rollback_state,
+                    &contract.state,
+                ) {
+                    return Err(crate::StoreError::InvalidState(format!(
+                        "invalid rollback transition from {:?} to {:?}",
+                        expected_rollback_state, contract.state
+                    )));
+                }
+            }
+        }
         let execution_raw = to_json(execution)?;
         let execution_update = sqlx::query(
             "UPDATE executions
@@ -176,15 +189,20 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         let mut tx = self.pool.begin().await?;
         let active = enum_text(&CapabilityStatus::Active)?;
         let used = enum_text(&CapabilityStatus::Used)?;
+        // Obtain the comparison timestamp at the DB boundary so an
+        // expired-but-still-Active capability cannot be consumed even if the
+        // handler preloaded a stale lease. Mirrors `update_status_if_active`.
+        let now = chrono::Utc::now();
         let updated = sqlx::query(
             "UPDATE capabilities
              SET status = ?2,
                  raw_json = json_set(raw_json, '$.status', ?2)
-             WHERE capability_id = ?1 AND status = ?3",
+             WHERE capability_id = ?1 AND status = ?3 AND expires_at > ?4",
         )
         .bind(capability.capability_id.to_string())
         .bind(&used)
         .bind(active)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
         if updated.rows_affected() != 1 {
@@ -196,8 +214,8 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         sqlx::query(
             "INSERT INTO executions (
                 execution_id, intent_id, proposal_id, capability_id, rollback_contract_id,
-                decision, state, started_at, finished_at, result_digest, raw_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                decision, state, started_at, finished_at, result_digest, owner_actor_id, raw_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .bind(execution.execution_id.to_string())
         .bind(execution.intent_id.to_string())
@@ -209,6 +227,7 @@ impl LifecycleOutboxRepo for SqliteLifecycleOutboxRepo {
         .bind(execution.started_at)
         .bind(execution.finished_at)
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(execution_raw)
         .execute(&mut *tx)
         .await?;
@@ -879,6 +898,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+            owner_actor_id: None,
         }
     }
 
@@ -897,6 +917,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: ferrum_proto::JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -932,6 +953,7 @@ mod tests {
             expires_at: now + chrono::Duration::minutes(5),
             revoked_at: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -952,6 +974,7 @@ mod tests {
             finished_at: None,
             result_digest: None,
             metadata: ferrum_proto::JsonMap::new(),
+            owner_actor_id: None,
         }
     }
 
@@ -1528,6 +1551,16 @@ mod tests {
 
         store
             .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::Prepared)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
+            .update_state(contract.contract_id, RollbackState::ExecutedAwaitingVerify)
+            .await
+            .unwrap();
+        store
+            .rollback_contracts()
             .update_state(contract.contract_id, RollbackState::Verified)
             .await
             .unwrap();
@@ -1557,6 +1590,60 @@ mod tests {
             ferrum_proto::ExecutionState::Authorized
         );
         assert_eq!(stored_contract.state, RollbackState::Verified);
+        assert!(
+            repo.list_pending_reconciliation(10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Slice 2: a lifecycle transition must be rejected if the rollback state
+    /// transition is illegal, before either paired record is written.
+    #[tokio::test]
+    async fn record_lifecycle_transition_rejects_invalid_rollback_transition() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let (mut execution, mut contract) = seed_execution(&store).await;
+        let repo = store.lifecycle_outbox();
+        let mut outbox = outbox_for(&execution, &contract);
+
+        // Make the rollback transition illegal (Prepared -> Verified is not
+        // allowed; Verified must come from ExecutedAwaitingVerify). Keep the
+        // execution transition legal (Authorized -> Running).
+        outbox.previous_rollback_state = Some(RollbackState::Prepared);
+        outbox.new_rollback_state = Some(RollbackState::Verified);
+        execution.state = ferrum_proto::ExecutionState::Running;
+        contract.state = RollbackState::Verified;
+
+        let err = repo
+            .record_lifecycle_transition(&execution, Some(&contract), &outbox)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid rollback transition"),
+            "unexpected error: {}",
+            err
+        );
+
+        // Neither paired record should be written.
+        let stored_execution = store
+            .executions()
+            .get(execution.execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_contract = store
+            .rollback_contracts()
+            .get(contract.contract_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored_execution.state,
+            ferrum_proto::ExecutionState::Authorized
+        );
+        assert_eq!(stored_contract.state, RollbackState::PendingPrepare);
         assert!(
             repo.list_pending_reconciliation(10)
                 .await
@@ -1865,5 +1952,119 @@ mod tests {
             .unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].from_event_id, verified_event.event_id);
+    }
+
+    /// Seed an intent/proposal/capability (without a pre-inserted execution)
+    /// and build the execution + authorize outbox that `record_authorization`
+    /// would persist. `expires_at` is pinned by the caller to exercise the
+    /// expiry predicate.
+    async fn seed_authorizable(
+        store: &SqliteStore,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> (CapabilityLease, ExecutionRecord, LifecycleOutboxRecord) {
+        let intent = test_intent();
+        store.intents().insert(&intent).await.unwrap();
+        let proposal = test_proposal(intent.intent_id);
+        store.proposals().insert(&proposal).await.unwrap();
+        let mut capability = test_capability(intent.intent_id, proposal.proposal_id);
+        capability.expires_at = expires_at;
+        store.capabilities().insert(&capability).await.unwrap();
+        let execution = test_execution(
+            intent.intent_id,
+            proposal.proposal_id,
+            capability.capability_id,
+        );
+        let outbox = LifecycleOutboxRecord::pending(
+            execution.execution_id,
+            None,
+            None,
+            execution.state.clone(),
+            None,
+            None,
+            ProvenanceEventKind::ActionProposalSubmitted,
+            format!("authorize:{}", execution.execution_id),
+        );
+        (capability, execution, outbox)
+    }
+
+    #[tokio::test]
+    async fn record_authorization_rejects_expired_active_capability_without_mutation() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let repo = store.lifecycle_outbox();
+        let expired = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let (capability, execution, outbox) = seed_authorizable(&store, expired).await;
+
+        let authorized = repo
+            .record_authorization(&capability, &execution, &outbox)
+            .await
+            .unwrap();
+        assert!(
+            !authorized,
+            "expired-but-active capability must not transition to Used"
+        );
+
+        let stored = store
+            .capabilities()
+            .get(capability.capability_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(stored.status, CapabilityStatus::Active),
+            "capability must remain Active after a lost expiry CAS"
+        );
+        assert!(
+            store
+                .executions()
+                .get(execution.execution_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "no execution row must be inserted after expiry CAS loss"
+        );
+        assert!(
+            repo.get(outbox.outbox_id).await.unwrap().is_none(),
+            "no lifecycle outbox row must be inserted after expiry CAS loss"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_authorization_consumes_active_unexpired_capability() {
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+        let repo = store.lifecycle_outbox();
+        let future = chrono::Utc::now() + chrono::Duration::minutes(5);
+        let (capability, execution, outbox) = seed_authorizable(&store, future).await;
+
+        let authorized = repo
+            .record_authorization(&capability, &execution, &outbox)
+            .await
+            .unwrap();
+        assert!(
+            authorized,
+            "active unexpired capability must transition to Used"
+        );
+
+        let stored = store
+            .capabilities()
+            .get(capability.capability_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(stored.status, CapabilityStatus::Used));
+        assert!(
+            store
+                .executions()
+                .get(execution.execution_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "execution row must be inserted on a successful CAS"
+        );
+        assert!(
+            repo.get(outbox.outbox_id).await.unwrap().is_some(),
+            "lifecycle outbox row must be inserted on a successful CAS"
+        );
     }
 }

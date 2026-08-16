@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::{
     audit,
     auth_actor::{AuthActor, audit_actor},
-    mfa,
+    mfa::{self, TotpVerifyResult, check_agent_mfa_lockout, reset_mfa_lockout_after_success},
     monitoring::GovernanceRoute,
     response::{sanitized_api_error_response, sanitized_response},
     state::AppState,
@@ -64,6 +64,60 @@ fn resolve_mfa_key(state: &AppState) -> Result<Vec<u8>, Response> {
     }
 }
 
+/// Build a standardized `MfaLocked` error response with `retry_after_seconds`.
+fn mfa_locked_response(state: &AppState, retry_after_secs: u64) -> Response {
+    let error = ApiError {
+        code: ApiErrorCode::MfaLocked,
+        message: "MFA is locked due to too many failed attempts".to_string(),
+        correlation_id: uuid::Uuid::new_v4().to_string(),
+        retriable: false,
+        details: serde_json::json!({"retry_after_seconds": retry_after_secs}),
+    };
+    sanitized_api_error_response(&state.runtime.firewall, StatusCode::FORBIDDEN, &error)
+}
+
+/// Convert a TOTP verification result into an HTTP error response.
+fn totp_verify_result_to_response(
+    state: &AppState,
+    result: TotpVerifyResult,
+    route: GovernanceRoute,
+) -> Response {
+    match result {
+        TotpVerifyResult::Locked {
+            retry_after_seconds,
+        } => mfa_locked_response(state, retry_after_seconds),
+        TotpVerifyResult::Invalid => {
+            state.metrics.increment_governance_error(route);
+            let error = ApiError {
+                code: ApiErrorCode::MfaInvalid,
+                message: "invalid TOTP code".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            sanitized_api_error_response(&state.runtime.firewall, StatusCode::FORBIDDEN, &error)
+        }
+        TotpVerifyResult::Internal => {
+            state.metrics.increment_governance_error(route);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "MFA verification failed".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &error,
+            )
+        }
+        TotpVerifyResult::Success { .. } => {
+            unreachable!("totp_verify_result_to_response should not be called with Success")
+        }
+    }
+}
+
 /// Verify the active factor's TOTP code or authorize a break-glass bypass.
 ///
 /// When `code` is present, decrypts the active factor secret, verifies the TOTP code,
@@ -85,15 +139,44 @@ async fn verify_or_breakglass(
             Err(response) => return Err(response),
         };
 
-        let secret =
-            match mfa::decrypt_secret(&key_bytes, &active.encrypted_secret, &active.secret_nonce) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(error = %e, "mfa decrypt_secret failed");
+        let result = mfa::verify_totp_with_lockout(
+            state.runtime.store.mfa_credentials(),
+            &key_bytes,
+            &active.agent_id,
+            active,
+            &code,
+            state.server_config.mfa_lockout_max_attempts,
+            state.server_config.mfa_lockout_duration_secs,
+        )
+        .await;
+
+        let counter = match result {
+            TotpVerifyResult::Success { counter } => counter,
+            other => {
+                return Err(totp_verify_result_to_response(state, other, route));
+            }
+        };
+
+        match state
+            .runtime
+            .store
+            .mfa_credentials()
+            .record_use(active.mfa_factor_id, counter)
+            .await
+        {
+            Ok(true) => {
+                if let Err(e) = reset_mfa_lockout_after_success(
+                    state.runtime.store.mfa_credentials(),
+                    &active.agent_id,
+                    active.mfa_factor_id,
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "mfa lockout reset failed");
                     state.metrics.increment_governance_error(route);
                     let error = ApiError {
                         code: ApiErrorCode::Internal,
-                        message: "failed to decrypt MFA secret".to_string(),
+                        message: "MFA state update failed".to_string(),
                         correlation_id: uuid::Uuid::new_v4().to_string(),
                         retriable: false,
                         details: serde_json::json!({}),
@@ -104,36 +187,8 @@ async fn verify_or_breakglass(
                         &error,
                     ));
                 }
-            };
-
-        let now = chrono::Utc::now().timestamp() as u64;
-        let matched_counter = match mfa::verify_totp_code_with_counter(&secret, &code, now) {
-            Ok(c) => c,
-            Err(_) => {
-                state.metrics.increment_governance_error(route);
-                let error = ApiError {
-                    code: ApiErrorCode::MfaInvalid,
-                    message: "invalid TOTP code".to_string(),
-                    correlation_id: uuid::Uuid::new_v4().to_string(),
-                    retriable: false,
-                    details: serde_json::json!({}),
-                };
-                return Err(sanitized_api_error_response(
-                    &state.runtime.firewall,
-                    StatusCode::FORBIDDEN,
-                    &error,
-                ));
+                Ok(())
             }
-        };
-
-        match state
-            .runtime
-            .store
-            .mfa_credentials()
-            .record_use(active.mfa_factor_id, matched_counter)
-            .await
-        {
-            Ok(true) => Ok(()),
             Ok(false) => {
                 state.metrics.increment_governance_error(route);
                 let error = ApiError {
@@ -367,17 +422,73 @@ pub(crate) async fn verify_mfa(
         }
     };
 
-    let secret =
-        match mfa::decrypt_secret(&key_bytes, &record.encrypted_secret, &record.secret_nonce) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "mfa decrypt_secret failed");
+    // Check agent-level lockout before attempting verification.
+    match check_agent_mfa_lockout(state.runtime.store.mfa_credentials(), &agent_id).await {
+        Ok(Some(retry_after_secs)) => {
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::MfaVerify);
+            return mfa_locked_response(&state, retry_after_secs);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, agent_id = %agent_id, "failed to check agent lockout");
+            state
+                .metrics
+                .increment_governance_error(GovernanceRoute::MfaVerify);
+            let error = ApiError {
+                code: ApiErrorCode::Internal,
+                message: "MFA lockout check failed".to_string(),
+                correlation_id: uuid::Uuid::new_v4().to_string(),
+                retriable: false,
+                details: serde_json::json!({}),
+            };
+            return sanitized_api_error_response(
+                &state.runtime.firewall,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &error,
+            );
+        }
+    }
+
+    let result = mfa::verify_totp_with_lockout(
+        state.runtime.store.mfa_credentials(),
+        &key_bytes,
+        &agent_id,
+        &record,
+        &req.code,
+        state.server_config.mfa_lockout_max_attempts,
+        state.server_config.mfa_lockout_duration_secs,
+    )
+    .await;
+
+    let matched_counter = match result {
+        TotpVerifyResult::Success { counter } => counter,
+        other => return totp_verify_result_to_response(&state, other, GovernanceRoute::MfaVerify),
+    };
+
+    match state
+        .runtime
+        .store
+        .mfa_credentials()
+        .record_use(record.mfa_factor_id, matched_counter)
+        .await
+    {
+        Ok(true) => {
+            if let Err(e) = reset_mfa_lockout_after_success(
+                state.runtime.store.mfa_credentials(),
+                &agent_id,
+                record.mfa_factor_id,
+            )
+            .await
+            {
+                tracing::error!(error = %e, agent_id = %agent_id, "mfa lockout reset failed after verify");
                 state
                     .metrics
                     .increment_governance_error(GovernanceRoute::MfaVerify);
                 let error = ApiError {
                     code: ApiErrorCode::Internal,
-                    message: "failed to decrypt MFA secret".to_string(),
+                    message: "MFA state update failed".to_string(),
                     correlation_id: uuid::Uuid::new_v4().to_string(),
                     retriable: false,
                     details: serde_json::json!({}),
@@ -388,39 +499,7 @@ pub(crate) async fn verify_mfa(
                     &error,
                 );
             }
-        };
-
-    let now = chrono::Utc::now().timestamp() as u64;
-    let matched_counter = match mfa::verify_totp_code_with_counter(&secret, &req.code, now) {
-        Ok(c) => c,
-        Err(_) => {
-            state
-                .metrics
-                .increment_governance_error(GovernanceRoute::MfaVerify);
-            let error = ApiError {
-                code: ApiErrorCode::MfaInvalid,
-                message: "invalid TOTP code".to_string(),
-                correlation_id: uuid::Uuid::new_v4().to_string(),
-                retriable: false,
-                details: serde_json::json!({}),
-            };
-            return sanitized_api_error_response(
-                &state.runtime.firewall,
-                StatusCode::FORBIDDEN,
-                &error,
-            );
         }
-    };
-
-    // Record successful use with counter for replay protection (CAS in DB)
-    match state
-        .runtime
-        .store
-        .mfa_credentials()
-        .record_use(record.mfa_factor_id, matched_counter)
-        .await
-    {
-        Ok(true) => {}
         Ok(false) => {
             state
                 .metrics
@@ -913,6 +992,10 @@ pub(crate) async fn list_mfa_factors(
             last_used_at: r.last_used_at,
             last_used_counter: r.last_used_counter,
             revoked_at: r.revoked_at,
+            failed_attempts: r.failed_attempts,
+            locked_until: r.locked_until,
+            last_failed_at: r.last_failed_at,
+            lockout_count: r.lockout_count,
         })
         .collect();
 
@@ -1004,6 +1087,10 @@ pub(crate) async fn get_mfa_factor(
         last_used_at: record.last_used_at,
         last_used_counter: record.last_used_counter,
         revoked_at: record.revoked_at,
+        failed_attempts: record.failed_attempts,
+        locked_until: record.locked_until,
+        last_failed_at: record.last_failed_at,
+        lockout_count: record.lockout_count,
     };
     sanitized_response(&state.runtime.firewall, StatusCode::OK, &summary)
 }

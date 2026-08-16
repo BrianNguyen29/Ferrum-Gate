@@ -82,6 +82,11 @@ livenessProbe:
   failureThreshold: 3
 
 readinessProbe:
+  # WARNING: The default readiness path below is SHALLOW and ALWAYS returns 200.
+  #   It does NOT gate store/queue health — a pod can report Ready while the
+  #   database or write queue is unhealthy. Do not rely on this default as a
+  #   production health gate.
+  #
   # Readiness probe tradeoff:
   #   /v1/readyz (shallow) — always returns 200; does NOT verify store health or
   #   write-queue backpressure. Safe for Kubernetes probes when bearer auth is enabled.

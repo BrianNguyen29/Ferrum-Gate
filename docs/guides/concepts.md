@@ -162,9 +162,9 @@ FerrumGate records two related but distinct audit surfaces:
 - **Audit log** answers *"What administrative changes were made to the system?"* — scoped to operator-level mutations.
 
 **What is NOT claimed:**
-- This is **not** a WORM (Write Once Read Many) storage system.
+- This is **not** a WORM (Write Once Read Many) storage system by itself.
 - This is **not** a compliance-certified audit trail (SOC 2, ISO 27001, etc.).
-- A privileged attacker with full database access can still rewrite history if they recompute the entire chain. External anchoring or WORM sinks would be required for stronger guarantees; these are not yet implemented.
+- A privileged attacker with full database access can still rewrite history if they recompute the entire chain. External anchoring or a WORM-compatible sink would be required for stronger guarantees; the S3 Object Lock integration is implemented behind the `worm-sink` feature gate and disabled by default. MinIO Object Lock behavior has been tested locally against a MinIO container (governance retention and legal hold); CI is configured to run the same target. It remains experimental/best-effort/operator-owned; it is not a compliance, immutability, or provider-certified guarantee. Run `make s3-test` against a local MinIO container to reproduce.
 
 See [`docs/architecture/tamper-evident-audit-design.md`](../architecture/tamper-evident-audit-design.md) for the SHA-256/Merkle/Ed25519 design.
 

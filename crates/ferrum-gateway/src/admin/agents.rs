@@ -24,6 +24,7 @@ use crate::{
 
 pub(crate) async fn create_agent(
     State(state): State<Arc<AppState>>,
+    auth_actor: Option<Extension<AuthActor>>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> Response {
     // Validate public key is valid base64 and decodes to 32 bytes
@@ -70,6 +71,51 @@ pub(crate) async fn create_agent(
         let hash = sha2::Sha256::digest(&pk_bytes);
         base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, hash)
     };
+
+    let allowed_scopes = req.scopes.unwrap_or_else(|| {
+        vec![
+            "intent:submit".to_string(),
+            "proposal:evaluate".to_string(),
+            "capability:mint".to_string(),
+            "execution:authorize".to_string(),
+            "execution:prepare".to_string(),
+            "execution:execute".to_string(),
+            "execution:verify".to_string(),
+            "execution:compensate".to_string(),
+        ]
+    });
+
+    // Scope attenuation: an agent may only be granted a subset of the issuer's
+    // scopes. Fail closed when the caller cannot be established.
+    let Some(issuer) = auth_actor.as_deref() else {
+        state
+            .metrics
+            .increment_governance_error(GovernanceRoute::AgentsCreate);
+        let error = ApiError {
+            code: ApiErrorCode::Forbidden,
+            message: "caller identity and scopes could not be established".to_string(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            retriable: false,
+            details: serde_json::json!({}),
+        };
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    };
+    if let Err(error) =
+        crate::admin::scope_attenuation::check_scope_attenuation(issuer, &allowed_scopes)
+    {
+        state
+            .metrics
+            .increment_governance_error(GovernanceRoute::AgentsCreate);
+        return sanitized_api_error_response(
+            &state.runtime.firewall,
+            StatusCode::FORBIDDEN,
+            &error,
+        );
+    }
 
     // Pre-check duplicates to return tailored errors instead of raw DB constraint violations.
     match state.runtime.store.agents().get(&req.agent_id).await {
@@ -159,19 +205,6 @@ pub(crate) async fn create_agent(
         }
     }
 
-    let allowed_scopes = req.scopes.unwrap_or_else(|| {
-        vec![
-            "intent:submit".to_string(),
-            "proposal:evaluate".to_string(),
-            "capability:mint".to_string(),
-            "execution:authorize".to_string(),
-            "execution:prepare".to_string(),
-            "execution:execute".to_string(),
-            "execution:verify".to_string(),
-            "execution:compensate".to_string(),
-        ]
-    });
-
     let agent = ferrum_proto::AgentRecord {
         agent_id: req.agent_id.clone(),
         public_key: req.public_key,
@@ -196,6 +229,7 @@ pub(crate) async fn create_agent(
                 "success",
                 Some(serde_json::json!({
                     "fingerprint": fingerprint,
+                    "issuer": issuer.actor_id,
                 })),
                 Some(GovernanceRoute::AgentsCreate),
             )

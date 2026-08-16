@@ -72,6 +72,27 @@ impl std::str::FromStr for MfaFactorStatus {
     }
 }
 
+/// Store-backed record for an agent-scoped MFA lockout.
+///
+/// Tracks failed verification attempts across all factors for an agent.
+/// This spans factor IDs and factor types (TOTP, backup codes, WebAuthn).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MfaAgentLockoutRecord {
+    pub agent_id: String,
+    /// Number of consecutive failed verification attempts since the last success.
+    #[serde(default)]
+    pub failed_attempts: u32,
+    /// If set, the agent's MFA challenge surface is locked until this timestamp.
+    pub locked_until: Option<Timestamp>,
+    /// Timestamp of the most recent failed verification attempt.
+    pub last_failed_at: Option<Timestamp>,
+    /// Total number of times this agent has been locked (lifetime counter).
+    #[serde(default)]
+    pub lockout_count: u32,
+    /// When the record was last updated.
+    pub updated_at: Timestamp,
+}
+
 /// Store-backed record for an MFA credential.
 ///
 /// Holds the encrypted TOTP secret and metadata required for
@@ -101,6 +122,16 @@ pub struct MfaCredentialRecord {
     pub last_used_counter: Option<u64>,
     /// When the factor was revoked (soft-delete).
     pub revoked_at: Option<Timestamp>,
+    /// Number of consecutive failed verification attempts since the last success.
+    #[serde(default)]
+    pub failed_attempts: u32,
+    /// If set, the factor is locked until this timestamp.
+    pub locked_until: Option<Timestamp>,
+    /// Timestamp of the most recent failed verification attempt.
+    pub last_failed_at: Option<Timestamp>,
+    /// Total number of times this factor has been locked (lifetime counter).
+    #[serde(default)]
+    pub lockout_count: u32,
     /// Raw JSON for extensibility and forward compatibility.
     pub raw_json: serde_json::Value,
 }
@@ -128,6 +159,10 @@ impl MfaCredentialRecord {
             last_used_at: None,
             last_used_counter: None,
             revoked_at: None,
+            failed_attempts: 0,
+            locked_until: None,
+            last_failed_at: None,
+            lockout_count: 0,
             raw_json: serde_json::Value::Null,
         }
     }
@@ -208,6 +243,12 @@ pub struct MfaFactorSummary {
     pub last_used_at: Option<Timestamp>,
     pub last_used_counter: Option<u64>,
     pub revoked_at: Option<Timestamp>,
+    #[serde(default)]
+    pub failed_attempts: u32,
+    pub locked_until: Option<Timestamp>,
+    pub last_failed_at: Option<Timestamp>,
+    #[serde(default)]
+    pub lockout_count: u32,
 }
 
 /// Response for listing an agent's MFA factors.

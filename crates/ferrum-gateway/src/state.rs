@@ -1,19 +1,56 @@
+use ferrum_adapter_http::HttpEgressConfig;
 use ferrum_cap::CapabilityService;
 use ferrum_firewall::TaintScoringFirewall;
 use ferrum_pdp::PdpEngine;
 use ferrum_rollback::RollbackService;
 use ferrum_store::{LifecycleReconciliationReport, StoreFacade};
 use ferrum_sync::RuntimeBridge;
+use ipnet::IpNet;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Re-export the canonical `AppState` so that extracted handler modules
-/// (e.g. `capabilities`, `monitoring`, `policy_eval`) can reference it via
-/// `crate::state::AppState` instead of taking a direct dependency on
-/// `crate::server`.
-pub(crate) use crate::server::AppState;
+use crate::metrics::Metrics;
+
+#[cfg(test)]
+use crate::behavioral::build_profiler;
+#[cfg(test)]
+use ferrum_store::InMemoryNonceCache;
+
+/// Canonical shared state for gateway handlers and background tasks.
+/// Includes the runtime, server config, metrics, behavioral profiler, OIDC JWKS cache,
+/// and nonce cache for Agent auth replay protection.
+#[derive(Clone)]
+pub(crate) struct AppState {
+    pub(crate) runtime: GatewayRuntime,
+    pub(crate) server_config: ServerConfig,
+    pub(crate) metrics: Arc<Metrics>,
+    pub(crate) profiler: Arc<dyn crate::behavioral::BehavioralProfiler>,
+    pub(crate) jwks_cache: Option<Arc<OidcJwksCache>>,
+    /// Nonce cache for Agent auth replay protection.
+    pub(crate) nonce_cache: Arc<dyn ferrum_store::NonceCache>,
+}
+
+#[cfg(test)]
+impl AppState {
+    /// Test-only constructor that builds an AppState from a runtime and config.
+    pub(crate) fn test_new(runtime: GatewayRuntime, server_config: ServerConfig) -> Arc<AppState> {
+        Arc::new(AppState {
+            runtime,
+            server_config: server_config.clone(),
+            metrics: Arc::new(Metrics::new()),
+            profiler: build_profiler(&server_config),
+            jwks_cache: None,
+            nonce_cache: Arc::new(InMemoryNonceCache::new(
+                server_config.nonce_cache_max_entries,
+            )),
+        })
+    }
+}
+
+#[cfg(feature = "worm-sink")]
+pub use crate::worm_sink::WormSinkConfig;
 
 #[derive(Clone)]
 pub struct GatewayRuntime {
@@ -57,6 +94,9 @@ impl GatewayRuntime {
 /// Re-export canonical `AuthMode` from `ferrum-proto` to eliminate drift.
 pub use ferrum_proto::token::{AuthMode, TokenRole};
 
+/// Re-export the nonce cache backend selector used by server configuration.
+pub use ferrum_store::NonceCacheBackend;
+
 /// Static key material for offline JWT validation (Phase 4.3).
 ///
 /// Production deployments should use asymmetric algorithms (RSA/EC/Ed)
@@ -95,6 +135,36 @@ impl KeyMaterial {
     }
 }
 
+/// JWT token profile for OIDC authentication.
+///
+/// Controls whether the gateway enforces a strict `typ` header on incoming
+/// OIDC/JWT tokens. The default is `LegacyJwt`, which preserves the existing
+/// behavior of accepting any signed JWT (including tokens with a missing or
+/// non-standard `typ`). The `Rfc9068AccessToken` profile opts into RFC 9068
+/// access-token validation and requires the `typ` header to be exactly one of
+/// the well-known values before any key or signature work is performed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum OidcTokenProfile {
+    /// Legacy behavior: accept any signed JWT `typ` (or none). No typ enforcement.
+    #[default]
+    LegacyJwt,
+    /// RFC 9068 access-token profile: require `typ` to be exactly `at+jwt` or
+    /// `application/at+jwt`.
+    Rfc9068AccessToken,
+}
+
+impl std::str::FromStr for OidcTokenProfile {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "legacy_jwt" => Ok(Self::LegacyJwt),
+            "rfc9068_access_token" => Ok(Self::Rfc9068AccessToken),
+            _ => Err(format!("unknown OIDC token profile: {s}")),
+        }
+    }
+}
+
 /// OIDC configuration for JWT validation (Phase 4.3 + 4.4).
 ///
 /// Supports both static keys (offline validation) and live JWKS fetch
@@ -126,6 +196,9 @@ pub struct OidcConfig {
     pub jwks_url: Option<String>,
     /// JWKS cache TTL in seconds. Default: 300.
     pub jwks_cache_ttl_secs: u64,
+    /// JWT token profile governing `typ` header validation.
+    /// Default: `LegacyJwt` (no `typ` enforcement).
+    pub token_profile: OidcTokenProfile,
 }
 
 impl Default for OidcConfig {
@@ -149,6 +222,7 @@ impl Default for OidcConfig {
             require_email_verified: true,
             jwks_url: None,
             jwks_cache_ttl_secs: 300,
+            token_profile: OidcTokenProfile::default(),
         }
     }
 }
@@ -334,6 +408,47 @@ impl std::str::FromStr for LogFormat {
     }
 }
 
+/// PDP evaluation mode.
+///
+/// - `Static`: use the built-in static PDP engine only.
+/// - `Bundles`: use active policy-bundle rules only; default Allow when no
+///   active bundle matches.
+/// - `Dual`: evaluate active bundles first, then fall back to the static PDP
+///   engine (default; preserves existing behavior).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PdpMode {
+    Static,
+    Bundles,
+    #[default]
+    Dual,
+}
+
+impl std::fmt::Display for PdpMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PdpMode::Static => write!(f, "static"),
+            PdpMode::Bundles => write!(f, "bundles"),
+            PdpMode::Dual => write!(f, "dual"),
+        }
+    }
+}
+
+impl std::str::FromStr for PdpMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "static" => Ok(PdpMode::Static),
+            "bundles" => Ok(PdpMode::Bundles),
+            "dual" => Ok(PdpMode::Dual),
+            _ => Err(format!(
+                "invalid pdp mode: {} (expected 'static', 'bundles', or 'dual')",
+                s
+            )),
+        }
+    }
+}
+
 /// Server configuration for the gateway.
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -359,6 +474,22 @@ pub struct ServerConfig {
     pub rate_limit_per_second: u64,
     /// Rate limit: burst size per IP.
     pub rate_limit_burst: u32,
+    /// CIDR ranges of trusted reverse proxies / load balancers whose single
+    /// `X-Real-IP` header may be honored. `X-Forwarded-For` is ignored.
+    ///
+    /// Parsed and validated at the config/startup boundary into typed
+    /// [`IpNet`] values so the core consumer never deals with raw strings.
+    /// Defaults to empty (trust-none): no proxy headers are honored unless a
+    /// range is explicitly configured. Universal CIDRs (`0.0.0.0/0`, `::/0`)
+    /// are rejected because they would silently trust every client.
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+    /// Optional pre-auth (unauthenticated) rate limit: sustained requests per
+    /// second per source. When `None`, inherits `rate_limit_per_second`.
+    /// `Some(0)` is rejected; the pre-auth limit can never be disabled.
+    pub pre_auth_rate_limit_per_second: Option<u64>,
+    /// Optional pre-auth (unauthenticated) rate limit: burst size per source.
+    /// When `None`, inherits `rate_limit_burst`. `Some(0)` is rejected.
+    pub pre_auth_rate_limit_burst: Option<u32>,
     /// Write queue depth threshold for deep readiness probe.
     /// Valid range: 1..=10000. Default: 100.
     pub write_queue_threshold: u64,
@@ -383,26 +514,85 @@ pub struct ServerConfig {
     pub git_repo_roots: Vec<PathBuf>,
     /// Parent roots under which SQLite database files may be mutated.
     pub sqlite_db_roots: Vec<PathBuf>,
+    /// HTTP egress configuration. When present and non-empty, enables the HTTP adapter.
+    pub http_egress: Option<HttpEgressConfig>,
     /// S3 adapter configuration. When present, enables the S3 adapter.
     #[cfg(feature = "s3")]
     pub s3_config: Option<ferrum_adapter_s3::S3Config>,
+    /// GCS adapter configuration. When present, enables the GCS adapter.
+    /// Requires the `gcs` feature; live SDK integration is a follow-up slice.
+    #[cfg(feature = "gcs")]
+    pub gcs_config: Option<ferrum_adapter_gcs::GcsConfig>,
     /// OIDC configuration. Required when `auth_mode` is `Oidc`.
     pub oidc_config: Option<OidcConfig>,
     /// Clock skew tolerance for Agent auth timestamps in seconds.
     /// Conservative default: 30.
     pub agent_clock_skew_secs: i64,
+    /// Nonce cache backend selector.
+    /// Default: Auto.
+    pub nonce_cache_backend: NonceCacheBackend,
+    /// Nonce cache TTL in seconds.
+    /// When 0, derived from `agent_clock_skew_secs * 2` with a minimum of 60.
+    /// Default: 0.
+    pub nonce_cache_ttl_secs: u64,
+    /// Maximum number of entries retained by the in-memory nonce cache.
+    /// Default: 10_000.
+    pub nonce_cache_max_entries: usize,
     /// Enable periodic background lifecycle outbox reconciliation.
     /// Default: false.
     pub lifecycle_reconciliation_enabled: bool,
-    /// Interval between periodic reconciliation runs in seconds.
+    /// Interval between periodic lifecycle reconciliation runs in seconds.
     /// Default: 60.
     pub lifecycle_reconciliation_interval_secs: u64,
+    /// PDP evaluation mode.
+    /// Default: Dual.
+    pub pdp_mode: PdpMode,
+    /// Enable periodic background approval timeout reconciliation.
+    /// Default: false.
+    pub approval_timeout_enabled: bool,
+    /// Maximum age in seconds before a pending approval is considered stale
+    /// and transitioned to `Expired` by the background reconciler.
+    /// Default: 3600. Valid range: 60..=86400.
+    pub approval_timeout_seconds: u64,
+    /// Interval between periodic approval timeout reconciliation runs in seconds.
+    /// Default: 300. Valid range: 5..=86400.
+    pub approval_reconciliation_interval_secs: u64,
+    /// Enable periodic background quarantine hold timeout reconciliation.
+    /// Default: false.
+    pub quarantine_timeout_enabled: bool,
+    /// Maximum age in seconds before a pending quarantine hold is considered stale
+    /// and transitioned to `Expired` by the background reconciler.
+    /// Default: 86400. Valid range: 60..=604800.
+    pub quarantine_timeout_seconds: u64,
+    /// Interval between periodic quarantine hold timeout reconciliation runs in seconds.
+    /// Default: 300. Valid range: 5..=86400.
+    pub quarantine_reconciliation_interval_secs: u64,
+    /// Enable periodic background HA reconciler for stale in-flight executions.
+    /// Default: false.
+    pub ha_reconciler_enabled: bool,
+    /// Interval between periodic HA reconciler runs in seconds.
+    /// Default: 60. Valid range: 5..=3600.
+    pub ha_reconciler_interval_secs: u64,
+    /// Staleness threshold in seconds. An execution is considered stale when
+    /// `started_at` is older than `now - threshold`.
+    /// Default: 1800. Valid range: 60..=86400.
+    pub ha_reconciler_stale_threshold_secs: u64,
+    /// Maximum number of stale executions to reconcile per pass.
+    /// Default: 100. Valid range: 1..=10000.
+    pub ha_reconciler_batch_size: u32,
     /// Maximum number of outbox records to reconcile per periodic batch.
     /// Default: 1000.
     pub lifecycle_reconciliation_batch_limit: u32,
     /// When true, audit append failures block the action and return 503.
     /// Default: false (best-effort).
     pub audit_fail_closed: bool,
+    /// When true, the WORM-compatible audit bundle sink is enabled.
+    /// Default: false.
+    #[cfg(feature = "worm-sink")]
+    pub audit_worm_sink_enabled: bool,
+    /// WORM sink configuration. Required when `audit_worm_sink_enabled` is true.
+    #[cfg(feature = "worm-sink")]
+    pub worm_sink_config: Option<WormSinkConfig>,
     /// When true, approval resolve requires a second factor (MFA).
     /// Default: false. No concrete verifier is wired yet; enabling this
     /// returns 403/mfa_required until client factor transport is implemented.
@@ -414,6 +604,32 @@ pub struct ServerConfig {
     /// TOTP issuer name displayed in authenticator apps.
     /// Default: "FerrumGate".
     pub mfa_totp_issuer: String,
+    /// Maximum consecutive failed MFA attempts before locking a factor.
+    /// Default: 5.
+    pub mfa_lockout_max_attempts: u32,
+    /// Duration in seconds to lock a factor after exceeding max attempts.
+    /// Default: 900 (15 minutes).
+    pub mfa_lockout_duration_secs: u64,
+    /// Enable behavioral anomaly detection (Phase 1 V1).
+    /// Default: false.
+    pub behavioral_anomaly_enabled: bool,
+    /// Rolling window in seconds for behavioral anomaly detection.
+    /// Default: 60. Valid range: 1..=3600.
+    pub behavioral_anomaly_window_secs: u64,
+    /// Inclusive number of high-risk/R3 proposals in the window that triggers a warning.
+    /// Default: 5. Valid range: 1..=1_000_000.
+    pub behavioral_anomaly_warning_threshold: u32,
+    /// Inclusive number of high-risk/R3 proposals in the window that triggers a critical finding.
+    /// Must be greater than or equal to warning_threshold. Default: 10. Valid range: 1..=1_000_000.
+    pub behavioral_anomaly_critical_threshold: u32,
+    /// Maximum number of distinct principals tracked in memory by the behavioral profiler.
+    /// Default: 1000. Valid range: 1..=100_000.
+    pub behavioral_anomaly_max_actors: usize,
+    /// Temporary compatibility deadline for owner-less legacy workflow objects in
+    /// authenticated modes. When set, unbound capabilities and executions are
+    /// accessible until the RFC3339 deadline; when unset or expired they are
+    /// denied. Bearer/Disabled auth modes are unaffected.
+    pub legacy_object_compat_allow_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -436,6 +652,12 @@ impl std::fmt::Debug for ServerConfig {
         d.field("store_wal_autocheckpoint", &self.store_wal_autocheckpoint);
         d.field("rate_limit_per_second", &self.rate_limit_per_second);
         d.field("rate_limit_burst", &self.rate_limit_burst);
+        d.field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs);
+        d.field(
+            "pre_auth_rate_limit_per_second",
+            &self.pre_auth_rate_limit_per_second,
+        );
+        d.field("pre_auth_rate_limit_burst", &self.pre_auth_rate_limit_burst);
         d.field("write_queue_threshold", &self.write_queue_threshold);
         d.field("pg_max_connections", &self.pg_max_connections);
         d.field("pg_min_idle", &self.pg_min_idle);
@@ -448,10 +670,16 @@ impl std::fmt::Debug for ServerConfig {
         d.field("fs_workdir", &self.fs_workdir);
         d.field("git_repo_roots", &self.git_repo_roots);
         d.field("sqlite_db_roots", &self.sqlite_db_roots);
+        d.field("http_egress", &self.http_egress);
         #[cfg(feature = "s3")]
         d.field("s3_config", &self.s3_config);
+        #[cfg(feature = "gcs")]
+        d.field("gcs_config", &self.gcs_config);
         d.field("oidc_config", &self.oidc_config);
         d.field("agent_clock_skew_secs", &self.agent_clock_skew_secs);
+        d.field("nonce_cache_backend", &self.nonce_cache_backend);
+        d.field("nonce_cache_ttl_secs", &self.nonce_cache_ttl_secs);
+        d.field("nonce_cache_max_entries", &self.nonce_cache_max_entries);
         d.field(
             "lifecycle_reconciliation_enabled",
             &self.lifecycle_reconciliation_enabled,
@@ -464,13 +692,72 @@ impl std::fmt::Debug for ServerConfig {
             "lifecycle_reconciliation_batch_limit",
             &self.lifecycle_reconciliation_batch_limit,
         );
+        d.field("approval_timeout_enabled", &self.approval_timeout_enabled);
+        d.field("approval_timeout_seconds", &self.approval_timeout_seconds);
+        d.field(
+            "approval_reconciliation_interval_secs",
+            &self.approval_reconciliation_interval_secs,
+        );
+        d.field(
+            "quarantine_timeout_enabled",
+            &self.quarantine_timeout_enabled,
+        );
+        d.field(
+            "quarantine_timeout_seconds",
+            &self.quarantine_timeout_seconds,
+        );
+        d.field(
+            "quarantine_reconciliation_interval_secs",
+            &self.quarantine_reconciliation_interval_secs,
+        );
+        d.field("ha_reconciler_enabled", &self.ha_reconciler_enabled);
+        d.field(
+            "ha_reconciler_interval_secs",
+            &self.ha_reconciler_interval_secs,
+        );
+        d.field(
+            "ha_reconciler_stale_threshold_secs",
+            &self.ha_reconciler_stale_threshold_secs,
+        );
+        d.field("ha_reconciler_batch_size", &self.ha_reconciler_batch_size);
+        d.field("pdp_mode", &self.pdp_mode);
         d.field("audit_fail_closed", &self.audit_fail_closed);
+        #[cfg(feature = "worm-sink")]
+        d.field("audit_worm_sink_enabled", &self.audit_worm_sink_enabled);
+        #[cfg(feature = "worm-sink")]
+        d.field("worm_sink_config", &self.worm_sink_config);
         d.field("approval_mfa_required", &self.approval_mfa_required);
         d.field(
             "mfa_secret_key",
             &self.mfa_secret_key.as_ref().map(|_| "<redacted>"),
         );
         d.field("mfa_totp_issuer", &self.mfa_totp_issuer);
+        d.field("mfa_lockout_max_attempts", &self.mfa_lockout_max_attempts);
+        d.field("mfa_lockout_duration_secs", &self.mfa_lockout_duration_secs);
+        d.field(
+            "behavioral_anomaly_enabled",
+            &self.behavioral_anomaly_enabled,
+        );
+        d.field(
+            "behavioral_anomaly_window_secs",
+            &self.behavioral_anomaly_window_secs,
+        );
+        d.field(
+            "behavioral_anomaly_warning_threshold",
+            &self.behavioral_anomaly_warning_threshold,
+        );
+        d.field(
+            "behavioral_anomaly_critical_threshold",
+            &self.behavioral_anomaly_critical_threshold,
+        );
+        d.field(
+            "behavioral_anomaly_max_actors",
+            &self.behavioral_anomaly_max_actors,
+        );
+        d.field(
+            "legacy_object_compat_allow_until",
+            &self.legacy_object_compat_allow_until,
+        );
         d.finish()
     }
 }
@@ -489,6 +776,9 @@ impl Default for ServerConfig {
             store_wal_autocheckpoint: None,
             rate_limit_per_second: 2,
             rate_limit_burst: 50,
+            trusted_proxy_cidrs: Vec::new(),
+            pre_auth_rate_limit_per_second: None,
+            pre_auth_rate_limit_burst: None,
             write_queue_threshold: 100,
             pg_max_connections: 10,
             pg_min_idle: 2,
@@ -498,17 +788,46 @@ impl Default for ServerConfig {
             fs_workdir: None,
             git_repo_roots: Vec::new(),
             sqlite_db_roots: Vec::new(),
+            http_egress: None,
             #[cfg(feature = "s3")]
             s3_config: None,
+            #[cfg(feature = "gcs")]
+            gcs_config: None,
             oidc_config: None,
             agent_clock_skew_secs: 30,
+            nonce_cache_backend: NonceCacheBackend::Auto,
+            nonce_cache_ttl_secs: 0,
+            nonce_cache_max_entries: 10_000,
             lifecycle_reconciliation_enabled: false,
             lifecycle_reconciliation_interval_secs: 60,
             lifecycle_reconciliation_batch_limit: 1000,
+            pdp_mode: PdpMode::Dual,
+            approval_timeout_enabled: false,
+            approval_timeout_seconds: 3600,
+            approval_reconciliation_interval_secs: 300,
+            quarantine_timeout_enabled: false,
+            quarantine_timeout_seconds: 86400,
+            quarantine_reconciliation_interval_secs: 300,
+            ha_reconciler_enabled: false,
+            ha_reconciler_interval_secs: 60,
+            ha_reconciler_stale_threshold_secs: 1800,
+            ha_reconciler_batch_size: 100,
             audit_fail_closed: false,
+            #[cfg(feature = "worm-sink")]
+            audit_worm_sink_enabled: false,
+            #[cfg(feature = "worm-sink")]
+            worm_sink_config: None,
             approval_mfa_required: false,
             mfa_secret_key: None,
             mfa_totp_issuer: "FerrumGate".to_string(),
+            mfa_lockout_max_attempts: 5,
+            mfa_lockout_duration_secs: 900,
+            behavioral_anomaly_enabled: false,
+            behavioral_anomaly_window_secs: 60,
+            behavioral_anomaly_warning_threshold: 5,
+            behavioral_anomaly_critical_threshold: 10,
+            behavioral_anomaly_max_actors: 1000,
+            legacy_object_compat_allow_until: None,
         }
     }
 }
@@ -603,18 +922,61 @@ impl ServerConfig {
         if self.sqlite_db_roots.iter().any(|root| !root.is_absolute()) {
             return Err("all sqlite_db_roots must be absolute paths".to_string());
         }
+        if let Some(http_egress) = &self.http_egress {
+            http_egress
+                .validate()
+                .map_err(|e| format!("invalid http_egress.allowed_hosts: {e}"))?;
+        }
 
         if production_like && !self.lifecycle_reconciliation_enabled {
+            return Err(
+                "lifecycle_reconciliation_enabled must be true for production-like non-loopback \
+                 deployments"
+                    .to_string(),
+            );
+        }
+        if production_like && !self.approval_timeout_enabled {
+            return Err(
+                "approval_timeout_enabled must be true for production-like non-loopback \
+                 deployments"
+                    .to_string(),
+            );
+        }
+        if production_like && !self.ha_reconciler_enabled {
+            return Err(
+                "ha_reconciler_enabled must be true for production-like non-loopback deployments; \
+                 stale Running+Prepared side-effect pairs must be recoverable on restart"
+                    .to_string(),
+            );
+        }
+        if production_like && !self.approval_timeout_enabled {
             tracing::warn!(
-                "lifecycle_reconciliation_enabled is false in a production-like configuration; \
-                 periodic lifecycle outbox reconciliation is disabled"
+                "approval_timeout_enabled is false in a production-like configuration; \
+                 stale pending approvals will not be expired automatically"
             );
         }
         if production_like && !self.audit_fail_closed {
-            tracing::warn!(
-                "audit_fail_closed is false in a production-like configuration; \
-                 audit append failures will not block actions"
+            return Err(
+                "audit_fail_closed must be true for production-like non-loopback deployments"
+                    .to_string(),
             );
+        }
+
+        #[cfg(feature = "worm-sink")]
+        {
+            if self.audit_worm_sink_enabled {
+                let cfg = self
+                    .worm_sink_config
+                    .as_ref()
+                    .ok_or("audit_worm_sink_enabled is true but worm_sink_config is missing")?;
+                cfg.validate()
+                    .map_err(|e| format!("audit_worm_sink configuration invalid: {e}"))?;
+                if !cfg.live {
+                    tracing::warn!(
+                        "audit_worm_sink is enabled but live=false; the sink will not make live S3 calls"
+                    );
+                }
+            }
         }
 
         // Validate store DSN is SQLite (PostgreSQL and MySQL not implemented)
@@ -629,6 +991,35 @@ impl ServerConfig {
         }
         if self.rate_limit_burst > 10_000 {
             return Err("rate_limit_burst must be at most 10000".to_string());
+        }
+
+        // Validate trusted proxy CIDRs. Universal CIDRs (`0.0.0.0/0`, `::/0`)
+        // would match every client address and therefore silently trust any
+        // `X-Forwarded-For` / `X-Real-IP` header, so they are rejected. Any
+        // structurally invalid CIDR is already rejected at the parse boundary.
+        for cidr in &self.trusted_proxy_cidrs {
+            if cidr.prefix_len() == 0 {
+                return Err(format!(
+                    "trusted_proxy_cidrs must not contain a universal CIDR that matches all addresses: {cidr}"
+                ));
+            }
+        }
+
+        // Validate pre-auth rate limits when explicitly configured. When left
+        // unset they inherit `rate_limit_*` (already validated above), so the
+        // pre-auth limit is always enabled and can never be disabled.
+        if let Some(per_second) = self.pre_auth_rate_limit_per_second {
+            if per_second == 0 {
+                return Err("pre_auth_rate_limit_per_second must be at least 1".to_string());
+            }
+        }
+        if let Some(burst) = self.pre_auth_rate_limit_burst {
+            if burst == 0 {
+                return Err("pre_auth_rate_limit_burst must be at least 1".to_string());
+            }
+            if burst > 10_000 {
+                return Err("pre_auth_rate_limit_burst must be at most 10000".to_string());
+            }
         }
 
         // Validate write_queue_threshold range
@@ -652,6 +1043,15 @@ impl ServerConfig {
             return Err("agent_clock_skew_secs must be positive".to_string());
         }
 
+        // Validate nonce cache backend compatibility.
+        if self.nonce_cache_backend == NonceCacheBackend::Postgres
+            && !is_postgres_dsn(&self.store_dsn)
+        {
+            return Err(
+                "nonce_cache_backend='postgres' requires a PostgreSQL store DSN".to_string(),
+            );
+        }
+
         // Validate lifecycle reconciliation settings
         if self.lifecycle_reconciliation_enabled {
             if self.lifecycle_reconciliation_interval_secs == 0 {
@@ -664,6 +1064,67 @@ impl ServerConfig {
                 return Err(
                     "lifecycle_reconciliation_batch_limit must be at most 10000".to_string()
                 );
+            }
+        }
+
+        // Validate approval timeout settings only when the reconciler is enabled.
+        if self.approval_timeout_enabled {
+            if !(60..=86_400).contains(&self.approval_timeout_seconds) {
+                return Err(format!(
+                    "approval_timeout_seconds must be between 60 and 86400, got {}",
+                    self.approval_timeout_seconds
+                ));
+            }
+            if !(5..=86_400).contains(&self.approval_reconciliation_interval_secs) {
+                return Err(format!(
+                    "approval_reconciliation_interval_secs must be between 5 and 86400, got {}",
+                    self.approval_reconciliation_interval_secs
+                ));
+            }
+        }
+
+        // Validate quarantine timeout settings only when the reconciler is enabled.
+        if self.quarantine_timeout_enabled {
+            if !(60..=604_800).contains(&self.quarantine_timeout_seconds) {
+                return Err(format!(
+                    "quarantine_timeout_seconds must be between 60 and 604800, got {}",
+                    self.quarantine_timeout_seconds
+                ));
+            }
+            if !(5..=86_400).contains(&self.quarantine_reconciliation_interval_secs) {
+                return Err(format!(
+                    "quarantine_reconciliation_interval_secs must be between 5 and 86400, got {}",
+                    self.quarantine_reconciliation_interval_secs
+                ));
+            }
+        }
+
+        if production_like && !self.quarantine_timeout_enabled {
+            tracing::warn!(
+                "quarantine_timeout_enabled is false in a production-like configuration; \
+                 stale pending quarantine holds will not be expired automatically"
+            );
+        }
+
+        // Validate HA reconciler settings only when enabled.
+        if self.ha_reconciler_enabled {
+            if !(5..=3_600).contains(&self.ha_reconciler_interval_secs) {
+                return Err(format!(
+                    "ha_reconciler_interval_secs must be between 5 and 3600, got {}",
+                    self.ha_reconciler_interval_secs
+                ));
+            }
+            if !(60..=86_400).contains(&self.ha_reconciler_stale_threshold_secs) {
+                return Err(format!(
+                    "ha_reconciler_stale_threshold_secs must be between 60 and 86400, got {}",
+                    self.ha_reconciler_stale_threshold_secs
+                ));
+            }
+            if !(1..=10_000).contains(&self.ha_reconciler_batch_size) {
+                return Err(format!(
+                    "ha_reconciler_batch_size must be between 1 and 10000, got {}",
+                    self.ha_reconciler_batch_size
+                ));
             }
         }
 
@@ -680,8 +1141,81 @@ impl ServerConfig {
             }
         }
 
+        if self.mfa_lockout_max_attempts < 1 {
+            return Err("mfa_lockout_max_attempts must be at least 1".to_string());
+        }
+        if !(1..=86400).contains(&self.mfa_lockout_duration_secs) {
+            return Err(format!(
+                "mfa_lockout_duration_secs must be between 1 and 86400, got {}",
+                self.mfa_lockout_duration_secs
+            ));
+        }
+
+        // Validate behavioral anomaly detection settings.
+        if self.behavioral_anomaly_enabled {
+            if !(1..=3600).contains(&self.behavioral_anomaly_window_secs) {
+                return Err(format!(
+                    "behavioral_anomaly_window_secs must be between 1 and 3600, got {}",
+                    self.behavioral_anomaly_window_secs
+                ));
+            }
+            if self.behavioral_anomaly_warning_threshold == 0 {
+                return Err("behavioral_anomaly_warning_threshold must be at least 1".to_string());
+            }
+            if self.behavioral_anomaly_critical_threshold == 0 {
+                return Err("behavioral_anomaly_critical_threshold must be at least 1".to_string());
+            }
+            if self.behavioral_anomaly_critical_threshold
+                < self.behavioral_anomaly_warning_threshold
+            {
+                return Err(
+                    "behavioral_anomaly_critical_threshold must be >= behavioral_anomaly_warning_threshold"
+                        .to_string(),
+                );
+            }
+            if !(1..=100_000).contains(&self.behavioral_anomaly_max_actors) {
+                return Err(format!(
+                    "behavioral_anomaly_max_actors must be between 1 and 100000, got {}",
+                    self.behavioral_anomaly_max_actors
+                ));
+            }
+        }
+
+        // Validate legacy object compatibility deadline. It must be a finite,
+        // explicit future timestamp; expired deadlines are denied at runtime but
+        // rejected at config time because they are no-ops.
+        if let Some(allow_until) = self.legacy_object_compat_allow_until {
+            if allow_until <= chrono::Utc::now() {
+                return Err(
+                    "legacy_object_compat_allow_until must be a future RFC3339 timestamp"
+                        .to_string(),
+                );
+            }
+        }
+
         Ok(())
     }
+
+    /// Effective pre-auth (unauthenticated) sustained rate limit in requests
+    /// per second. Falls back to the authenticated `rate_limit_per_second`
+    /// when no explicit pre-auth value is configured.
+    pub fn effective_pre_auth_rate_limit_per_second(&self) -> u64 {
+        self.pre_auth_rate_limit_per_second
+            .unwrap_or(self.rate_limit_per_second)
+    }
+
+    /// Effective pre-auth (unauthenticated) burst size. Falls back to the
+    /// authenticated `rate_limit_burst` when no explicit pre-auth value is
+    /// configured.
+    pub fn effective_pre_auth_rate_limit_burst(&self) -> u32 {
+        self.pre_auth_rate_limit_burst
+            .unwrap_or(self.rate_limit_burst)
+    }
+}
+
+fn is_postgres_dsn(dsn: &str) -> bool {
+    let dsn_lower = dsn.to_lowercase();
+    dsn_lower.starts_with("postgres://") || dsn_lower.starts_with("postgresql://")
 }
 
 fn is_placeholder_bearer_token(token: &str) -> bool {

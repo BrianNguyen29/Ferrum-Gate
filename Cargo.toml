@@ -16,6 +16,8 @@ members = [
   "crates/ferrum-adapter-http",
   "crates/ferrum-adapter-maildraft",
   "crates/ferrum-adapter-s3",
+  "crates/ferrum-adapter-gcs",
+  "crates/ferrum-audit-bundle",
   "crates/ferrum-testkit",
   "crates/ferrum-integration-tests",
   "crates/ferrum-sync",
@@ -33,7 +35,7 @@ license = "Apache-2.0"
 repository = "https://github.com/BrianNguyen29/Ferrum-Gate"
 
 [workspace.dependencies]
-anyhow = "1"
+anyhow = "1.0.103"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_derive = "1"
@@ -80,3 +82,4 @@ urlencoding = "2.1"
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sdk-s3 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a", "http-1x"] }
 aws-credential-types = "1"
+ipnet = "2"

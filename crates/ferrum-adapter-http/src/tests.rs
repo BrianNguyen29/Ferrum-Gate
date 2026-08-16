@@ -8,8 +8,9 @@ use ferrum_proto::{
     CheckSpec, CompensationStep, ExecutionId, IntentId, ProposalId, RollbackContractId,
     RollbackState,
 };
+use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{IpAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -207,7 +208,7 @@ fn create_test_contract(url: &str, method: HttpMethod) -> RollbackContract {
 async fn test_prepare_accepts_valid_http_url() {
     // Start a simple test server
     let (server_handle, port) = start_test_server("/test", 200);
-    let url = format!("http://127.0.0.1:{}/test", port);
+    let url = format!("http://test.local:{}/test", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let request = create_test_request(&url, HttpMethod::Get);
@@ -241,18 +242,13 @@ async fn test_prepare_fails_on_malformed_url() {
 
 #[tokio::test]
 async fn test_execute_rejects_loopback_destination_by_default() {
-    let adapter = HttpAdapter::new("http");
+    let adapter = HttpAdapter::new("http", &HttpEgressConfig::default()).unwrap();
     let contract = create_test_contract("http://127.0.0.1:1/test", HttpMethod::Get);
 
     let result = adapter.execute(&contract, &serde_json::json!(null)).await;
 
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("forbidden private HTTP destination address")
-    );
+    assert!(result.unwrap_err().to_string().contains("IP literal"));
 }
 
 #[tokio::test]
@@ -299,7 +295,7 @@ async fn test_prepare_fails_on_wrong_target_type() {
 async fn test_prepare_with_http_status_check_passes() {
     // Start a test server that returns 200
     let (server_handle, port) = start_test_server("/health", 200);
-    let url = format!("http://127.0.0.1:{}/health", port);
+    let url = format!("http://test.local:{}/health", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut request = create_test_request(&url, HttpMethod::Get);
@@ -326,7 +322,7 @@ async fn test_prepare_with_http_status_check_passes() {
 async fn test_prepare_with_http_status_check_fails_on_mismatch() {
     // Start a test server that returns 200
     let (server_handle, port) = start_test_server("/status", 200);
-    let url = format!("http://127.0.0.1:{}/status", port);
+    let url = format!("http://test.local:{}/status", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut request = create_test_request(&url, HttpMethod::Get);
@@ -355,7 +351,7 @@ async fn test_prepare_with_http_status_check_fails_on_mismatch() {
 #[tokio::test]
 async fn test_prepare_with_unsupported_check_type() {
     let (server_handle, port) = start_test_server("/test", 200);
-    let url = format!("http://127.0.0.1:{}/test", port);
+    let url = format!("http://test.local:{}/test", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut request = create_test_request(&url, HttpMethod::Get);
@@ -397,7 +393,7 @@ async fn test_verify_fails_closed_without_checks() {
 async fn test_verify_with_matching_status_check() {
     // Start a test server that returns 200
     let (server_handle, port) = start_test_server("/api/data", 200);
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -424,7 +420,7 @@ async fn test_verify_with_matching_status_check() {
 async fn test_verify_fails_closed_on_status_mismatch() {
     // Start a test server that returns 500
     let (server_handle, port) = start_test_server("/error", 500);
-    let url = format!("http://127.0.0.1:{}/error", port);
+    let url = format!("http://test.local:{}/error", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -452,7 +448,7 @@ async fn test_verify_fails_closed_on_status_mismatch() {
 #[tokio::test]
 async fn test_verify_fails_on_url_mismatch_in_check() {
     let (server_handle, port) = start_test_server("/actual", 200);
-    let actual_url = format!("http://127.0.0.1:{}/actual", port);
+    let actual_url = format!("http://test.local:{}/actual", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&actual_url, HttpMethod::Get);
@@ -461,7 +457,7 @@ async fn test_verify_fails_on_url_mismatch_in_check() {
         check_type: CheckType::HttpStatusExpected,
         config: json_map_from_serde_map(
             serde_json::json!({
-                "url": "http://127.0.0.1:9999/different",
+                "url": "http://test.local:9999/different",
                 "expected_status": 200
             })
             .as_object()
@@ -483,7 +479,7 @@ async fn test_verify_fails_on_url_mismatch_in_check() {
 async fn test_execute_successful_get() {
     // Start a test server that returns 200 with a body
     let (server_handle, port) = start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Get);
@@ -519,7 +515,7 @@ async fn test_execute_successful_post_with_body() {
     // Start a test server that returns 201 Created
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 201, r#"{"id":"123","name":"test"}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Post);
@@ -555,7 +551,7 @@ async fn test_execute_successful_post_with_body() {
 async fn test_execute_fails_on_connection_error() {
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     // Use a port that's unlikely to have anything listening
-    let contract = create_test_contract("http://127.0.0.1:1/api/test", HttpMethod::Get);
+    let contract = create_test_contract("http://test.local:1/api/test", HttpMethod::Get);
 
     let result = adapter.execute(&contract, &serde_json::json!({})).await;
     assert!(result.is_err());
@@ -624,7 +620,7 @@ async fn test_prepare_validates_https_url_shape() {
 async fn test_prepare_http_status_check_uses_target_method_get() {
     // Start a test server that responds to GET with 200
     let (server_handle, port) = start_test_server("/resource", 200);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut request = create_test_request(&url, HttpMethod::Get);
@@ -651,7 +647,7 @@ async fn test_prepare_http_status_check_uses_target_method_get() {
 async fn test_prepare_http_status_check_uses_target_method_post() {
     // Start a test server that responds to POST with 201
     let (server_handle, port) = start_test_server("/resource", 201);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut request = create_test_request(&url, HttpMethod::Post);
@@ -679,7 +675,7 @@ async fn test_verify_check_method_mismatch_fails_closed() {
     // Start a test server that responds to POST with 200
     // Note: server is started but not contacted because validation fails first
     let (_server_handle, port) = start_test_server("/resource", 200);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Post);
@@ -707,7 +703,7 @@ async fn test_verify_check_method_mismatch_fails_closed() {
 async fn test_verify_check_method_matches_target_passes() {
     // Start a test server that responds to POST with 201
     let (server_handle, port) = start_test_server("/resource", 201);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Post);
@@ -735,7 +731,7 @@ async fn test_verify_check_method_matches_target_passes() {
 async fn test_verify_check_invalid_method_fails_closed() {
     // Note: server is started but not contacted because validation fails first
     let (_server_handle, port) = start_test_server("/resource", 200);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -767,7 +763,7 @@ async fn test_verify_check_invalid_method_fails_closed() {
 async fn test_verify_with_expected_statuses_array_passes() {
     // Start a test server that returns 201
     let (server_handle, port) = start_test_server("/resource", 201);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Post);
@@ -795,7 +791,7 @@ async fn test_verify_with_expected_statuses_array_passes() {
 async fn test_verify_with_expected_statuses_array_fails_on_mismatch() {
     // Start a test server that returns 500
     let (server_handle, port) = start_test_server("/error", 500);
-    let url = format!("http://127.0.0.1:{}/error", port);
+    let url = format!("http://test.local:{}/error", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -826,7 +822,7 @@ async fn test_verify_with_expected_statuses_array_fails_on_mismatch() {
 async fn test_verify_with_expected_statuses_empty_array_fails_closed() {
     // Note: server is started but not contacted because validation fails first
     let (_server_handle, port) = start_test_server("/resource", 200);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -853,7 +849,7 @@ async fn test_verify_with_expected_statuses_empty_array_fails_closed() {
 async fn test_verify_with_expected_statuses_mixed_types_fails_closed() {
     // Note: server is started but not contacted because validation fails first
     let (_server_handle, port) = start_test_server("/resource", 200);
-    let url = format!("http://127.0.0.1:{}/resource", port);
+    let url = format!("http://test.local:{}/resource", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -984,7 +980,7 @@ async fn test_verify_unsupported_check_type_has_phase_context() {
 async fn test_execute_has_rollback_groundwork_v1_metadata() {
     // Start a test server that returns 200 with a body
     let (server_handle, port) = start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Get);
@@ -1056,7 +1052,7 @@ async fn test_execute_rollback_groundwork_no_raw_bodies() {
         200,
         r#"{"sensitive":"secret","password":"12345"}"#,
     );
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Post);
@@ -1124,7 +1120,7 @@ async fn test_execute_rollback_groundwork_response_truncated_flag() {
     // Start a server with a large response body (> 64KB)
     let large_body = "x".repeat(100 * 1024); // 100KB body
     let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
-    let url = format!("http://127.0.0.1:{}/api/large", port);
+    let url = format!("http://test.local:{}/api/large", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Get);
@@ -1218,7 +1214,7 @@ async fn test_prepare_has_rollback_groundwork_marker() {
 #[tokio::test]
 async fn test_execute_rollback_groundwork_has_idempotency_hints() {
     let (server_handle, port) = start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Post);
@@ -1253,7 +1249,7 @@ async fn test_execute_rollback_groundwork_has_idempotency_hints() {
 #[tokio::test]
 async fn test_execute_has_http_recovery_readiness_v1_metadata() {
     let (server_handle, port) = start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Get);
@@ -1304,7 +1300,7 @@ async fn test_execute_has_http_recovery_readiness_v1_metadata() {
 async fn test_execute_recovery_classification_get_without_compensation() {
     // GET without compensation plan = not_replayable
     let (server_handle, port) = start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let contract = create_test_contract(&url, HttpMethod::Get);
@@ -1352,7 +1348,7 @@ async fn test_execute_recovery_classification_get_with_compensation_no_idempoten
     // GET with compensation plan but no idempotency key = potentially_replayable
     // GET is inherently safe and replayable without idempotency keys (read-only)
     let (server_handle, port) = start_test_server_with_body("/api/data", 200, r#"{"status":"ok"}"#);
-    let url = format!("http://127.0.0.1:{}/api/data", port);
+    let url = format!("http://test.local:{}/api/data", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Get);
@@ -1398,7 +1394,7 @@ async fn test_execute_recovery_classification_get_with_compensation_no_idempoten
 async fn test_execute_recovery_classification_post_with_idempotency_key() {
     // POST with idempotency key in compensation plan = conditional_replayable
     let (server_handle, port) = start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let mut contract = create_test_contract(&url, HttpMethod::Post);
@@ -1629,7 +1625,7 @@ async fn test_compensate_with_valid_http_replay_v1_succeeds() {
     // Start a test server that responds to POST with 200
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 200, r#"{"recovered":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
@@ -1681,7 +1677,7 @@ async fn test_rollback_with_valid_http_replay_v1_succeeds() {
     // Start a test server that responds to POST with 200
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 200, r#"{"rolled_back":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
@@ -1728,7 +1724,7 @@ async fn test_compensate_returns_enriched_audit_metadata() {
     // Start a test server that responds to POST with 200 and a body
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 200, r#"{"recovered":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
@@ -1810,7 +1806,7 @@ async fn test_rollback_returns_enriched_audit_metadata() {
     // Start a test server that responds to POST with 200 and a body
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 200, r#"{"rolled_back":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test item", "quantity": 42 });
@@ -1892,7 +1888,7 @@ async fn test_compensate_response_truncated_flag_when_body_large() {
     // Start a server with a large response body (> 64KB)
     let large_body = "x".repeat(100 * 1024); // 100KB body
     let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
-    let url = format!("http://127.0.0.1:{}/api/large", port);
+    let url = format!("http://test.local:{}/api/large", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -1933,7 +1929,7 @@ async fn test_rollback_response_truncated_flag_when_body_large() {
     // Start a server with a large response body (> 64KB)
     let large_body = "y".repeat(100 * 1024); // 100KB body
     let (server_handle, port) = start_test_server_with_body("/api/large", 200, &large_body);
-    let url = format!("http://127.0.0.1:{}/api/large", port);
+    let url = format!("http://test.local:{}/api/large", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -1975,7 +1971,7 @@ async fn test_compensate_enriched_metadata_has_multiple_expected_statuses() {
     // Start a test server that responds to POST with 202
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2019,12 +2015,151 @@ async fn test_compensate_enriched_metadata_has_multiple_expected_statuses() {
     drop(server_handle);
 }
 
+// =============================================================================
+// HTTP egress policy and resolver tests
+// =============================================================================
+
+#[test]
+fn test_http_egress_config_accepts_valid_hosts() {
+    let cfg = HttpEgressConfig::from_hosts(vec![
+        "example.com".to_string(),
+        "api.example.com".to_string(),
+    ])
+    .unwrap();
+    let set = cfg.canonical_set();
+    assert!(set.contains("example.com"));
+    assert!(set.contains("api.example.com"));
+}
+
+#[test]
+fn test_http_egress_config_rejects_ip_literal() {
+    let err = HttpEgressConfig::from_hosts(vec!["127.0.0.1".to_string()]).unwrap_err();
+    assert!(err.contains("IP address"));
+}
+
+#[test]
+fn test_http_egress_config_rejects_wildcard() {
+    let err = HttpEgressConfig::from_hosts(vec!["*.example.com".to_string()]).unwrap_err();
+    assert!(err.contains("wildcard"));
+}
+
+#[test]
+fn test_http_egress_config_rejects_port() {
+    let err = HttpEgressConfig::from_hosts(vec!["example.com:8080".to_string()]).unwrap_err();
+    assert!(err.contains("port"));
+}
+
+#[test]
+fn test_http_egress_config_rejects_empty_host() {
+    let err = HttpEgressConfig::from_hosts(vec!["".to_string()]).unwrap_err();
+    assert!(err.contains("empty"));
+}
+
+#[tokio::test]
+async fn test_execute_rejects_non_allowed_host() {
+    let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
+    let contract = create_test_contract("http://evil.com/test", HttpMethod::Get);
+
+    let result = adapter.execute(&contract, &serde_json::json!({})).await;
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("not in allowed_hosts")
+    );
+}
+
+#[tokio::test]
+async fn test_resolver_rejects_forbidden_ip_when_private_networks_disabled() {
+    let mut records = HashMap::new();
+    records.insert(
+        "test.local".to_string(),
+        vec!["127.0.0.1".parse::<IpAddr>().unwrap()],
+    );
+    let adapter = HttpAdapter::new_for_test("http", &["test.local"], records, false).unwrap();
+
+    let (server_handle, port) = start_test_server_with_body("/test", 200, r#"{"ok":true}"#);
+    let url = format!("http://test.local:{}/test", port);
+    let contract = create_test_contract(&url, HttpMethod::Get);
+
+    let result = adapter.execute(&contract, &serde_json::json!({})).await;
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("connection error"),
+        "resolver should fail closed on loopback when private networks are disabled"
+    );
+
+    drop(server_handle);
+}
+
+#[tokio::test]
+async fn test_client_does_not_follow_redirects() {
+    // Start a server that returns a 302 redirect for /redirect and 200 for /target.
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+
+    let handle = thread::spawn(move || {
+        while running_clone.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut buffer = [0u8; 8192];
+                    if let Ok(n) = stream.read(&mut buffer) {
+                        if n > 0 {
+                            let request = String::from_utf8_lossy(&buffer[..n]);
+                            let path = request
+                                .lines()
+                                .next()
+                                .unwrap_or("")
+                                .split_whitespace()
+                                .nth(1)
+                                .unwrap_or("/");
+                            let response = if path == "/redirect" {
+                                "HTTP/1.1 302 Found\r\nLocation: http://test.local:/target\r\nContent-Length: 0\r\n\r\n".to_string()
+                            } else {
+                                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string()
+                            };
+                            let _ = stream.write_all(response.as_bytes());
+                        }
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(_) => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+    });
+    thread::sleep(Duration::from_millis(50));
+
+    let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
+    let url = format!("http://test.local:{}/redirect", port);
+    let contract = create_test_contract(&url, HttpMethod::Get);
+
+    let receipt = adapter
+        .execute(&contract, &serde_json::json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt.adapter_metadata.get("response_status").unwrap(),
+        &serde_json::Value::Number(302.into()),
+        "adapter must not follow HTTP redirects"
+    );
+
+    drop(handle);
+}
+
 #[tokio::test]
 async fn test_compensate_with_expected_statuses_validation() {
     // Start a test server that returns 201 (not in expected list)
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 201, r#"{"created":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2074,7 +2209,7 @@ async fn test_compensate_fails_on_status_mismatch() {
     // Start a test server that returns 500 (not in expected list)
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 500, r#"{"error":"internal"}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2396,7 +2531,7 @@ async fn test_rollback_fails_closed_for_unsupported_shapes() {
 async fn test_execute_emits_idempotency_key_with_valid_replay_contract() {
     // Start a test server
     let (server_handle, port) = start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2454,7 +2589,7 @@ async fn test_execute_emits_idempotency_key_with_valid_replay_contract() {
 async fn test_execute_replay_contract_validation_fails_on_digest_mismatch() {
     // Start a test server
     let (server_handle, port) = start_test_server_with_body("/api/items", 201, r#"{"id":"123"}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2699,7 +2834,7 @@ async fn test_compensate_succeeds_on_valid_listed_statuses() {
     // Start a test server that returns 202
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2731,7 +2866,7 @@ async fn test_rollback_succeeds_on_valid_listed_statuses() {
     // Start a test server that returns 202
     let (server_handle, port) =
         start_test_server_with_body("/api/items", 202, r#"{"created":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -2876,7 +3011,7 @@ async fn test_http_put_replay_compensate_succeeds() {
     // Start a test server that responds to PUT with 200
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "updated item", "quantity": 100 });
@@ -2929,7 +3064,7 @@ async fn test_http_patch_replay_compensate_succeeds() {
     // Start a test server that responds to PATCH with 200
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"patched":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "quantity": 50 });
@@ -2982,7 +3117,7 @@ async fn test_http_put_replay_rollback_succeeds() {
     // Start a test server that responds to PUT with 200
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"rolled_back":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "updated item" });
@@ -3021,7 +3156,7 @@ async fn test_http_patch_replay_rollback_succeeds() {
     // Start a test server that responds to PATCH with 200
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"rolled_back":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "quantity": 25 });
@@ -3186,7 +3321,7 @@ async fn test_http_put_replay_validates_digest() {
     // Start a test server
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "updated item" });
@@ -3231,7 +3366,7 @@ async fn test_http_put_replay_validates_url() {
     // Start a test server
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "updated item" });
@@ -3245,7 +3380,7 @@ async fn test_http_put_replay_validates_url() {
     let request_digest = format!("{:x}", d.finalize());
 
     // Create contract with WRONG URL in args (but correct URL in target)
-    let wrong_url = format!("http://127.0.0.1:{}/api/items/999", port);
+    let wrong_url = format!("http://test.local:{}/api/items/999", port);
     let contract = RollbackContract {
         contract_id: RollbackContractId::new(),
         intent_id: IntentId::new(),
@@ -3295,7 +3430,7 @@ async fn test_http_put_replay_requires_idempotency_key() {
     // Start a test server
     let (server_handle, port) =
         start_test_server_with_body("/api/items/1", 200, r#"{"updated":true}"#);
-    let url = format!("http://127.0.0.1:{}/api/items/1", port);
+    let url = format!("http://test.local:{}/api/items/1", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "updated item" });
@@ -3833,7 +3968,7 @@ async fn test_retry_preserves_idempotency_key_across_attempts() {
     // idempotency key header is present in all requests.
 
     let (server_handle, port) = start_failing_then_succeeding_server(2, 200);
-    let url = format!("http://127.0.0.1:{}/api/items", port);
+    let url = format!("http://test.local:{}/api/items", port);
 
     let adapter = HttpAdapter::new_allow_private_networks_for_tests("http");
     let payload = serde_json::json!({ "name": "test" });
@@ -3862,6 +3997,132 @@ async fn test_retry_preserves_idempotency_key_across_attempts() {
         receipt.is_ok(),
         "execute should succeed after retry: {:?}",
         receipt.err()
+    );
+
+    drop(server_handle);
+}
+
+// =============================================================================
+// P1.3 HTTP egress bypass regression tests
+// =============================================================================
+
+fn is_forbidden(ip: &str) -> bool {
+    let addr: IpAddr = ip.parse().unwrap();
+    is_forbidden_destination_ip(addr)
+}
+
+#[test]
+fn test_forbidden_ipv4_mapped_loopback() {
+    assert!(is_forbidden("::ffff:127.0.0.1"));
+}
+
+#[test]
+fn test_forbidden_ipv4_mapped_private_networks() {
+    assert!(is_forbidden("::ffff:10.0.0.1"));
+    assert!(is_forbidden("::ffff:172.16.0.1"));
+    assert!(is_forbidden("::ffff:192.168.1.1"));
+    assert!(is_forbidden("::ffff:169.254.1.1"));
+}
+
+#[tokio::test]
+async fn test_resolver_rejects_whole_answer_set_when_any_answer_mapped_private() {
+    let mut records = HashMap::new();
+    records.insert(
+        "test.local".to_string(),
+        vec![
+            "93.184.216.34".parse::<IpAddr>().unwrap(),    // public
+            "::ffff:127.0.0.1".parse::<IpAddr>().unwrap(), // IPv4-mapped loopback
+        ],
+    );
+    let adapter = HttpAdapter::new_for_test("http", &["test.local"], records, false).unwrap();
+
+    let contract = create_test_contract("http://test.local:1/test", HttpMethod::Get);
+    let result = adapter.execute(&contract, &serde_json::json!({})).await;
+
+    assert!(result.is_err(), "resolver must reject the whole answer set");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("connection error") || err.contains("forbidden address"),
+        "expected fail-closed error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_forbidden_ipv4_omitted_special_use_ranges() {
+    let forbidden = [
+        "0.0.0.1",
+        "100.64.0.1",
+        "100.127.255.255",
+        "198.18.0.1",
+        "198.19.255.255",
+        "240.0.0.1",
+        "255.255.255.254",
+        "192.0.0.1",
+        "192.88.99.1",
+    ];
+    for ip in forbidden {
+        assert!(is_forbidden(ip), "{} should be forbidden", ip);
+    }
+
+    let public = ["8.8.8.8", "1.1.1.1", "9.9.9.9"];
+    for ip in public {
+        assert!(!is_forbidden(ip), "{} should be allowed", ip);
+    }
+}
+
+// Test-only guard that restores an environment variable when the test scope ends.
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe { std::env::set_var(key, value) }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => unsafe { std::env::set_var(self.key, value) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}
+
+static PROXY_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[tokio::test]
+async fn test_client_no_proxy_ignores_env_proxy() {
+    // Lock only around set_var/build so the std::sync::MutexGuard does not
+    // cross an await point.
+    let (adapter, _proxy) = {
+        let _guard = PROXY_TEST_MUTEX.lock().unwrap();
+        let proxy = EnvVarGuard::set("HTTP_PROXY", "http://127.0.0.1:1");
+
+        let mut records = HashMap::new();
+        records.insert(
+            "test.local".to_string(),
+            vec!["127.0.0.1".parse::<IpAddr>().unwrap()],
+        );
+        let adapter = HttpAdapter::new_for_test("http", &["test.local"], records, true).unwrap();
+        (adapter, proxy)
+    };
+
+    let (server_handle, port) = start_test_server_with_body("/test", 200, r#"{"ok":true}"#);
+
+    let url = format!("http://test.local:{}/test", port);
+    let contract = create_test_contract(&url, HttpMethod::Get);
+    let result = adapter.execute(&contract, &serde_json::json!({})).await;
+
+    assert!(
+        result.is_ok(),
+        "no_proxy must disable ambient proxy discovery: {:?}",
+        result.err()
     );
 
     drop(server_handle);

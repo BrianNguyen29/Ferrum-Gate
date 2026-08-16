@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0.0",
+  "baseline": "P2.4-pre-migration",
+  "source_file": "crates/ferrum-integration-tests/src/integration_gateway_flow.rs",
+  "commit": "ac0c8073b5f3d574ad3caca89786e2858a04fbc2",
+  "recorded_at": "2026-07-15T00:00:00Z",
+  "command": "cargo test --package ferrum-integration-tests <test_name> -- --exact",
+  "notes": [
+    "Baseline tests were run exactly once per named test with --exact.",
+    "Failures are captured as raw command output; no diagnostic class was silently normalized.",
+    "R3 test test_r3_contracts_have_auto_commit_false passed, establishing current R3 outcome at this commit."
+  ],
+  "results": [
+    {
+      "name": "test_single_use_capability_cannot_be_reused_via_gateway",
+      "domain": "capability",
+      "line": 164,
+      "outcome": "FAILED",
+      "diagnostic_class": "CapabilityNotFoundOnReuse",
+      "raw_output": "test test_single_use_capability_cannot_be_reused_via_gateway ... FAILED\n\nthread 'test_single_use_capability_cannot_be_reused_via_gateway' panicked at crates/ferrum-integration-tests/src/integration_gateway_flow.rs:361:10:\ncapability should still be accessible after reuse failure: NotFound"
+    },
+    {
+      "name": "test_i6_single_use_with_valid_approval_binding",
+      "domain": "approvals",
+      "line": 5781,
+      "outcome": "FAILED",
+      "diagnostic_class": "CapabilityNotFoundOnReuse",
+      "raw_output": "test test_i6_single_use_with_valid_approval_binding ... FAILED\n\nthread 'test_i6_single_use_with_valid_approval_binding' panicked at crates/ferrum-integration-tests/src/integration_gateway_flow.rs:5971:10:\ncapability should still be accessible after reuse failure: NotFound"
+    },
+    {
+      "name": "test_r3_contracts_have_auto_commit_false",
+      "domain": "execution",
+      "line": 778,
+      "outcome": "PASSED",
+      "diagnostic_class": null,
+      "raw_output": "test test_r3_contracts_have_auto_commit_false ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 73 filtered out"
+    }
+  ]
+}

@@ -118,6 +118,12 @@ impl RollbackRepo for SqliteRollbackRepo {
         let Some(mut contract) = self.get(contract_id).await? else {
             return Ok(());
         };
+        if !crate::transitions::is_valid_rollback_transition(&contract.state, &state) {
+            return Err(crate::StoreError::InvalidState(format!(
+                "invalid rollback transition from {:?} to {:?}",
+                contract.state, state
+            )));
+        }
         contract.state = state;
         self.update(&contract).await
     }
@@ -488,5 +494,49 @@ mod tests {
         // get() deserializes from raw_json; if raw_json is stale, state will be wrong
         let retrieved = repo.get(contract_id).await.unwrap().unwrap();
         assert_eq!(retrieved.state, RollbackState::ExecutedAwaitingVerify);
+    }
+
+    #[tokio::test]
+    async fn test_update_state_rejects_invalid_rollback_transition() {
+        use crate::sqlite::SqliteStore;
+
+        let store = SqliteStore::connect("sqlite::memory:").await.unwrap();
+        store.apply_embedded_migrations().await.unwrap();
+
+        let intent_id = ferrum_proto::IntentId::new();
+        let proposal_id = ProposalId::new();
+        let execution_id = ExecutionId::new();
+        let capability_id = ferrum_proto::CapabilityId::new();
+
+        insert_parent_records_via_sql(
+            store.pool(),
+            &intent_id.to_string(),
+            &proposal_id.to_string(),
+            &execution_id.to_string(),
+            &capability_id.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let repo = store.rollback_contracts();
+
+        let contract = create_test_contract(intent_id, proposal_id, execution_id);
+        let contract_id = contract.contract_id;
+        repo.insert(&contract).await.unwrap();
+
+        // Prepared -> Verified is not a legal rollback transition.
+        let err = repo
+            .update_state(contract_id, RollbackState::Verified)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid rollback transition"),
+            "unexpected error: {}",
+            err
+        );
+
+        // The stored state should remain unchanged.
+        let retrieved = repo.get(contract_id).await.unwrap().unwrap();
+        assert_eq!(retrieved.state, RollbackState::Prepared);
     }
 }

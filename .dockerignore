@@ -7,3 +7,34 @@
 Dockerfile
 .dockerignore
 docker-compose*.yml
+
+# Secrets / credentials — never bake into the demo image
+.env
+.env.*
+**/*.pem
+**/*.key
+**/id_*
+**/id_*.pub
+**/*.crt
+**/*.p12
+**/*.pfx
+**/secrets/**
+**/.kube/**
+**/.ssh/**
+
+# Local tool / build noise
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/node_modules/
+.coverage
+htmlcov/
+
+# Local deployment outputs (Terraform / generated artifacts)
+deploy/terraform/ferrumgate-single-node/out/
+deploy/terraform/**/.terraform/
+deploy/terraform/**/*.tfstate
+deploy/terraform/**/*.tfstate.backup
+**/.terraform.lock.hcl

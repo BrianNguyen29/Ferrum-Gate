@@ -46,6 +46,8 @@ pub struct PrepareExecutionResponse {
 pub struct CompensateExecutionResponse {
     pub execution_id: crate::ExecutionId,
     pub compensated: bool,
+    #[serde(default)]
+    pub recovery_required: bool,
     pub rollback_contract: Option<crate::RollbackContract>,
     pub warnings: Vec<String>,
 }
@@ -65,6 +67,8 @@ pub struct ExecuteExecutionRequest {
 pub struct ExecuteExecutionResponse {
     pub execution_id: crate::ExecutionId,
     pub executed: bool,
+    #[serde(default)]
+    pub recovery_required: bool,
     pub result_digest: Option<String>,
     pub rollback_contract: Option<crate::RollbackContract>,
     pub warnings: Vec<String>,
@@ -75,6 +79,8 @@ pub struct ExecuteExecutionResponse {
 pub struct VerifyExecutionResponse {
     pub execution_id: crate::ExecutionId,
     pub verified: bool,
+    #[serde(default)]
+    pub recovery_required: bool,
     pub rollback_contract: Option<crate::RollbackContract>,
     pub warnings: Vec<String>,
 }
@@ -157,6 +163,7 @@ pub enum ApiErrorCode {
     PayloadTooLarge,
     MfaRequired,
     MfaInvalid,
+    MfaLocked,
     Misconfigured,
 }
 

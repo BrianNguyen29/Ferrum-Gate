@@ -1,0 +1,146 @@
+{
+  "format_version": "1.0",
+  "kind": "coverage-baseline",
+  "authoritative": false,
+  "note": "SAMPLE / NON-AUTHORITATIVE full-workspace coverage baseline including library and binary crate tests. Not a controlled-runner or SLO-grade baseline. Not promotion eligible.",
+  "commit": "95a70b864772b3aac4aea5b68b041faca9f3b843",
+  "short_commit": "95a70b8",
+  "branch": "roadmap/p0-p2-governance-stack",
+  "captured_at": "2026-07-16T13:19:21.867016+00:00",
+  "command": "cargo llvm-cov --workspace --text --output-path baselines/coverage/coverage-summary-95a70b8.txt",
+  "lcov_command": "cargo llvm-cov report --lcov --output-path baselines/coverage/coverage-95a70b8.info",
+  "runner": "local uncontrolled development environment",
+  "scope": "full-workspace (library + binary crates; integration tests included; PostgreSQL live tests excluded)",
+  "total": {
+    "lines_total": 77704,
+    "lines_hit": 63669,
+    "coverage_percent": 81.94
+  },
+  "crates": {
+    "ferrum-adapter-fs": {
+      "lines_total": 790,
+      "lines_hit": 527,
+      "coverage_percent": 66.71
+    },
+    "ferrum-adapter-gcs": {
+      "lines_total": 897,
+      "lines_hit": 765,
+      "coverage_percent": 85.28
+    },
+    "ferrum-adapter-git": {
+      "lines_total": 553,
+      "lines_hit": 422,
+      "coverage_percent": 76.31
+    },
+    "ferrum-adapter-http": {
+      "lines_total": 1040,
+      "lines_hit": 739,
+      "coverage_percent": 71.06
+    },
+    "ferrum-adapter-maildraft": {
+      "lines_total": 898,
+      "lines_hit": 796,
+      "coverage_percent": 88.64
+    },
+    "ferrum-adapter-s3": {
+      "lines_total": 993,
+      "lines_hit": 891,
+      "coverage_percent": 89.73
+    },
+    "ferrum-adapter-sqlite": {
+      "lines_total": 1506,
+      "lines_hit": 1419,
+      "coverage_percent": 94.22
+    },
+    "ferrum-audit-bundle": {
+      "lines_total": 473,
+      "lines_hit": 420,
+      "coverage_percent": 88.79
+    },
+    "ferrum-cap": {
+      "lines_total": 182,
+      "lines_hit": 179,
+      "coverage_percent": 98.35
+    },
+    "ferrum-firewall": {
+      "lines_total": 583,
+      "lines_hit": 548,
+      "coverage_percent": 94.0
+    },
+    "ferrum-gateway": {
+      "lines_total": 26499,
+      "lines_hit": 22264,
+      "coverage_percent": 84.02
+    },
+    "ferrum-graph": {
+      "lines_total": 261,
+      "lines_hit": 261,
+      "coverage_percent": 100.0
+    },
+    "ferrum-integrations-mcp": {
+      "lines_total": 6851,
+      "lines_hit": 6203,
+      "coverage_percent": 90.54
+    },
+    "ferrum-pdp": {
+      "lines_total": 1650,
+      "lines_hit": 1625,
+      "coverage_percent": 98.48
+    },
+    "ferrum-proto": {
+      "lines_total": 914,
+      "lines_hit": 840,
+      "coverage_percent": 91.9
+    },
+    "ferrum-rollback": {
+      "lines_total": 483,
+      "lines_hit": 476,
+      "coverage_percent": 98.55
+    },
+    "ferrum-store": {
+      "lines_total": 7584,
+      "lines_hit": 6934,
+      "coverage_percent": 91.43
+    },
+    "ferrum-sync": {
+      "lines_total": 1011,
+      "lines_hit": 901,
+      "coverage_percent": 89.12
+    },
+    "ferrum-testkit": {
+      "lines_total": 500,
+      "lines_hit": 444,
+      "coverage_percent": 88.8
+    },
+    "ferrum-integration-tests": {
+      "lines_total": 13274,
+      "lines_hit": 13185,
+      "coverage_percent": 99.33
+    },
+    "ferrumd": {
+      "lines_total": 1051,
+      "lines_hit": 768,
+      "coverage_percent": 73.07
+    },
+    "ferrumctl": {
+      "lines_total": 6362,
+      "lines_hit": 2248,
+      "coverage_percent": 35.33
+    },
+    "ferrum-stress": {
+      "lines_total": 1487,
+      "lines_hit": 0,
+      "coverage_percent": 0.0
+    },
+    "ferrum-migrate": {
+      "lines_total": 587,
+      "lines_hit": 526,
+      "coverage_percent": 89.61
+    },
+    "ferrum-tui": {
+      "lines_total": 1275,
+      "lines_hit": 288,
+      "coverage_percent": 22.59
+    }
+  }
+}

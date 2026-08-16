@@ -267,14 +267,25 @@ Common HTTP status codes:
 
 ## Rate limiting
 
-The workload router is protected by a governor layer. Default limits are configurable:
+The workload router is protected by an outer pre-auth IP governor and, for
+`scoped`, `oidc`, and `agent` auth modes, an inner `AuthActor`+IP governor.
+`disabled` and `bearer` modes use only the outer governor. Monitoring routes
+bypass both governors.
+
+Default limits are configurable:
 
 ```toml
 rate_limit_per_second = 2
 rate_limit_burst = 50
 ```
 
-When rate limited, workload routes return HTTP 429. Monitoring endpoints are not rate limited.
+If `ferrumd` is behind an operator-owned reverse proxy, set `trusted_proxy_cidrs`
+to the proxy's peer CIDRs and have the proxy supply a single `X-Real-IP` header.
+`X-Forwarded-For` is ignored. When `trusted_proxy_cidrs` is empty or omitted,
+the immediate transport peer IP is used for bucketing.
+
+When rate limited, workload routes return HTTP 429. Monitoring endpoints are not
+rate limited.
 
 ## Related docs
 

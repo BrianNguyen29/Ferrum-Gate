@@ -1,7 +1,17 @@
+use chrono::{DateTime, Utc};
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{PgPool, Row, postgres::PgRow};
 
 use crate::Result;
+
+/// Canonical UTC RFC3339 string matching serde's default `DateTime<Utc>` format.
+pub fn rfc3339_utc(t: DateTime<Utc>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+}
+
+pub fn opt_rfc3339_utc(t: Option<DateTime<Utc>>) -> Option<String> {
+    t.map(rfc3339_utc)
+}
 
 pub fn enum_text<T: Serialize>(value: &T) -> Result<String> {
     let json = serde_json::to_value(value)?;

@@ -1,10 +1,11 @@
-.PHONY: help check fmt lint test docs test-python-validators validate tree pretarget audit secret-scan wal-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run restore-drill stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update coverage-threshold-hard
+.PHONY: help check fmt lint test invariant-smoke docs test-python-validators validate tree pretarget audit secret-scan wal-drill dr-smoke restore-drill pg-restart-drill pg-restore-drill pg-migration-drill pg-backup-retention-drill pg-partial-failure-drill pg-sustained-workload-drill pg-sustained-workload-extended pg-scheduled-timer-simulation pg-local-batch ha-local-setup ha-local-failover-drill ha-local-ferrumd-reconnect-drill ha-local-teardown site-build site-serve site-check slo-sustained-dry-run stress check-pilot-readiness domainless-tier1-fast domainless-tier1-gate s3-test release-preflight release-preflight-execute perf-gate perf-baseline-update perf-gate-enforce coverage-threshold-hard
 
 help:
 	@echo "make check     - cargo check workspace"
 	@echo "make fmt       - cargo fmt --all"
 	@echo "make lint      - cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "make test      - cargo test --workspace"
+	@echo "make invariant-smoke - run safety-kernel invariant smoke gate"
 	@echo "make coverage  - generate test coverage report (requires cargo-tarpaulin or cargo-llvm-cov)"
 	@echo "make docs      - validate docs links and site scaffold"
 	@echo "make validate  - run expanded local validation (layout, contracts, templates, toml, openapi, docs links, CI badges, MCP tools)"
@@ -33,7 +34,8 @@ help:
 	@echo "make stress    - stress tests against a running service (requires BASE_URL env var)"
 	@echo "make check-pilot-readiness - pilot readiness probes (requires running server via --server-url or FERRUMCTL_SERVER_URL)"
 	@echo "make perf-gate           - advisory performance regression gate (short-duration, non-blocking)"
-	@echo "make perf-baseline-update - regenerate sample performance baselines (developer use)"
+	@echo "make perf-gate-enforce   - enforced performance regression gate (authoritative baselines required)"
+	@echo "make perf-baseline-update - regenerate sample performance baselines (developer use, non-authoritative)"
 	@echo "make site-build - build static site with Zola (optional; requires zola binary)"
 	@echo "make site-serve - serve static site locally with Zola (optional; requires zola binary)"
 	@echo "make site-check - check site scaffold presence (no zola required)"
@@ -53,6 +55,10 @@ lint:
 
 test:
 	cargo test --workspace
+
+invariant-smoke:
+	@echo "Running invariant smoke gate..."
+	@bash scripts/run_invariant_smoke.sh
 
 docs:
 	@echo "Running docs validation..."
@@ -92,6 +98,11 @@ secret-scan:
 wal-drill:
 	@echo "Running local SQLite WAL crash-recovery drill..."
 	@bash scripts/run_wal_crash_recovery_drill.sh
+
+dr-smoke:
+	@echo "Running DR smoke (WAL crash-recovery + temp SQLite restore)..."
+	@bash scripts/run_wal_crash_recovery_drill.sh
+	@bash scripts/run_local_restore_drill.sh
 
 pg-restart-drill:
 	@echo "Running local PostgreSQL container restart recovery drill..."
@@ -274,12 +285,16 @@ perf-gate:
 	@echo "Running advisory performance regression gate..."
 	@bash scripts/run_perf_gate.sh --dry-run --duration 5 --scenarios "health,intent-compile,sqlite-contention"
 
+perf-gate-enforce:
+	@echo "Running enforced performance regression gate (authoritative baselines required)..."
+	@PERF_GATE_ENFORCE=1 bash scripts/run_perf_gate.sh --duration 5 --scenarios "health,intent-compile,sqlite-contention"
+
 perf-baseline-update:
-	@echo "Regenerating sample performance baselines (advisory only)..."
-	@echo "This runs ferrum-stress and overwrites baselines/*.json with current results."
-	@echo "You must manually review and label the generated baselines before committing."
-	@bash scripts/run_perf_gate.sh --duration 5 --scenarios "health,intent-compile,sqlite-contention"
-	@echo "[INFO] Baselines regenerated. Review them in baselines/ before removing the SAMPLE label."
+	@echo "Regenerating sample performance baselines (advisory only, non-authoritative)..."
+	@echo "This runs ferrum-stress and overwrites baselines/sample_*.json with current results."
+	@echo "Review generated files before committing; remove 'sample' prefix only after promotion."
+	@bash scripts/run_perf_gate.sh --write-baselines --duration 5 --scenarios "health,intent-compile,sqlite-contention"
+	@echo "[INFO] Sample baselines regenerated. They remain SAMPLE / NON-AUTHORITATIVE by default."
 
 release-preflight:
 	@echo "Running release preflight (dry-run, no push/publish)..."

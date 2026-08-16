@@ -11,5 +11,9 @@ spec:
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['-O-', '{{ include "ferrumgate.fullname" . }}:{{ .Values.service.port }}/v1/healthz']
+      # NOTE: this hits the SHALLOW readiness endpoint, which always returns 200
+      # and does not verify store/queue health. Deep readiness (/v1/readyz/deep)
+      # requires a bearer token when auth is enabled and cannot be used by this
+      # unauthenticated Helm test hook.
+      args: ['-O-', '{{ include "ferrumgate.fullname" . }}:{{ .Values.service.port }}/v1/readyz']
   restartPolicy: Never

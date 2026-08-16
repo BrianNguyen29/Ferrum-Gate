@@ -48,6 +48,7 @@ fn make_intent_envelope(intent_id: IntentId, status: IntentStatus) -> IntentEnve
         status,
         created_at: ts_offset(0),
         expires_at: ts_offset(3600),
+        owner_actor_id: None,
     }
 }
 
@@ -141,6 +142,7 @@ async fn insert_capability(
         expires_at: ts_offset(3600),
         revoked_at: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
     store.capabilities().insert(&cap).await.unwrap();
     cap_id
@@ -167,6 +169,7 @@ async fn insert_execution(
         finished_at: None,
         result_digest: None,
         metadata: JsonMap::new(),
+        owner_actor_id: None,
     };
     store.executions().insert(&exec).await.unwrap();
     exec_id

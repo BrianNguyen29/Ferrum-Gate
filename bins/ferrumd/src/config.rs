@@ -1,8 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+#[cfg(feature = "gcs")]
+use ferrum_adapter_gcs::GcsConfig;
+use ferrum_adapter_http::HttpEgressConfig;
 #[cfg(feature = "s3")]
 use ferrum_adapter_s3::S3Config;
 use ferrum_gateway::{AuthMode, ServerConfig};
+use ipnet::IpNet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -11,7 +15,7 @@ const DEFAULT_STORE_DSN: &str = "sqlite::memory:";
 const DEFAULT_LOG_FILTER: &str = "info";
 const AUTO_CONFIG_FILE: &str = "configs/ferrumgate.dev.toml";
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 #[command(name = "ferrumd")]
 #[command(about = "FerrumGate daemon")]
 pub struct Args {
@@ -59,9 +63,29 @@ pub struct Args {
     #[arg(long)]
     rate_limit_burst: Option<u32>,
 
+    /// Trusted proxy CIDR ranges (comma-separated) whose single `X-Real-IP`
+    /// header may be honored. `X-Forwarded-For` is ignored. Defaults to empty
+    /// (trust-none). Universal CIDRs (0.0.0.0/0, ::/0) are rejected.
+    #[arg(long)]
+    trusted_proxy_cidrs: Option<String>,
+
+    /// Pre-auth rate limit: sustained requests per second per source.
+    /// When omitted, inherits rate_limit_per_second.
+    #[arg(long)]
+    pre_auth_rate_limit_per_second: Option<u64>,
+
+    /// Pre-auth rate limit: burst size per source.
+    /// When omitted, inherits rate_limit_burst.
+    #[arg(long)]
+    pre_auth_rate_limit_burst: Option<u32>,
+
     /// Log format: "text" or "json" (default "text").
     #[arg(long)]
     log_format: Option<String>,
+
+    /// PDP mode: "static", "bundles", or "dual" (default "dual").
+    #[arg(long)]
+    pdp_mode: Option<String>,
 
     /// Write queue depth threshold for deep readiness probe (1..=10000).
     #[arg(long)]
@@ -99,6 +123,55 @@ pub struct Args {
     #[arg(long)]
     lifecycle_reconciliation_batch_limit: Option<u32>,
 
+    /// Enable periodic background approval timeout reconciliation (default: false).
+    #[arg(long)]
+    approval_timeout_enabled: bool,
+
+    /// Maximum age in seconds before a pending approval is expired by the
+    /// background reconciler (default: 3600, min: 60, max: 86400).
+    #[arg(long)]
+    approval_timeout_seconds: Option<u64>,
+
+    /// Interval in seconds between approval timeout reconciliation runs
+    /// (default: 300, min: 5, max: 86400).
+    #[arg(long)]
+    approval_reconciliation_interval_secs: Option<u64>,
+
+    /// Enable periodic background quarantine hold timeout reconciliation (default: false).
+    #[arg(long)]
+    quarantine_timeout_enabled: bool,
+
+    /// Maximum age in seconds before a pending quarantine hold is expired by the
+    /// background reconciler (default: 86400, min: 60, max: 604800).
+    #[arg(long)]
+    quarantine_timeout_seconds: Option<u64>,
+
+    /// Interval in seconds between quarantine hold timeout reconciliation runs
+    /// (default: 300, min: 5, max: 86400).
+    #[arg(long)]
+    quarantine_reconciliation_interval_secs: Option<u64>,
+
+    /// Enable periodic background HA reconciler for stale in-flight executions
+    /// (default: false).
+    #[arg(long)]
+    ha_reconciler_enabled: bool,
+
+    /// Interval in seconds between HA reconciler runs
+    /// (default: 60, min: 5, max: 3600).
+    #[arg(long)]
+    ha_reconciler_interval_secs: Option<u64>,
+
+    /// Staleness threshold in seconds before an in-flight execution is
+    /// reconciled by the HA reconciler
+    /// (default: 1800, min: 60, max: 86400).
+    #[arg(long)]
+    ha_reconciler_stale_threshold_secs: Option<u64>,
+
+    /// Maximum number of stale executions to reconcile per HA reconciler pass
+    /// (default: 100, min: 1, max: 10000).
+    #[arg(long)]
+    ha_reconciler_batch_size: Option<u32>,
+
     /// When true, audit append failures block the action and return 503 (default: false).
     #[arg(long)]
     audit_fail_closed: bool,
@@ -115,6 +188,119 @@ pub struct Args {
     /// TOTP issuer name displayed in authenticator apps (default: "FerrumGate").
     #[arg(long)]
     mfa_totp_issuer: Option<String>,
+
+    /// Maximum consecutive failed MFA attempts before locking a factor (default: 5).
+    #[arg(long)]
+    mfa_lockout_max_attempts: Option<u32>,
+
+    /// Duration in seconds to lock a factor after exceeding max attempts (default: 900).
+    #[arg(long)]
+    mfa_lockout_duration_secs: Option<u64>,
+
+    /// Nonce cache backend: "auto", "memory", or "postgres" (default: "auto").
+    #[arg(long)]
+    nonce_cache_backend: Option<String>,
+
+    /// Nonce cache TTL in seconds. 0 derives from agent_clock_skew_secs*2 (min 60).
+    #[arg(long)]
+    nonce_cache_ttl_secs: Option<u64>,
+
+    /// Maximum entries for the in-memory nonce cache (default: 10000).
+    #[arg(long)]
+    nonce_cache_max_entries: Option<usize>,
+
+    /// Enable behavioral anomaly detection (Phase 1 V1, default: false).
+    #[arg(long)]
+    behavioral_anomaly_enabled: bool,
+
+    /// Rolling window in seconds for behavioral anomaly detection (default: 60).
+    #[arg(long)]
+    behavioral_anomaly_window_secs: Option<u64>,
+
+    /// High-risk/R3 proposals in the window that trigger a warning (default: 5).
+    #[arg(long)]
+    behavioral_anomaly_warning_threshold: Option<u32>,
+
+    /// High-risk/R3 proposals in the window that trigger a critical finding (default: 10).
+    #[arg(long)]
+    behavioral_anomaly_critical_threshold: Option<u32>,
+
+    /// Maximum number of principals tracked in memory by the behavioral profiler (default: 1000).
+    #[arg(long)]
+    behavioral_anomaly_max_actors: Option<usize>,
+
+    /// Enable the WORM-compatible audit bundle sink (default: false).
+    #[arg(long)]
+    audit_worm_sink_enabled: bool,
+
+    /// WORM sink target bucket.
+    #[arg(long)]
+    audit_worm_sink_bucket: Option<String>,
+
+    /// WORM sink key prefix (default: "audit-worm").
+    #[arg(long)]
+    audit_worm_sink_prefix: Option<String>,
+
+    /// WORM sink Object Lock mode: "governance" or "compliance" (default: "governance").
+    #[arg(long)]
+    audit_worm_sink_object_lock_mode: Option<String>,
+
+    /// WORM sink retention period in days (default: 30).
+    #[arg(long)]
+    audit_worm_sink_retention_days: Option<u32>,
+
+    /// Apply a legal hold to WORM sink objects (default: false).
+    #[arg(long)]
+    audit_worm_sink_legal_hold: bool,
+
+    /// Interval between WORM sink export attempts in seconds (default: 300, min: 60).
+    #[arg(long)]
+    audit_worm_sink_export_interval_secs: Option<u64>,
+
+    /// Maximum audit entries per WORM sink bundle (default: 1000, range: 1..=100000).
+    #[arg(long)]
+    audit_worm_sink_batch_limit: Option<u32>,
+
+    /// Enable live S3 SDK calls for the WORM sink (default: false).
+    #[arg(long)]
+    audit_worm_sink_live: bool,
+
+    /// Optional custom S3 endpoint for the WORM sink (e.g., http://localhost:9000).
+    #[arg(long)]
+    audit_worm_sink_endpoint_url: Option<String>,
+
+    /// AWS region for the WORM sink (default: "us-east-1").
+    #[arg(long)]
+    audit_worm_sink_region: Option<String>,
+
+    /// Optional static access key ID for the WORM sink.
+    #[arg(long)]
+    audit_worm_sink_access_key_id: Option<String>,
+
+    /// Optional static secret access key for the WORM sink.
+    #[arg(long)]
+    audit_worm_sink_secret_access_key: Option<String>,
+
+    /// Comma-separated list of exact allowed HTTP egress host names.
+    /// When empty or omitted, the HTTP adapter and planner are not registered.
+    #[arg(long)]
+    http_egress_allowed_hosts: Option<String>,
+
+    /// Enable live GCS SDK calls for the GCS adapter (default: false).
+    #[arg(long)]
+    gcs_live: bool,
+
+    /// OIDC token profile: "legacy_jwt" (default) or "rfc9068_access_token".
+    /// "legacy_jwt" accepts any signed JWT typ. "rfc9068_access_token" requires
+    /// the typ header to be exactly "at+jwt" or "application/at+jwt".
+    #[arg(long)]
+    oidc_token_profile: Option<String>,
+
+    /// RFC3339 deadline until which owner-less legacy workflow objects are
+    /// accessible in authenticated modes (Scoped/OIDC/Agent). Empty or omitted
+    /// means deny-by-default. Bearer and Disabled modes are unaffected.
+    #[arg(long)]
+    legacy_object_compat_allow_until: Option<String>,
 }
 
 pub fn get_env<T>(key: &str) -> Result<Option<T>>
@@ -145,6 +331,31 @@ pub fn get_env_path_list(key: &str) -> Result<Option<Vec<PathBuf>>> {
         .map(PathBuf::from)
         .collect::<Vec<_>>();
     Ok(Some(paths))
+}
+
+/// Parse a comma-separated list of CIDR ranges into typed [`IpNet`] values.
+/// Empty entries are ignored; any structurally invalid CIDR is rejected here at
+/// the config/startup boundary so the core consumer stays fully typed.
+fn parse_cidr_list(raw: &str) -> Result<Vec<IpNet>> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse::<IpNet>()
+                .map_err(|e| anyhow::anyhow!("invalid CIDR '{item}': {e}"))
+        })
+        .collect()
+}
+
+fn parse_allowed_hosts(raw: &str) -> Result<Vec<String>> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| Ok(item.to_string()))
+        .collect()
 }
 
 pub fn redact_dsn_for_log(dsn: &str) -> String {
@@ -192,7 +403,15 @@ struct ServerSection {
     #[serde(default)]
     rate_limit_burst: Option<u32>,
     #[serde(default)]
+    trusted_proxy_cidrs: Vec<String>,
+    #[serde(default)]
+    pre_auth_rate_limit_per_second: Option<u64>,
+    #[serde(default)]
+    pre_auth_rate_limit_burst: Option<u32>,
+    #[serde(default)]
     log_format: Option<String>,
+    #[serde(default)]
+    pdp_mode: Option<String>,
     #[serde(default)]
     write_queue_threshold: Option<u64>,
     #[serde(default)]
@@ -218,6 +437,26 @@ struct ServerSection {
     #[serde(default)]
     lifecycle_reconciliation_batch_limit: Option<u32>,
     #[serde(default)]
+    approval_timeout_enabled: Option<bool>,
+    #[serde(default)]
+    approval_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    approval_reconciliation_interval_secs: Option<u64>,
+    #[serde(default)]
+    quarantine_timeout_enabled: Option<bool>,
+    #[serde(default)]
+    quarantine_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    quarantine_reconciliation_interval_secs: Option<u64>,
+    #[serde(default)]
+    ha_reconciler_enabled: Option<bool>,
+    #[serde(default)]
+    ha_reconciler_interval_secs: Option<u64>,
+    #[serde(default)]
+    ha_reconciler_stale_threshold_secs: Option<u64>,
+    #[serde(default)]
+    ha_reconciler_batch_size: Option<u32>,
+    #[serde(default)]
     audit_fail_closed: Option<bool>,
     #[serde(default)]
     approval_mfa_required: Option<bool>,
@@ -225,9 +464,105 @@ struct ServerSection {
     mfa_secret_key: Option<String>,
     #[serde(default = "default_mfa_totp_issuer")]
     mfa_totp_issuer: String,
+    #[serde(default = "default_mfa_lockout_max_attempts")]
+    mfa_lockout_max_attempts: u32,
+    #[serde(default = "default_mfa_lockout_duration_secs")]
+    mfa_lockout_duration_secs: u64,
+    #[serde(default)]
+    nonce_cache_backend: Option<String>,
+    #[serde(default)]
+    nonce_cache_ttl_secs: Option<u64>,
+    #[serde(default)]
+    nonce_cache_max_entries: Option<usize>,
+    #[serde(default)]
+    behavioral_anomaly_enabled: Option<bool>,
+    #[serde(default)]
+    behavioral_anomaly_window_secs: Option<u64>,
+    #[serde(default)]
+    behavioral_anomaly_warning_threshold: Option<u32>,
+    #[serde(default)]
+    behavioral_anomaly_critical_threshold: Option<u32>,
+    #[serde(default)]
+    behavioral_anomaly_max_actors: Option<usize>,
+    #[serde(default)]
+    legacy_object_compat_allow_until: Option<String>,
     #[cfg(feature = "s3")]
     #[serde(default)]
     s3_config: Option<S3ConfigSection>,
+    #[cfg(feature = "gcs")]
+    #[serde(default)]
+    gcs_config: Option<GcsConfigSection>,
+    #[serde(default)]
+    http_egress: Option<HttpEgressSection>,
+    #[cfg(feature = "worm-sink")]
+    #[serde(default)]
+    audit_worm_sink_enabled: Option<bool>,
+    #[cfg(feature = "worm-sink")]
+    #[serde(default)]
+    audit_worm_sink: Option<WormSinkSection>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HttpEgressSection {
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
+}
+
+#[cfg(feature = "worm-sink")]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct WormSinkSection {
+    #[serde(default)]
+    #[allow(dead_code)]
+    enabled: bool,
+    #[serde(default)]
+    bucket: Option<String>,
+    #[serde(default = "default_worm_sink_prefix")]
+    prefix: String,
+    #[serde(default = "default_worm_sink_object_lock_mode")]
+    object_lock_mode: String,
+    #[serde(default = "default_worm_sink_retention_days")]
+    retention_days: u32,
+    #[serde(default)]
+    legal_hold: bool,
+    #[serde(default = "default_worm_sink_export_interval_secs")]
+    export_interval_secs: u64,
+    #[serde(default = "default_worm_sink_batch_limit")]
+    batch_limit: u32,
+    #[serde(default)]
+    live: bool,
+    #[serde(default)]
+    endpoint_url: Option<String>,
+    #[serde(default = "default_s3_region")]
+    region: String,
+    #[serde(default)]
+    access_key_id: Option<String>,
+    #[serde(default)]
+    secret_access_key: Option<String>,
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_prefix() -> String {
+    "audit-worm".to_string()
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_object_lock_mode() -> String {
+    "governance".to_string()
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_retention_days() -> u32 {
+    30
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_export_interval_secs() -> u64 {
+    300
+}
+
+#[cfg(feature = "worm-sink")]
+fn default_worm_sink_batch_limit() -> u32 {
+    1000
 }
 
 #[cfg(feature = "s3")]
@@ -248,6 +583,27 @@ struct S3ConfigSection {
     secret_access_key: Option<String>,
 }
 
+#[cfg(feature = "gcs")]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GcsConfigSection {
+    allowed_bucket: String,
+    #[serde(default = "default_gcs_max_object_size")]
+    max_object_size: u64,
+    #[serde(default)]
+    live: bool,
+    #[serde(default)]
+    endpoint_url: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    credentials_path: Option<String>,
+}
+
+#[cfg(feature = "gcs")]
+fn default_gcs_max_object_size() -> u64 {
+    100 * 1024 * 1024
+}
+
 #[cfg(feature = "s3")]
 fn default_s3_max_object_size() -> u64 {
     100 * 1024 * 1024
@@ -258,13 +614,29 @@ fn default_s3_require_versioning() -> bool {
     true
 }
 
-#[cfg(feature = "s3")]
+#[cfg(any(feature = "s3", feature = "worm-sink"))]
 fn default_s3_region() -> String {
     "us-east-1".to_string()
 }
 
 fn default_mfa_totp_issuer() -> String {
     "FerrumGate".to_string()
+}
+
+fn default_mfa_lockout_max_attempts() -> u32 {
+    5
+}
+
+fn default_mfa_lockout_duration_secs() -> u64 {
+    900
+}
+
+fn default_nonce_cache_ttl_secs() -> u64 {
+    0
+}
+
+fn default_nonce_cache_max_entries() -> usize {
+    10_000
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -287,6 +659,8 @@ struct OidcSection {
     jwks_url: Option<String>,
     #[serde(default)]
     static_keys: Vec<StaticKeyEntry>,
+    #[serde(default = "default_oidc_token_profile")]
+    token_profile: String,
 }
 
 fn default_jwks_cache_ttl() -> u64 {
@@ -299,6 +673,10 @@ fn default_actor_id_claim() -> String {
 
 fn default_role_source_claim() -> String {
     "groups".to_string()
+}
+
+fn default_oidc_token_profile() -> String {
+    "legacy_jwt".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -407,6 +785,17 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .parse()
         .map_err(|e: String| anyhow::anyhow!("invalid log format: {}", e))?;
 
+    let pdp_mode = args
+        .pdp_mode
+        .clone()
+        .or(get_env("FERRUMD_PDP_MODE")?)
+        .or_else(|| server.as_ref().and_then(|s| s.pdp_mode.clone()))
+        .unwrap_or_else(|| "dual".to_string());
+
+    let pdp_mode_parsed: ferrum_gateway::PdpMode = pdp_mode
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("invalid pdp mode: {}", e))?;
+
     let store_synchronous = args
         .store_synchronous
         .clone()
@@ -429,6 +818,40 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or(get_env("FERRUMD_RATE_LIMIT_BURST")?)
         .or_else(|| server.as_ref().and_then(|s| s.rate_limit_burst))
         .unwrap_or(50);
+
+    // Trusted proxy CIDRs: CLI > env > config file > default (empty/trust-none).
+    // Parsed and validated into typed `IpNet` values at this startup boundary.
+    let trusted_proxy_cidrs: Vec<IpNet> = if let Some(cli) = args.trusted_proxy_cidrs.as_deref() {
+        parse_cidr_list(cli)?
+    } else if let Some(env) = get_env::<String>("FERRUMD_TRUSTED_PROXY_CIDRS")? {
+        parse_cidr_list(&env)?
+    } else if let Some(file) = server.as_ref() {
+        file.trusted_proxy_cidrs
+            .iter()
+            .map(|cidr| {
+                cidr.parse::<IpNet>()
+                    .map_err(|e| anyhow::anyhow!("invalid trusted_proxy_cidrs entry '{cidr}': {e}"))
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
+    // Pre-auth rate limits stay optional so that, when omitted, the effective
+    // values inherit `rate_limit_*` (see ServerConfig accessors).
+    let pre_auth_rate_limit_per_second = args
+        .pre_auth_rate_limit_per_second
+        .or(get_env("FERRUMD_PRE_AUTH_RATE_LIMIT_PER_SECOND")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.pre_auth_rate_limit_per_second)
+        });
+
+    let pre_auth_rate_limit_burst = args
+        .pre_auth_rate_limit_burst
+        .or(get_env("FERRUMD_PRE_AUTH_RATE_LIMIT_BURST")?)
+        .or_else(|| server.as_ref().and_then(|s| s.pre_auth_rate_limit_burst));
 
     let write_queue_threshold = args
         .write_queue_threshold
@@ -502,6 +925,84 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         })
         .unwrap_or(1000);
 
+    let approval_timeout_enabled = if args.approval_timeout_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_APPROVAL_TIMEOUT_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.approval_timeout_enabled))
+            .unwrap_or(false)
+    };
+
+    let approval_timeout_seconds = args
+        .approval_timeout_seconds
+        .or(get_env("FERRUMD_APPROVAL_TIMEOUT_SECONDS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.approval_timeout_seconds))
+        .unwrap_or(3600);
+
+    let approval_reconciliation_interval_secs = args
+        .approval_reconciliation_interval_secs
+        .or(get_env("FERRUMD_APPROVAL_RECONCILIATION_INTERVAL_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.approval_reconciliation_interval_secs)
+        })
+        .unwrap_or(300);
+
+    let quarantine_timeout_enabled = if args.quarantine_timeout_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_QUARANTINE_TIMEOUT_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.quarantine_timeout_enabled))
+            .unwrap_or(false)
+    };
+
+    let quarantine_timeout_seconds = args
+        .quarantine_timeout_seconds
+        .or(get_env("FERRUMD_QUARANTINE_TIMEOUT_SECONDS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.quarantine_timeout_seconds))
+        .unwrap_or(86400);
+
+    let quarantine_reconciliation_interval_secs = args
+        .quarantine_reconciliation_interval_secs
+        .or(get_env("FERRUMD_QUARANTINE_RECONCILIATION_INTERVAL_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.quarantine_reconciliation_interval_secs)
+        })
+        .unwrap_or(300);
+
+    let ha_reconciler_enabled = if args.ha_reconciler_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_HA_RECONCILER_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.ha_reconciler_enabled))
+            .unwrap_or(false)
+    };
+
+    let ha_reconciler_interval_secs = args
+        .ha_reconciler_interval_secs
+        .or(get_env("FERRUMD_HA_RECONCILER_INTERVAL_SECS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.ha_reconciler_interval_secs))
+        .unwrap_or(60);
+
+    let ha_reconciler_stale_threshold_secs = args
+        .ha_reconciler_stale_threshold_secs
+        .or(get_env("FERRUMD_HA_RECONCILER_STALE_THRESHOLD_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.ha_reconciler_stale_threshold_secs)
+        })
+        .unwrap_or(1800);
+
+    let ha_reconciler_batch_size = args
+        .ha_reconciler_batch_size
+        .or(get_env("FERRUMD_HA_RECONCILER_BATCH_SIZE")?)
+        .or_else(|| server.as_ref().and_then(|s| s.ha_reconciler_batch_size))
+        .unwrap_or(100);
+
     let audit_fail_closed = if args.audit_fail_closed {
         true
     } else {
@@ -531,6 +1032,216 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         .or_else(|| server.as_ref().map(|s| s.mfa_totp_issuer.clone()))
         .unwrap_or_else(default_mfa_totp_issuer);
 
+    let mfa_lockout_max_attempts = args
+        .mfa_lockout_max_attempts
+        .or(get_env("FERRUMD_MFA_LOCKOUT_MAX_ATTEMPTS")?)
+        .or_else(|| server.as_ref().map(|s| s.mfa_lockout_max_attempts))
+        .unwrap_or_else(default_mfa_lockout_max_attempts);
+
+    let mfa_lockout_duration_secs = args
+        .mfa_lockout_duration_secs
+        .or(get_env("FERRUMD_MFA_LOCKOUT_DURATION_SECS")?)
+        .or_else(|| server.as_ref().map(|s| s.mfa_lockout_duration_secs))
+        .unwrap_or_else(default_mfa_lockout_duration_secs);
+
+    let nonce_cache_backend = args
+        .nonce_cache_backend
+        .clone()
+        .or(get_env("FERRUMD_NONCE_CACHE_BACKEND")?)
+        .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_backend.clone()))
+        .unwrap_or_else(|| "auto".to_string());
+
+    let nonce_cache_backend_parsed: ferrum_gateway::NonceCacheBackend = nonce_cache_backend
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("invalid nonce cache backend: {}", e))?;
+
+    let nonce_cache_ttl_secs = args
+        .nonce_cache_ttl_secs
+        .or(get_env("FERRUMD_NONCE_CACHE_TTL_SECS")?)
+        .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_ttl_secs))
+        .unwrap_or_else(default_nonce_cache_ttl_secs);
+
+    let nonce_cache_max_entries = args
+        .nonce_cache_max_entries
+        .or(get_env("FERRUMD_NONCE_CACHE_MAX_ENTRIES")?)
+        .or_else(|| server.as_ref().and_then(|s| s.nonce_cache_max_entries))
+        .unwrap_or_else(default_nonce_cache_max_entries);
+
+    let behavioral_anomaly_enabled = if args.behavioral_anomaly_enabled {
+        true
+    } else {
+        get_env::<bool>("FERRUMD_BEHAVIORAL_ANOMALY_ENABLED")?
+            .or_else(|| server.as_ref().and_then(|s| s.behavioral_anomaly_enabled))
+            .unwrap_or(false)
+    };
+
+    let behavioral_anomaly_window_secs = args
+        .behavioral_anomaly_window_secs
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_WINDOW_SECS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_window_secs)
+        })
+        .unwrap_or(60);
+
+    let behavioral_anomaly_warning_threshold = args
+        .behavioral_anomaly_warning_threshold
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_WARNING_THRESHOLD")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_warning_threshold)
+        })
+        .unwrap_or(5);
+
+    let behavioral_anomaly_critical_threshold = args
+        .behavioral_anomaly_critical_threshold
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_CRITICAL_THRESHOLD")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_critical_threshold)
+        })
+        .unwrap_or(10);
+
+    let behavioral_anomaly_max_actors = args
+        .behavioral_anomaly_max_actors
+        .or(get_env("FERRUMD_BEHAVIORAL_ANOMALY_MAX_ACTORS")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.behavioral_anomaly_max_actors)
+        })
+        .unwrap_or(1000);
+
+    let legacy_object_compat_allow_until = args
+        .legacy_object_compat_allow_until
+        .clone()
+        .or(get_env("FERRUMD_LEGACY_OBJECT_COMPAT_ALLOW_UNTIL")?)
+        .or_else(|| {
+            server
+                .as_ref()
+                .and_then(|s| s.legacy_object_compat_allow_until.clone())
+        })
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| anyhow::anyhow!("invalid legacy_object_compat_allow_until: {e}"))
+        })
+        .transpose()?;
+
+    #[cfg(feature = "worm-sink")]
+    let (audit_worm_sink_enabled, worm_sink_config) = {
+        let enabled = if args.audit_worm_sink_enabled {
+            true
+        } else {
+            get_env::<bool>("FERRUMD_AUDIT_WORM_SINK_ENABLED")?
+                .or_else(|| server.as_ref().and_then(|s| s.audit_worm_sink_enabled))
+                .unwrap_or(false)
+        };
+
+        let file_worm = server.as_ref().and_then(|s| s.audit_worm_sink.as_ref());
+        let bucket = args
+            .audit_worm_sink_bucket
+            .clone()
+            .or(get_env("FERRUMD_AUDIT_WORM_SINK_BUCKET")?)
+            .or_else(|| file_worm.and_then(|w| w.bucket.clone()));
+
+        if enabled && bucket.is_none() {
+            return Err(anyhow::anyhow!(
+                "audit_worm_sink_enabled is true but audit_worm_sink_bucket is not set"
+            ));
+        }
+
+        let file_worm = server.as_ref().and_then(|s| s.audit_worm_sink.as_ref());
+
+        let env_prefix = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_PREFIX")?;
+        let env_object_lock_mode = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_OBJECT_LOCK_MODE")?;
+        let raw_object_lock_mode = args
+            .audit_worm_sink_object_lock_mode
+            .clone()
+            .or(env_object_lock_mode)
+            .or_else(|| file_worm.map(|w| w.object_lock_mode.clone()))
+            .unwrap_or_else(default_worm_sink_object_lock_mode);
+        let parsed_object_lock_mode = raw_object_lock_mode
+            .parse::<ferrum_adapter_s3::ObjectLockMode>()
+            .map_err(|e| anyhow::anyhow!("invalid audit_worm_sink object_lock_mode: {e}"))?;
+        let env_retention_days = get_env::<u32>("FERRUMD_AUDIT_WORM_SINK_RETENTION_DAYS")?;
+        let env_legal_hold = get_env::<bool>("FERRUMD_AUDIT_WORM_SINK_LEGAL_HOLD")?;
+        let env_export_interval_secs =
+            get_env::<u64>("FERRUMD_AUDIT_WORM_SINK_EXPORT_INTERVAL_SECS")?;
+        let env_batch_limit = get_env::<u32>("FERRUMD_AUDIT_WORM_SINK_BATCH_LIMIT")?;
+        let env_live = get_env::<bool>("FERRUMD_AUDIT_WORM_SINK_LIVE")?;
+        let env_endpoint_url = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_ENDPOINT_URL")?;
+        let env_region = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_REGION")?;
+        let env_access_key_id = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_ACCESS_KEY_ID")?;
+        let env_secret_access_key = get_env::<String>("FERRUMD_AUDIT_WORM_SINK_SECRET_ACCESS_KEY")?;
+
+        let cfg = bucket.map(|bucket| ferrum_gateway::WormSinkConfig {
+            bucket,
+            prefix: args
+                .audit_worm_sink_prefix
+                .clone()
+                .or(env_prefix)
+                .or_else(|| file_worm.map(|w| w.prefix.clone()))
+                .unwrap_or_else(default_worm_sink_prefix),
+            object_lock_mode: parsed_object_lock_mode,
+            retention_days: args
+                .audit_worm_sink_retention_days
+                .or(env_retention_days)
+                .or_else(|| file_worm.map(|w| w.retention_days))
+                .unwrap_or_else(default_worm_sink_retention_days),
+            legal_hold: if args.audit_worm_sink_legal_hold {
+                true
+            } else {
+                env_legal_hold
+                    .or_else(|| file_worm.map(|w| w.legal_hold))
+                    .unwrap_or(false)
+            },
+            export_interval_secs: args
+                .audit_worm_sink_export_interval_secs
+                .or(env_export_interval_secs)
+                .or_else(|| file_worm.map(|w| w.export_interval_secs))
+                .unwrap_or_else(default_worm_sink_export_interval_secs),
+            batch_limit: args
+                .audit_worm_sink_batch_limit
+                .or(env_batch_limit)
+                .or_else(|| file_worm.map(|w| w.batch_limit))
+                .unwrap_or_else(default_worm_sink_batch_limit),
+            live: if args.audit_worm_sink_live {
+                true
+            } else {
+                env_live
+                    .or_else(|| file_worm.map(|w| w.live))
+                    .unwrap_or(false)
+            },
+            endpoint_url: args
+                .audit_worm_sink_endpoint_url
+                .clone()
+                .or(env_endpoint_url)
+                .or_else(|| file_worm.and_then(|w| w.endpoint_url.clone())),
+            region: args
+                .audit_worm_sink_region
+                .clone()
+                .or(env_region)
+                .or_else(|| file_worm.map(|w| w.region.clone()))
+                .unwrap_or_else(default_s3_region),
+            access_key_id: args
+                .audit_worm_sink_access_key_id
+                .clone()
+                .or(env_access_key_id)
+                .or_else(|| file_worm.and_then(|w| w.access_key_id.clone())),
+            secret_access_key: args
+                .audit_worm_sink_secret_access_key
+                .clone()
+                .or(env_secret_access_key)
+                .or_else(|| file_worm.and_then(|w| w.secret_access_key.clone())),
+        });
+
+        (enabled, cfg)
+    };
+
     let fs_workdir = get_env("FERRUMD_FS_WORKDIR")?
         .or_else(|| server.as_ref().and_then(|s| s.fs_workdir.clone()));
     let git_repo_roots = get_env_path_list("FERRUMD_GIT_REPO_ROOTS")?
@@ -539,6 +1250,26 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
     let sqlite_db_roots = get_env_path_list("FERRUMD_SQLITE_DB_ROOTS")?
         .or_else(|| server.as_ref().map(|s| s.sqlite_db_roots.clone()))
         .unwrap_or_default();
+
+    let http_egress_allowed_hosts = if let Some(cli) = args.http_egress_allowed_hosts.as_deref() {
+        Some(parse_allowed_hosts(cli)?)
+    } else if let Some(env) = get_env::<String>("FERRUMD_HTTP_EGRESS_ALLOWED_HOSTS")? {
+        let hosts = parse_allowed_hosts(&env)?;
+        if hosts.is_empty() { None } else { Some(hosts) }
+    } else if let Some(file) = server.as_ref().and_then(|s| s.http_egress.as_ref()) {
+        let hosts = file.allowed_hosts.clone();
+        if hosts.is_empty() { None } else { Some(hosts) }
+    } else {
+        None
+    };
+
+    let http_egress = if let Some(hosts) = http_egress_allowed_hosts {
+        let cfg = HttpEgressConfig::from_hosts(hosts)
+            .map_err(|e| anyhow::anyhow!("invalid http_egress.allowed_hosts: {e}"))?;
+        if cfg.is_empty() { None } else { Some(cfg) }
+    } else {
+        None
+    };
 
     #[cfg(feature = "s3")]
     let s3_config = {
@@ -576,6 +1307,41 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
     #[cfg(not(feature = "s3"))]
     let _s3_config: Option<ferrum_adapter_s3::S3Config> = None;
 
+    #[cfg(feature = "gcs")]
+    let gcs_config = {
+        let file_gcs = server.as_ref().and_then(|s| s.gcs_config.as_ref());
+        let allowed_bucket = get_env::<String>("FERRUMD_GCS_ALLOWED_BUCKET")?
+            .or_else(|| file_gcs.map(|c| c.allowed_bucket.clone()));
+        if let Some(bucket) = allowed_bucket {
+            let endpoint_url = get_env::<String>("FERRUMD_GCS_ENDPOINT_URL")?
+                .or_else(|| file_gcs.and_then(|c| c.endpoint_url.clone()));
+            let project_id = get_env::<String>("FERRUMD_GCS_PROJECT_ID")?
+                .or_else(|| file_gcs.and_then(|c| c.project_id.clone()));
+            let credentials_path = get_env::<String>("FERRUMD_GCS_CREDENTIALS_PATH")?
+                .or_else(|| file_gcs.and_then(|c| c.credentials_path.clone()));
+            let max_object_size = file_gcs
+                .map(|c| c.max_object_size)
+                .unwrap_or(100 * 1024 * 1024);
+            let live = if args.gcs_live {
+                true
+            } else {
+                get_env::<bool>("FERRUMD_GCS_LIVE")?
+                    .or_else(|| file_gcs.map(|c| c.live))
+                    .unwrap_or(false)
+            };
+            Some(GcsConfig {
+                allowed_bucket: bucket,
+                max_object_size,
+                live,
+                endpoint_url,
+                project_id,
+                credentials_path,
+            })
+        } else {
+            None
+        }
+    };
+
     let bind_addr_parsed: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("failed to parse bind address: {}", bind_addr))?;
@@ -605,6 +1371,16 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         let jwks_cache_ttl_secs = get_env::<u64>("FERRUMD_OIDC_JWKS_CACHE_TTL_SECS")?
             .or_else(|| file_oidc.map(|o| o.jwks_cache_ttl_secs))
             .unwrap_or(300);
+
+        let token_profile = args
+            .oidc_token_profile
+            .clone()
+            .or(get_env::<String>("FERRUMD_OIDC_TOKEN_PROFILE")?)
+            .or_else(|| file_oidc.map(|o| o.token_profile.clone()))
+            .unwrap_or_else(|| "legacy_jwt".to_string());
+        let token_profile_parsed: ferrum_gateway::OidcTokenProfile = token_profile
+            .parse()
+            .map_err(|e: String| anyhow::anyhow!("invalid OIDC token profile: {e}"))?;
 
         let actor_id_claim = get_env::<String>("FERRUMD_OIDC_ACTOR_ID_CLAIM")?
             .or_else(|| file_oidc.map(|o| o.actor_id_claim.clone()))
@@ -744,6 +1520,7 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
             require_email_verified,
             jwks_url,
             jwks_cache_ttl_secs,
+            token_profile: token_profile_parsed,
         })
     } else {
         None
@@ -757,10 +1534,14 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         allow_insecure_nonlocal_bind,
         log_filter,
         log_format: log_format_parsed,
+        pdp_mode: pdp_mode_parsed,
         store_synchronous,
         store_wal_autocheckpoint,
         rate_limit_per_second,
         rate_limit_burst,
+        trusted_proxy_cidrs,
+        pre_auth_rate_limit_per_second,
+        pre_auth_rate_limit_burst,
         write_queue_threshold,
         pg_max_connections,
         pg_min_idle,
@@ -770,17 +1551,45 @@ pub fn resolve_config(args: &Args) -> Result<ServerConfig> {
         fs_workdir,
         git_repo_roots,
         sqlite_db_roots,
+        http_egress,
         #[cfg(feature = "s3")]
         s3_config,
+        #[cfg(feature = "gcs")]
+        gcs_config,
+        #[cfg(feature = "worm-sink")]
+        audit_worm_sink_enabled,
+        #[cfg(feature = "worm-sink")]
+        worm_sink_config,
         oidc_config,
         agent_clock_skew_secs: 30,
+        nonce_cache_backend: nonce_cache_backend_parsed,
+        nonce_cache_ttl_secs,
+        nonce_cache_max_entries,
         lifecycle_reconciliation_enabled,
         lifecycle_reconciliation_interval_secs,
         lifecycle_reconciliation_batch_limit,
+        approval_timeout_enabled,
+        approval_timeout_seconds,
+        approval_reconciliation_interval_secs,
+        quarantine_timeout_enabled,
+        quarantine_timeout_seconds,
+        quarantine_reconciliation_interval_secs,
+        ha_reconciler_enabled,
+        ha_reconciler_interval_secs,
+        ha_reconciler_stale_threshold_secs,
+        ha_reconciler_batch_size,
         audit_fail_closed,
         approval_mfa_required,
         mfa_secret_key,
         mfa_totp_issuer,
+        mfa_lockout_max_attempts,
+        mfa_lockout_duration_secs,
+        behavioral_anomaly_enabled,
+        behavioral_anomaly_window_secs,
+        behavioral_anomaly_warning_threshold,
+        behavioral_anomaly_critical_threshold,
+        behavioral_anomaly_max_actors,
+        legacy_object_compat_allow_until,
     };
 
     // Validate configuration

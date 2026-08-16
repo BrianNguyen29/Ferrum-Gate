@@ -155,7 +155,7 @@ impl StaticPdpEngine {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct StaticPdpEngine;
 
 #[async_trait]
@@ -368,6 +368,7 @@ mod tests {
             status: IntentStatus::Active,
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -400,6 +401,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 
@@ -423,6 +425,7 @@ mod tests {
             taint_inputs: vec![],
             metadata: JsonMap::new(),
             created_at: chrono::Utc::now(),
+            owner_actor_id: None,
         }
     }
 

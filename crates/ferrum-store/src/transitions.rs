@@ -16,8 +16,9 @@
 //! | Proposed           | Authorized, Running, Canceled                               |
 //! | Authorized         | Running, Canceled, Authorized (self)                        |
 //! | Prepared           | Running, Canceled, Prepared (self)                        |
-//! | Running            | Committed, Failed, Compensated, Running (self)            |
-//! | AwaitingVerification | Committed, Failed, Compensated, AwaitingVerification (self) |
+//! | Running            | AwaitingVerification, Committed, Failed, Compensated, RecoveryRequired, Running (self) |
+//! | AwaitingVerification | Committed, Failed, Compensated, RecoveryRequired, AwaitingVerification (self) |
+//! | RecoveryRequired   | AwaitingVerification, Compensated, Failed, RecoveryRequired (self) |
 //! | AwaitingApproval   | Canceled                                                    |
 //! | Terminal           | none                                                        |
 //!
@@ -38,7 +39,7 @@
 //!
 //! A future slice will add rollback-specific transition graphs and full strictness.
 
-use ferrum_proto::{ApprovalState, CapabilityStatus, ExecutionState};
+use ferrum_proto::{ApprovalState, CapabilityStatus, ExecutionState, RollbackState};
 
 /// Returns true if the CapabilityStatus is terminal (absorbing).
 ///
@@ -116,23 +117,88 @@ pub fn execution_state_is_terminal(state: &ExecutionState) -> bool {
     )
 }
 
+/// Returns true if the RollbackState is terminal.
+///
+/// Terminal states: Committed, Compensated, RolledBack, Failed, Expired.
+/// Verified is non-terminal (must reach Committed) and CompensationPending is
+/// reserved/unwritten in this slice.
+pub fn rollback_state_is_terminal(state: &RollbackState) -> bool {
+    matches!(
+        state,
+        RollbackState::Committed
+            | RollbackState::Compensated
+            | RollbackState::RolledBack
+            | RollbackState::Failed
+            | RollbackState::Expired
+    )
+}
+
+/// Returns true if transitioning FROM `from` TO `to` is valid for RollbackState.
+///
+/// Valid transitions (store seam guard, behavior-preserving for current handlers):
+///
+/// | From                 | To (valid)                                              |
+/// |----------------------|---------------------------------------------------------|
+/// | PendingPrepare       | Prepared                                                |
+/// | Prepared             | ExecutedAwaitingVerify, RecoveryRequired, Prepared (self) |
+/// | ExecutedAwaitingVerify | Verified, Failed, Compensated, RecoveryRequired, ExecutedAwaitingVerify (self) |
+/// | RecoveryRequired     | ExecutedAwaitingVerify, Compensated, Failed, RecoveryRequired (self) |
+/// | Verified             | Committed                                               |
+/// | Terminal             | none                                                    |
+///
+/// CompensationPending is reserved/unwritten in this slice and has no transitions.
+pub fn is_valid_rollback_transition(from: &RollbackState, to: &RollbackState) -> bool {
+    if rollback_state_is_terminal(from) {
+        return false;
+    }
+    match from {
+        RollbackState::PendingPrepare => {
+            matches!(to, RollbackState::Prepared | RollbackState::PendingPrepare)
+        }
+        RollbackState::Prepared => matches!(
+            to,
+            RollbackState::ExecutedAwaitingVerify
+                | RollbackState::RecoveryRequired
+                | RollbackState::Prepared
+        ),
+        RollbackState::ExecutedAwaitingVerify => matches!(
+            to,
+            RollbackState::Verified
+                | RollbackState::Failed
+                | RollbackState::Compensated
+                | RollbackState::RecoveryRequired
+                | RollbackState::ExecutedAwaitingVerify
+        ),
+        RollbackState::RecoveryRequired => matches!(
+            to,
+            RollbackState::ExecutedAwaitingVerify
+                | RollbackState::Compensated
+                | RollbackState::Failed
+                | RollbackState::RecoveryRequired
+        ),
+        RollbackState::Verified => matches!(to, RollbackState::Committed),
+        _ => false,
+    }
+}
+
 /// Returns true if transitioning FROM `from` TO `to` is valid for ExecutionState.
 ///
 /// Strict matrix enforced at the store seam. Self-transitions are allowed only
 /// for idempotent non-terminal states: Authorized, Prepared, Running,
-/// AwaitingVerification.
+/// AwaitingVerification, RecoveryRequired.
 ///
 /// Valid transitions (behavior-preserving for current handler sites):
 ///
-/// | From               | To (valid)                                                  |
-/// |--------------------|-------------------------------------------------------------|
-/// | Proposed           | Authorized, Running, Canceled                             |
-/// | Authorized         | Running, Canceled, Authorized (self)                      |
-/// | Prepared           | Running, Canceled, Prepared (self)                        |
-/// | Running            | Committed, Failed, Compensated, Running (self)           |
-/// | AwaitingVerification | Committed, Failed, Compensated, AwaitingVerification (self) |
-/// | AwaitingApproval   | Canceled                                                    |
-/// | Terminal           | none                                                        |
+/// | From                 | To (valid)                                                  |
+/// |----------------------|-------------------------------------------------------------|
+/// | Proposed             | Authorized, Running, Canceled                               |
+/// | Authorized           | Running, Canceled, Authorized (self)                      |
+/// | Prepared             | Running, Canceled, Prepared (self)                        |
+/// | Running              | Committed, Failed, Compensated, RecoveryRequired, Running (self) |
+/// | AwaitingVerification   | Committed, Failed, Compensated, RecoveryRequired, AwaitingVerification (self) |
+/// | RecoveryRequired     | AwaitingVerification, Compensated, Failed, RecoveryRequired (self) |
+/// | AwaitingApproval     | Canceled                                                    |
+/// | Terminal             | none                                                        |
 ///
 /// Rollback/full-execution workflow strictness (e.g., specific compensation paths)
 /// is enforced at the handler layer; this matrix is the store seam guard.
@@ -158,6 +224,8 @@ pub fn is_valid_execution_transition(from: &ExecutionState, to: &ExecutionState)
             ExecutionState::Committed
                 | ExecutionState::Failed
                 | ExecutionState::Compensated
+                | ExecutionState::RecoveryRequired
+                | ExecutionState::AwaitingVerification
                 | ExecutionState::Running
         ),
         ExecutionState::AwaitingVerification => matches!(
@@ -165,7 +233,15 @@ pub fn is_valid_execution_transition(from: &ExecutionState, to: &ExecutionState)
             ExecutionState::Committed
                 | ExecutionState::Failed
                 | ExecutionState::Compensated
+                | ExecutionState::RecoveryRequired
                 | ExecutionState::AwaitingVerification
+        ),
+        ExecutionState::RecoveryRequired => matches!(
+            to,
+            ExecutionState::AwaitingVerification
+                | ExecutionState::Compensated
+                | ExecutionState::Failed
+                | ExecutionState::RecoveryRequired
         ),
         ExecutionState::AwaitingApproval => matches!(to, ExecutionState::Canceled),
         _ => false,
@@ -565,10 +641,6 @@ mod tests {
             (ExecutionState::Running, ExecutionState::Proposed),
             (ExecutionState::Running, ExecutionState::Prepared),
             (ExecutionState::Running, ExecutionState::AwaitingApproval),
-            (
-                ExecutionState::Running,
-                ExecutionState::AwaitingVerification,
-            ),
             (ExecutionState::Running, ExecutionState::Canceled),
             (
                 ExecutionState::AwaitingVerification,
@@ -642,5 +714,309 @@ mod tests {
             &ExecutionState::Committed,
             &ExecutionState::Running,
         ));
+    }
+
+    // ===== Recovery-required execution tests (Slice 2) =====
+
+    #[test]
+    fn execution_recovery_required_non_terminal() {
+        assert!(!execution_state_is_terminal(
+            &ExecutionState::RecoveryRequired
+        ));
+    }
+
+    #[test]
+    fn execution_running_to_recovery_required_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::Running,
+            &ExecutionState::RecoveryRequired,
+        ));
+    }
+
+    #[test]
+    fn execution_awaiting_verification_to_recovery_required_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::AwaitingVerification,
+            &ExecutionState::RecoveryRequired,
+        ));
+    }
+
+    #[test]
+    fn execution_recovery_required_to_awaiting_verification_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::RecoveryRequired,
+            &ExecutionState::AwaitingVerification,
+        ));
+    }
+
+    #[test]
+    fn execution_recovery_required_to_compensated_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::RecoveryRequired,
+            &ExecutionState::Compensated,
+        ));
+    }
+
+    #[test]
+    fn execution_recovery_required_to_failed_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::RecoveryRequired,
+            &ExecutionState::Failed,
+        ));
+    }
+
+    #[test]
+    fn execution_recovery_required_self_transition_valid() {
+        assert!(is_valid_execution_transition(
+            &ExecutionState::RecoveryRequired,
+            &ExecutionState::RecoveryRequired,
+        ));
+    }
+
+    #[test]
+    fn execution_recovery_required_invalid_transitions_blocked() {
+        let invalid_pairs = [
+            (ExecutionState::RecoveryRequired, ExecutionState::Proposed),
+            (ExecutionState::RecoveryRequired, ExecutionState::Authorized),
+            (ExecutionState::RecoveryRequired, ExecutionState::Prepared),
+            (ExecutionState::RecoveryRequired, ExecutionState::Running),
+            (ExecutionState::RecoveryRequired, ExecutionState::Committed),
+            (ExecutionState::RecoveryRequired, ExecutionState::RolledBack),
+            (ExecutionState::RecoveryRequired, ExecutionState::Canceled),
+            (
+                ExecutionState::RecoveryRequired,
+                ExecutionState::AwaitingApproval,
+            ),
+            (ExecutionState::Proposed, ExecutionState::RecoveryRequired),
+            (ExecutionState::Authorized, ExecutionState::RecoveryRequired),
+            (ExecutionState::Prepared, ExecutionState::RecoveryRequired),
+            (
+                ExecutionState::AwaitingApproval,
+                ExecutionState::RecoveryRequired,
+            ),
+        ];
+        for (from, to) in invalid_pairs {
+            assert!(
+                !is_valid_execution_transition(&from, &to),
+                "Expected transition from {:?} to {:?} to be blocked",
+                from,
+                to
+            );
+        }
+    }
+
+    // ===== Rollback state tests (Slice 2) =====
+
+    #[test]
+    fn rollback_rolled_back_is_terminal() {
+        assert!(rollback_state_is_terminal(&RollbackState::RolledBack));
+    }
+
+    #[test]
+    fn rollback_recovery_required_non_terminal() {
+        assert!(!rollback_state_is_terminal(
+            &RollbackState::RecoveryRequired
+        ));
+    }
+
+    #[test]
+    fn rollback_pending_prepare_to_prepared_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::PendingPrepare,
+            &RollbackState::Prepared,
+        ));
+    }
+
+    #[test]
+    fn rollback_prepared_to_executed_awaiting_verify_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::Prepared,
+            &RollbackState::ExecutedAwaitingVerify,
+        ));
+    }
+
+    #[test]
+    fn rollback_prepared_to_recovery_required_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::Prepared,
+            &RollbackState::RecoveryRequired,
+        ));
+    }
+
+    #[test]
+    fn rollback_executed_awaiting_verify_to_recovery_required_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::ExecutedAwaitingVerify,
+            &RollbackState::RecoveryRequired,
+        ));
+    }
+
+    #[test]
+    fn rollback_recovery_required_to_executed_awaiting_verify_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::RecoveryRequired,
+            &RollbackState::ExecutedAwaitingVerify,
+        ));
+    }
+
+    #[test]
+    fn rollback_recovery_required_to_compensated_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::RecoveryRequired,
+            &RollbackState::Compensated,
+        ));
+    }
+
+    #[test]
+    fn rollback_recovery_required_to_failed_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::RecoveryRequired,
+            &RollbackState::Failed,
+        ));
+    }
+
+    #[test]
+    fn rollback_recovery_required_self_transition_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::RecoveryRequired,
+            &RollbackState::RecoveryRequired,
+        ));
+    }
+
+    #[test]
+    fn rollback_verified_to_committed_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::Verified,
+            &RollbackState::Committed,
+        ));
+    }
+
+    #[test]
+    fn rollback_executed_awaiting_verify_to_verified_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::ExecutedAwaitingVerify,
+            &RollbackState::Verified,
+        ));
+    }
+
+    #[test]
+    fn rollback_executed_awaiting_verify_to_compensated_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::ExecutedAwaitingVerify,
+            &RollbackState::Compensated,
+        ));
+    }
+
+    #[test]
+    fn rollback_executed_awaiting_verify_to_failed_valid() {
+        assert!(is_valid_rollback_transition(
+            &RollbackState::ExecutedAwaitingVerify,
+            &RollbackState::Failed,
+        ));
+    }
+
+    #[test]
+    fn rollback_compensation_pending_reserved_no_transitions() {
+        // CompensationPending is reserved/unwritten in this slice.
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::CompensationPending,
+            &RollbackState::Compensated,
+        ));
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Prepared,
+            &RollbackState::CompensationPending,
+        ));
+    }
+
+    #[test]
+    fn rollback_terminal_no_transitions() {
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Committed,
+            &RollbackState::Prepared,
+        ));
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Compensated,
+            &RollbackState::Prepared,
+        ));
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::RolledBack,
+            &RollbackState::Prepared,
+        ));
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Failed,
+            &RollbackState::Prepared,
+        ));
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Expired,
+            &RollbackState::Prepared,
+        ));
+        // Cannot transition between terminal states
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Committed,
+            &RollbackState::Failed,
+        ));
+        assert!(!is_valid_rollback_transition(
+            &RollbackState::Failed,
+            &RollbackState::Committed,
+        ));
+    }
+
+    #[test]
+    fn rollback_invalid_transitions_blocked() {
+        let invalid_pairs = [
+            (
+                RollbackState::PendingPrepare,
+                RollbackState::ExecutedAwaitingVerify,
+            ),
+            (RollbackState::PendingPrepare, RollbackState::Verified),
+            (RollbackState::PendingPrepare, RollbackState::Committed),
+            (RollbackState::PendingPrepare, RollbackState::Compensated),
+            (RollbackState::PendingPrepare, RollbackState::Failed),
+            (RollbackState::PendingPrepare, RollbackState::RolledBack),
+            (RollbackState::PendingPrepare, RollbackState::Expired),
+            (RollbackState::Prepared, RollbackState::PendingPrepare),
+            (RollbackState::Prepared, RollbackState::Verified),
+            (RollbackState::Prepared, RollbackState::Committed),
+            (RollbackState::Prepared, RollbackState::Compensated),
+            (RollbackState::Prepared, RollbackState::Failed),
+            (RollbackState::Prepared, RollbackState::RolledBack),
+            (
+                RollbackState::ExecutedAwaitingVerify,
+                RollbackState::PendingPrepare,
+            ),
+            (
+                RollbackState::ExecutedAwaitingVerify,
+                RollbackState::Prepared,
+            ),
+            (
+                RollbackState::ExecutedAwaitingVerify,
+                RollbackState::Committed,
+            ),
+            (
+                RollbackState::ExecutedAwaitingVerify,
+                RollbackState::RolledBack,
+            ),
+            (
+                RollbackState::ExecutedAwaitingVerify,
+                RollbackState::Expired,
+            ),
+            (RollbackState::Verified, RollbackState::Prepared),
+            (
+                RollbackState::Verified,
+                RollbackState::ExecutedAwaitingVerify,
+            ),
+            (RollbackState::Verified, RollbackState::Compensated),
+            (RollbackState::Verified, RollbackState::Failed),
+            (RollbackState::Verified, RollbackState::RolledBack),
+            (RollbackState::Verified, RollbackState::Expired),
+        ];
+        for (from, to) in invalid_pairs {
+            assert!(
+                !is_valid_rollback_transition(&from, &to),
+                "Expected rollback transition from {:?} to {:?} to be blocked",
+                from,
+                to
+            );
+        }
     }
 }

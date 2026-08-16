@@ -11,11 +11,18 @@ default = []
 postgres = ["ferrum-store/postgres", "ferrum-gateway/postgres"]
 # S3 adapter support — feature-gated to reduce default dependency footprint
 s3 = ["ferrum-gateway/s3", "ferrum-adapter-s3/s3-client"]
+# GCS adapter support — feature-gated to reduce default dependency footprint.
+# Live SDK integration is a planned follow-up; this slice ships shape-only behavior.
+gcs = ["ferrum-gateway/gcs", "ferrum-adapter-gcs/gcs-client"]
+# WORM-compatible audit bundle sink (implies S3 adapter support).
+worm-sink = ["s3", "ferrum-gateway/worm-sink", "ferrum-adapter-s3/worm-sink"]
 
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+chrono.workspace = true
 clap.workspace = true
+ipnet.workspace = true
 jsonwebtoken.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -36,3 +43,4 @@ ferrum-adapter-http = { path = "../../crates/ferrum-adapter-http" }
 ferrum-adapter-sqlite = { path = "../../crates/ferrum-adapter-sqlite" }
 ferrum-adapter-maildraft = { path = "../../crates/ferrum-adapter-maildraft" }
 ferrum-adapter-s3 = { path = "../../crates/ferrum-adapter-s3" }
+ferrum-adapter-gcs = { path = "../../crates/ferrum-adapter-gcs", optional = true }

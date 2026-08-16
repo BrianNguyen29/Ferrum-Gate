@@ -10,7 +10,9 @@ use crate::{
     ReconciliationFailureDisposition, Result,
 };
 
-use super::helpers::{enum_text, fetch_entities, fetch_entity_by_id, from_json, to_json};
+use super::helpers::{
+    enum_text, fetch_entities, fetch_entity_by_id, from_json, opt_rfc3339_utc, rfc3339_utc, to_json,
+};
 
 #[derive(Clone)]
 pub struct PostgresLifecycleOutboxRepo {
@@ -55,6 +57,19 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
                 expected_execution_state, execution.state
             )));
         }
+        if let Some(contract) = rollback_contract {
+            if let Some(expected_rollback_state) = outbox.previous_rollback_state.as_ref() {
+                if !crate::transitions::is_valid_rollback_transition(
+                    expected_rollback_state,
+                    &contract.state,
+                ) {
+                    return Err(crate::StoreError::InvalidState(format!(
+                        "invalid rollback transition from {:?} to {:?}",
+                        expected_rollback_state, contract.state
+                    )));
+                }
+            }
+        }
         let execution_raw = to_json(execution)?;
         let execution_update = sqlx::query(
             "UPDATE executions
@@ -71,7 +86,7 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
         .bind(execution.rollback_contract_id.map(|id| id.to_string()))
         .bind(enum_text(&execution.decision)?)
         .bind(enum_text(&execution.state)?)
-        .bind(execution.finished_at)
+        .bind(opt_rfc3339_utc(execution.finished_at))
         .bind(&execution.result_digest)
         .bind(execution_raw)
         .bind(enum_text(expected_execution_state)?)
@@ -149,15 +164,24 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
         let mut tx = self.pool.begin().await?;
         let active = enum_text(&CapabilityStatus::Active)?;
         let used = enum_text(&CapabilityStatus::Used)?;
+        // Obtain the comparison timestamp at the DB boundary so an
+        // expired-but-still-Active capability cannot be consumed even if the
+        // handler preloaded a stale lease. Mirrors `update_status_if_active`.
+        let now = chrono::Utc::now();
         let updated = sqlx::query(
             "UPDATE capabilities
              SET status = $2,
-                 raw_json = jsonb_set(raw_json, '{status}', to_jsonb($2::text))
-             WHERE capability_id = $1 AND status = $3",
+                 raw_json = (jsonb_set(raw_json::jsonb, '{status}', to_jsonb($2::text)))::text
+             -- expires_at is stored as TEXT; cast to timestamptz so the
+             -- comparison is a true timestamp ordering (not lexicographic
+             -- text) and so Postgres can resolve the operator against the
+             -- timestamptz bind parameter.
+             WHERE capability_id = $1 AND status = $3 AND expires_at::timestamptz > $4",
         )
         .bind(capability.capability_id.to_string())
         .bind(&used)
         .bind(active)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
         if updated.rows_affected() != 1 {
@@ -169,8 +193,8 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
         sqlx::query(
             "INSERT INTO executions (
                 execution_id, intent_id, proposal_id, capability_id, rollback_contract_id,
-                decision, state, started_at, finished_at, result_digest, raw_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                decision, state, started_at, finished_at, result_digest, owner_actor_id, raw_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(execution.execution_id.to_string())
         .bind(execution.intent_id.to_string())
@@ -179,9 +203,10 @@ impl LifecycleOutboxRepo for PostgresLifecycleOutboxRepo {
         .bind(execution.rollback_contract_id.map(|id| id.to_string()))
         .bind(enum_text(&execution.decision)?)
         .bind(enum_text(&execution.state)?)
-        .bind(execution.started_at)
-        .bind(execution.finished_at)
+        .bind(rfc3339_utc(execution.started_at))
+        .bind(opt_rfc3339_utc(execution.finished_at))
         .bind(&execution.result_digest)
+        .bind(&execution.owner_actor_id)
         .bind(execution_raw)
         .execute(&mut *tx)
         .await?;

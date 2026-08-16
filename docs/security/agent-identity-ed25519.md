@@ -54,7 +54,7 @@ agent_abc123:2026-05-28T12:34:56Z:a1b2c3d4...:null:POST:/v1/intents/compile
 2. **Look up agent** by `agent_id` → not found or `revoked_at` set → `401`.
 3. **Verify signature** using stored `public_key` against canonical payload → invalid → `401`.
 4. **Verify timestamp** — `|now - timestamp|` ≤ `agent_clock_skew_secs` (default 30s, configurable) → stale → `401`.
-5. **Verify nonce** — query a bounded in-memory or store-backed nonce cache (e.g., 5-minute TTL, keyed by `nonce`). Replayed nonce → `401`.
+5. **Verify nonce** — query the configured `NonceCache` (in-memory for single-process, PostgreSQL-backed for shared deployments; TTL derived from `agent_clock_skew_secs * 2` or configured explicitly). Replayed nonce or cache error → `401`.
 6. **Verify body hash** — recompute `BLAKE3(raw_body)` and compare to header → mismatch → `401`.
 7. **Scope enforcement** — derive required scope from `method:path`, check against `allowed_scopes` → missing → `403`.
 8. **Proceed** — attach `agent_id` and derived scopes to request extensions for downstream handlers.
@@ -63,7 +63,7 @@ agent_abc123:2026-05-28T12:34:56Z:a1b2c3d4...:null:POST:/v1/intents/compile
 
 ## 4. Nonce / Timestamp Replay Protection
 
-- **Nonce store:** In-memory `dashmap` or `moka` cache with TTL = `agent_clock_skew_secs * 2` (minimum 60s). For multi-node deployments, a shared Redis/cache is recommended but not required for single-node pilot.
+- **Nonce store:** `NonceCache` seam with `InMemoryNonceCache` (single-process, bounded) and `PostgresNonceCache` (multi-process). TTL defaults to `agent_clock_skew_secs * 2` (minimum 60s) and is configurable via `nonce_cache_ttl_secs`. Nonces longer than 256 characters are rejected.
 - **Timestamp bound:** Reject requests with timestamps older than `now - skew` or newer than `now + skew`.
 - **Combined effect:** Even if an attacker captures a valid request, replay is blocked by nonce uniqueness and timestamp window.
 
@@ -115,7 +115,7 @@ The same `required_scope_for_path()` logic applies regardless of auth mode. The 
 - **No DID / trust mesh:** We intentionally avoid W3C DID, VC, or trust scoring.
 - **No multi-tenant identity:** `tenant_id` is reserved but not enforced.
 - **No mTLS replacement:** mTLS service-to-service remains a separate item.
-- **Bounded nonce cache:** in-memory cache for single-process replay protection; shared deployments should provide a shared cache layer.
+- **Bounded nonce cache:** in-memory cache by default; PostgreSQL-backed shared cache available for multi-process deployments. Redis and other external caches remain out of scope.
 - **No key escrow:** FerrumGate never holds private keys. `public_key` only.
 
 ## 8. Implementation Plan
@@ -124,7 +124,7 @@ The same `required_scope_for_path()` logic applies regardless of auth mode. The 
 2. Wire `AuthMode::Agent` into `auth_middleware`.
 3. Implement `ferrumctl admin agents register/list/revoke`, gateway admin endpoints `POST/GET/DELETE /v1/admin/agents`, `admin:agents` scope mapping, and audit entries for register/revoke.
 4. Add integration tests: signature validation, replay rejection, scope enforcement, revocation immediacy, audit entry emission.
-5. Shared nonce cache for multi-node, agent metrics (`ferrumgate_agent_auth_total`), rate-limit per agent_id.
+5. ~~Shared nonce cache for multi-node~~ Implemented (ADR-015) via `NonceCache` seam with `PostgresNonceCache`; agent metrics and rate-limit per agent_id remain future work.
 
 ## 9. Audit Events
 

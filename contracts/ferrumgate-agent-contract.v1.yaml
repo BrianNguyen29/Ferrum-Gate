@@ -8,6 +8,8 @@ core_principles:
   - "Every tool call must use a valid CapabilityLease."
   - "Every meaningful execution step must emit ProvenanceEvent."
   - "R3 actions must never auto-commit."
+  - "RecoveryRequired is an operator-review state; it is not terminal and does not auto-commit or auto-compensate."
+  - "HTTP and SQLite mutation adapters are not R2-compensatable; they are R3-only and require explicit manual verification and commit."
 
 policy_decisions:
   - Allow
@@ -24,12 +26,22 @@ rollback_classes:
     meaning: "Action can be recovered from snapshot"
     requires_snapshot_proof: true
   R2Compensatable:
-    meaning: "Action needs explicit compensation plan"
+    meaning: "Action needs explicit compensation plan; not available for HTTP/SQLite mutation adapters"
     requires_compensation_plan: true
+    excluded_adapters: ["HttpMutation", "SqlMutation"]
   R3IrreversibleHighConsequence:
-    meaning: "High-consequence or irreversible action"
+    meaning: "High-consequence, irreversible, or operator-owned action"
     auto_commit_allowed: false
     requires_approval_or_draft: true
+    applies_to: ["HttpMutation", "SqlMutation", "EmailSend"]
+
+recovery_states:
+  RecoveryRequired:
+    meaning: "The side-effect outcome is ambiguous or the execution is stale; operator review is required before any terminal transition."
+    terminal: false
+    owner_only: true
+    allowed_transitions: ["Committed", "Compensated", "RolledBack", "Failed"]
+    required_provenance: ["ErrorRaised"]
 
 objects:
   IntentEnvelope:
@@ -38,6 +50,7 @@ objects:
       - "expires_at > created_at"
       - "if risk_tier == Critical then approval_mode != None"
       - "if default_rollback_class == R3IrreversibleHighConsequence then approval_mode in [Required, DraftOnly, TwoPhaseCommit]"
+      - "if action_type in [HttpMutation, SqlMutation] then default_rollback_class == R3IrreversibleHighConsequence"
 
   CapabilityLease:
     invariants:
@@ -51,10 +64,12 @@ objects:
       - "if rollback_class == R2Compensatable then compensation_plan.length > 0"
       - "if rollback_class == R3IrreversibleHighConsequence then auto_commit == false"
       - "EmailSend is always R3 in v1; adapter reserved but not yet available"
+      - "HttpMutation and SqlMutation are always R3 in v1; R2 compensation/replay is rejected"
 
   ProvenanceEvent:
     invariants:
       - "side effect executions must emit minimum lineage chain"
+      - "RecoveryRequired transitions must include ErrorRaised in provenance obligations"
 
 minimum_lineage_chain:
   - PolicyEvaluated
@@ -64,7 +79,8 @@ minimum_lineage_chain:
   - ToolCallPrepared
   - ToolCallExecuted
   - SideEffectVerified
-  - "Terminal event: SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack"
+  - "Terminal event: SideEffectCommitted | SideEffectCompensated | SideEffectRolledBack | SideEffectFailed"
+  - "Non-terminal review state: RecoveryRequired (requires operator action before terminalization)"
 
 agent_checklists:
   before_propose:
@@ -73,6 +89,7 @@ agent_checklists:
     - "Determine if action is read-only or mutation"
     - "Determine rollback class"
     - "Check if inputs contain external/untrusted lineage"
+    - "If adapter is HttpMutation or SqlMutation, classify as R3 and require explicit approval or draft"
   before_execute:
     - "Proposal already evaluated by policy"
     - "CapabilityLease is active and not expired"
@@ -80,11 +97,13 @@ agent_checklists:
     - "Taint score <= max_taint_score"
     - "RollbackContract prepared if action has side effect"
     - "Required approval already granted and digest matches"
+    - "R3 actions must have auto_commit=false and be prepared for manual verification/commit"
   after_execute:
     - "Sanitize output"
     - "Verify post-condition"
     - "Emit ProvenanceEvent"
-    - "Choose one terminal path: commit, compensate, rollback, quarantine"
+    - "Choose one terminal path: commit, compensate, rollback, quarantine, or escalate to RecoveryRequired"
+    - "If adapter returned a recoverable error or verification is indeterminate, transition to RecoveryRequired and await operator review"
 
 hard_stop_conditions:
   - "Capability mismatch"
@@ -96,3 +115,5 @@ hard_stop_conditions:
   - "Policy decision is Quarantine"
   - "Approval missing for R3 action"
   - "Approval digest mismatch"
+  - "HTTP or SQLite mutation action classified as R2; R2 is rejected for these adapters"
+  - "Attempting to auto-commit an R3 action"

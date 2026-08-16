@@ -1,0 +1,45 @@
+version: "0.1.0"
+bundle_id: "static-default"
+rules:
+  # Invariant rules are conceptually prepended by the engine at i32::MAX and
+  # i32::MAX - 1 and cannot be overridden by operator-authored rules. They are
+  # reproduced here as documentation only; even if removed, the engine enforces
+  # them.
+
+  - id: "quarantine.high.taint.mutation"
+    description: "Quarantine mutating actions with high taint"
+    decision: "Quarantine"
+    priority: 90
+    matchers:
+      - type: "taint_at_least"
+        value: 70
+      - type: "action_is_mutation"
+
+  - id: "approval.r3.required"
+    description: "Require approval for R3 actions"
+    decision: "RequireApproval"
+    priority: 80
+    matchers:
+      - type: "rollback_class_equals"
+        value: "R3IrreversibleHighConsequence"
+
+  - id: "draft.only.intent"
+    description: "Force draft-only execution when intent approval mode is DraftOnly"
+    decision: "AllowDraftOnly"
+    priority: 70
+    matchers:
+      - type: "approval_mode_equals"
+        value: "DraftOnly"
+
+  # Outcome checks are intentionally NOT expressed as unconditional bundle rules.
+  # PolicyBundlePdpEngine applies outcome checks as an engine-internal post-pass
+  # after bundle/invariant evaluation, mirroring StaticPdpEngine semantics:
+  # forbidden_outcomes cause Deny only when the inferred effect matches an
+  # explicitly declared forbidden clause; allowed_outcomes mismatches are
+  # advisory warnings only.
+
+  - id: "allow.default"
+    description: "Default allow when no other rule matches"
+    decision: "Allow"
+    priority: 0
+    matchers: []

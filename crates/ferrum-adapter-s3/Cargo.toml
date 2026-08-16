@@ -25,7 +25,14 @@ aws-credential-types = { workspace = true, optional = true }
 
 [features]
 default = []
+# Enables the AWS SDK for live S3 calls.
 s3-client = ["aws-config", "aws-sdk-s3", "aws-credential-types"]
+# WORM/object-lock sink support (implies s3-client).
+worm-sink = ["s3-client"]
 
 [dev-dependencies]
 tokio = { workspace = true }
+aws-config = { workspace = true }
+aws-credential-types = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+uuid = { workspace = true }

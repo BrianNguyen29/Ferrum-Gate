@@ -5,13 +5,8 @@
 //!
 //! Currently these tests focus on contract preparation and state transitions.
 
-use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
-use ferrum_gateway::GatewayRuntime;
-use ferrum_pdp::StaticPdpEngine;
 use ferrum_proto::RollbackClass;
-use ferrum_rollback::{AdapterRegistry, NoopRollbackAdapter, RollbackService};
-use ferrum_store::{SqliteStore, StoreFacade};
-use std::sync::Arc;
+use ferrum_testkit::gateway::SqliteGateway;
 
 // ---------------------------------------------------------------------------
 // Contract preparation tests
@@ -21,24 +16,8 @@ use std::sync::Arc;
 /// and that preparation succeeds.
 #[tokio::test]
 async fn test_r3_contract_preparation_succeeds() {
-    let pdp = Arc::new(StaticPdpEngine);
-    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
-
-    let mut registry = AdapterRegistry::default();
-    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
-
-    let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
-            .await
-            .expect("connect to sqlite"),
-    );
-    store
-        .apply_embedded_migrations()
-        .await
-        .expect("apply migrations");
-
-    let runtime = GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, vec![]);
+    let gateway = SqliteGateway::new().await.expect("create sqlite gateway");
+    let runtime = gateway.runtime;
 
     // Create R3 prepare request
     let r3_request = runtime.rollback.default_prepare_request(
@@ -64,24 +43,8 @@ async fn test_r3_contract_preparation_succeeds() {
 /// Verify that R0 contracts are created with auto_commit=true.
 #[tokio::test]
 async fn test_r0_contract_has_auto_commit_true() {
-    let pdp = Arc::new(StaticPdpEngine);
-    let cap: Arc<dyn CapabilityService> = Arc::new(InMemoryCapabilityService::default());
-
-    let mut registry = AdapterRegistry::default();
-    registry.register(Arc::new(NoopRollbackAdapter::new("noop")));
-    let rollback = Arc::new(RollbackService::new(Arc::new(registry)));
-
-    let store = Arc::new(
-        SqliteStore::connect("sqlite::memory:")
-            .await
-            .expect("connect to sqlite"),
-    );
-    store
-        .apply_embedded_migrations()
-        .await
-        .expect("apply migrations");
-
-    let runtime = GatewayRuntime::new(pdp, cap, rollback, store as Arc<dyn StoreFacade>, vec![]);
+    let gateway = SqliteGateway::new().await.expect("create sqlite gateway");
+    let runtime = gateway.runtime;
 
     // Create R0 prepare request
     let r0_request = runtime.rollback.default_prepare_request(

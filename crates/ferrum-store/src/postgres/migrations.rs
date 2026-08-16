@@ -1,7 +1,8 @@
 //! PostgreSQL embedded migration parity.
 //!
 //! `MIGRATIONS` is the ordered list of forward-only schema changes.
-//! `CURRENT_SCHEMA_VERSION` is **10** after adding lifecycle outbox fencing.
+//! `CURRENT_SCHEMA_VERSION` is **17** after adding `owner_actor_id` to the core
+//! workflow tables.
 //!
 //! # SQLite-only migrations intentionally skipped
 //!
@@ -130,12 +131,52 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
             "/migrations/postgres/012_add_mfa_credentials_active_index.sql"
         )),
     },
+    EmbeddedMigration {
+        version: 13,
+        name: "013_add_mfa_lockout_columns",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/013_add_mfa_lockout_columns.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 14,
+        name: "014_add_quarantine_holds",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/014_add_quarantine_holds.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 15,
+        name: "015_add_nonce_cache",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/015_add_nonce_cache.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 16,
+        name: "016_add_mfa_agent_lockouts",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/016_add_mfa_agent_lockouts.sql"
+        )),
+    },
+    EmbeddedMigration {
+        version: 17,
+        name: "017_add_owner_actor_id",
+        sql: include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/postgres/017_add_owner_actor_id.sql"
+        )),
+    },
 ];
 
 /// Current schema version for the PostgreSQL embedded migration.
 ///
 /// Must match the highest `version` in [`MIGRATIONS`].
-pub const CURRENT_SCHEMA_VERSION: i64 = 12;
+pub const CURRENT_SCHEMA_VERSION: i64 = 17;
 
 #[cfg(test)]
 mod tests {

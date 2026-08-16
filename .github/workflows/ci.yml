@@ -4,15 +4,20 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   release-governance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Hardcoded secrets scan
         run: bash scripts/run_secret_scan.sh
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Install cargo security audit tools
         run: |
           cargo install --locked cargo-deny
@@ -23,7 +28,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Show repository tree
         run: find . -maxdepth 3 | sort
       - name: Local validation
@@ -39,18 +44,43 @@ jobs:
           docker run --rm
           --entrypoint /bin/promtool
           --volume "$PWD/configs/monitoring:/rules:ro"
-          prom/prometheus:v2.53.5
+          prom/prometheus:v2.53.5@sha256:7a34573f0b9c952286b33d537f233cd5b708e12263733aa646e50c33f598f16c
           check rules /rules/ferrumgate-alerts.yaml
+      - name: Prometheus scrape config syntax
+        run: >-
+          docker run --rm
+          --entrypoint /bin/promtool
+          --volume "$PWD/configs/monitoring:/configs:ro"
+          prom/prometheus:v2.53.5@sha256:7a34573f0b9c952286b33d537f233cd5b708e12263733aa646e50c33f598f16c
+          check config /configs/prometheus-scrape-config.yaml
+      - name: Alertmanager config syntax
+        run: >-
+          docker run --rm
+          --entrypoint /bin/amtool
+          --volume "$PWD/configs/monitoring:/configs:ro"
+          prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
+          check-config /configs/alertmanager-config.yaml
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: Helm chart lint and render
         run: |
           helm lint deploy/helm/ferrumgate \
             --set secrets.bearerToken=ci-placeholder-token-not-for-production
           helm template ferrumgate deploy/helm/ferrumgate \
             --set secrets.bearerToken=ci-placeholder-token-not-for-production >/tmp/ferrumgate-rendered.yaml
+      - name: Warn on shallow default readiness (advisory)
+        continue-on-error: true
+        run: |
+          # Advisory only — does not fail CI. The chart intentionally defaults the
+          # readinessProbe to the shallow /v1/readyz (always 200) because standard
+          # Kubernetes probes cannot present a bearer token required by /v1/readyz/deep.
+          if grep -qE 'path:[[:space:]]*/v1/readyz([[:space:]]|$)' /tmp/ferrumgate-rendered.yaml; then
+            echo "::warning::Helm readinessProbe defaults to shallow /v1/readyz (always 200); it does NOT gate store/queue health. Override to /v1/readyz/deep where auth constraints allow."
+          fi
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
       - name: Cargo check
@@ -70,6 +100,11 @@ jobs:
           FERRUMD="$PWD/target/debug/ferrumd" \
             FERRUM_MCP="$PWD/target/debug/ferrum-mcp-server" \
             bash scripts/run_mcp_lifecycle_smoke.sh
+      - name: Adapter smoke (S3/GCS shape-only + MCP tool contract)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/adapter_smoke.sh
       - name: Cargo check (all features)
         run: cargo check --workspace --all-features
       - name: Cargo clippy (all features)
@@ -78,6 +113,11 @@ jobs:
         run: cargo check -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres
       - name: Cargo clippy (postgres feature)
         run: cargo clippy -p ferrumd -p ferrum-migrate -p ferrum-store -p ferrum-gateway --features postgres -- -D warnings
+      - name: Invariant smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          make invariant-smoke
       - name: Release profile smoke
         run: bash scripts/validate_release_feature_profile.sh
       - name: ferrum-stress machine-readable smoke
@@ -110,6 +150,11 @@ jobs:
           assert root.tag == "testsuite"
           assert root.attrib["name"] == "ferrum-stress"
           PY
+      - name: DR smoke (WAL crash-recovery + temp SQLite restore)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make dr-smoke
       - name: Advisory perf regression gate (ADR 011)
         continue-on-error: true
         shell: bash
@@ -122,7 +167,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
         env:
           POSTGRES_USER: ferrumgate_dev
           POSTGRES_PASSWORD: ferrumgate_dev_password
@@ -135,9 +180,11 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Cargo test (PostgreSQL live, no skips)
         shell: bash
         run: |
@@ -147,6 +194,9 @@ jobs:
 
           cargo test -p ferrum-store --features postgres \
             --test postgres_intents -- --nocapture 2>&1 | tee "$log_file"
+
+          cargo test -p ferrum-store --features postgres \
+            -- --ignored --nocapture 2>&1 | tee -a "$log_file"
 
           if grep -Eq 'Skipping postgres live test|apply_embedded_migrations failed' "$log_file"; then
             echo "PostgreSQL live tests reported a skipped or failed database setup." >&2
@@ -167,6 +217,12 @@ jobs:
 
           cargo build --features postgres --package ferrumd
 
+          # Clear test lifecycle outbox records so the daemon boot does not
+          # observe pre-existing NeedsOperatorReview rows from the test phase.
+          PGPASSWORD=ferrumgate_dev_password psql \
+            -h localhost -U ferrumgate_dev -d ferrumgate_p2_test \
+            -c "DELETE FROM lifecycle_outbox;"
+
           FERRUMD_BIN="./target/debug/ferrumd"
           BIND_ADDR="127.0.0.1:8080"
 
@@ -174,7 +230,7 @@ jobs:
             --store-dsn "postgres://ferrumgate_dev:ferrumgate_dev_password@localhost:5432/ferrumgate_p2_test" \
             --bind-addr "$BIND_ADDR" \
             --auth-mode disabled \
-            --log-filter warn \
+            --log-filter "warn,ferrum_store=debug,sqlx=debug" \
             >"$LOG_FILE" 2>&1 &
           FERRUMD_PID=$!
           echo "[INFO] ferrumd started (PID $FERRUMD_PID) on $BIND_ADDR"
@@ -199,8 +255,12 @@ jobs:
 
           # Poll /v1/readyz/deep
           READY=false
+          RESPONSE_FILE="$(mktemp)"
+          trap 'rm -f "$LOG_FILE" "$RESPONSE_FILE"; kill "$FERRUMD_PID" 2>/dev/null || true' EXIT
+
           for i in {1..30}; do
-            if curl -sf "http://$BIND_ADDR/v1/readyz/deep" >/dev/null 2>&1; then
+            HTTP_CODE=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" "http://$BIND_ADDR/v1/readyz/deep" 2>/dev/null || echo "000")
+            if [[ "$HTTP_CODE" == "200" ]]; then
               READY=true
               break
             fi
@@ -209,8 +269,11 @@ jobs:
 
           if [[ "$READY" != "true" ]]; then
             echo "[ERROR] /v1/readyz/deep did not return 200 within 30s" >&2
-            echo "[INFO] Last 30 lines of ferrumd log:"
-            tail -n 30 "$LOG_FILE" || true
+            echo "[INFO] Last /v1/readyz/deep response body (HTTP code: ${HTTP_CODE:-unknown}):"
+            cat "$RESPONSE_FILE" || true
+            echo
+            echo "[INFO] Last 60 lines of ferrumd log (ferrum_store/sqlx scoped debug):"
+            tail -n 60 "$LOG_FILE" || true
             exit 1
           fi
           echo "[OK] /v1/readyz/deep returned 200"
@@ -222,14 +285,14 @@ jobs:
   s3-live-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Start MinIO
         run: |
           docker run -d --name ferrum-minio \
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-01-20T14-49-07Z \
+            minio/minio:RELEASE.2025-01-20T14-49-07Z@sha256:ed9be66eb5f2636c18289c34c3b725ddf57815f2777c77b5938543b78a44f144 \
             server /data --console-address ":9001"
       - name: Wait for MinIO
         run: |
@@ -254,7 +317,9 @@ jobs:
             --bucket ferrum-test-bucket \
             --versioning-configuration Status=Enabled
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
       - name: Cargo test (S3 MinIO live, ignored tests)
         shell: bash
         run: |
@@ -267,13 +332,14 @@ jobs:
   coverage-and-sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: stable
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           tool: cargo-llvm-cov
       - name: Install cargo-cyclonedx
@@ -320,14 +386,15 @@ jobs:
           else:
               print("::warning::Could not parse coverage percentage from coverage.txt")
           PY
-      - name: Critical-crate coverage threshold (soft, non-blocking)
+      - name: Critical-crate coverage threshold (advisory, non-blocking)
+        continue-on-error: true
         run: |
-          python3 scripts/check_coverage_threshold.py coverage.txt || true
+          python3 scripts/check_coverage_threshold.py coverage.txt --config coverage-thresholds.toml
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --all
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: |
@@ -336,7 +403,7 @@ jobs:
           retention-days: 30
       - name: Upload SBOM artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: target/cyclonedx/*
