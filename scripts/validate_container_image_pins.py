@@ -40,7 +40,7 @@ MANAGED_DIGESTS: dict[str, str] = {
     "prom/alertmanager:v0.27.0": "e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5",
     "minio/minio:RELEASE.2025-01-20T14-49-07Z": "ed9be66eb5f2636c18289c34c3b725ddf57815f2777c77b5938543b78a44f144",
     "rust:1.95-bookworm": "6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1",
-    "debian:bookworm-slim": "7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818",
+    "debian:bookworm-slim": "abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241",
     "ghcr.io/gitleaks/gitleaks:v8.24.0": "2bcceac45179b3a91bff11a824d0fb952585b429e54fc928728b1d4d5c3e5176",
 }
 
