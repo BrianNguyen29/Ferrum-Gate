@@ -739,10 +739,12 @@ mod tests {
     use tower::ServiceExt;
 
     use ed25519_dalek::Signer;
+    use rand::Rng;
 
     fn generate_agent_keypair() -> (ed25519_dalek::SigningKey, ed25519_dalek::VerifyingKey) {
-        let mut csprng = rand::rngs::OsRng;
-        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let mut csprng_seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut csprng_seed);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&csprng_seed);
         let verifying_key = signing_key.verifying_key();
         (signing_key, verifying_key)
     }
@@ -10017,8 +10019,9 @@ rules:
             .unwrap();
 
         // Generate an Ed25519 keypair.
-        let mut rng = rand::thread_rng();
-        let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+        let mut rng_seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut rng_seed);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&rng_seed);
         let verifying_key = signing_key.verifying_key();
         let signed_at = chrono::Utc::now();
         let payload_hash = ferrum_proto::canonical_checkpoint_hash(
@@ -10126,8 +10129,9 @@ rules:
             .await
             .unwrap();
 
-        let mut rng = rand::thread_rng();
-        let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+        let mut rng_seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut rng_seed);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&rng_seed);
         let verifying_key = signing_key.verifying_key();
         let signed_at = chrono::Utc::now();
         // Sign the *correct* payload

@@ -44,7 +44,7 @@ use aes_gcm::{
 };
 use data_encoding::BASE32_NOPAD;
 use hmac::{Hmac, Mac};
-use rand::RngCore;
+use rand::Rng;
 use sha1::Sha1;
 
 // Re-export store/repo types needed by the shared lockout helpers.
@@ -66,7 +66,7 @@ const TOTP_SLEW_STEPS: i64 = 1;
 /// The secret is 20 bytes (160 bits), suitable for RFC 4226/6238.
 pub fn generate_totp_secret() -> Vec<u8> {
     let mut secret = vec![0u8; TOTP_SECRET_LEN];
-    rand::thread_rng().fill_bytes(&mut secret[..]);
+    rand::rng().fill_bytes(&mut secret[..]);
     secret
 }
 
@@ -107,7 +107,7 @@ pub fn encrypt_secret(key_bytes: &[u8], plaintext: &[u8]) -> Result<(String, Str
         .map_err(|e| MfaError::Crypto(format!("invalid AES key: {}", e)))?;
 
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes[..]);
+    rand::rng().fill_bytes(&mut nonce_bytes[..]);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher

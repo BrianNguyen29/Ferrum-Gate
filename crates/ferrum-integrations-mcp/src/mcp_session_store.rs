@@ -14,6 +14,7 @@
 //!   `max_event_bytes`, and the total retained bytes per session cannot exceed
 //!   `max_total_bytes`. Oldest events are evicted to stay within bounds.
 
+use rand::{Rng, RngExt};
 use sha2::Digest;
 use std::collections::HashMap;
 use std::fmt;
@@ -317,7 +318,7 @@ impl McpSessionStore {
 
 /// Generate a secure random 32-byte session ID using URL-safe base64.
 fn generate_session_id() -> String {
-    let bytes = rand::random::<[u8; 32]>();
+    let bytes = rand::rng().random::<[u8; 32]>();
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
