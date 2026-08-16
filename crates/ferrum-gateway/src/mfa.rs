@@ -108,10 +108,11 @@ pub fn encrypt_secret(key_bytes: &[u8], plaintext: &[u8]) -> Result<(String, Str
 
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes[..]);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::try_from(nonce_bytes.as_slice())
+        .map_err(|e| MfaError::Crypto(format!("invalid nonce: {}", e)))?;
 
     let ciphertext = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(&nonce, plaintext)
         .map_err(|e| MfaError::Crypto(format!("encryption failed: {}", e)))?;
 
     Ok((
@@ -151,9 +152,10 @@ pub fn decrypt_secret(
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, nonce_base64)
             .map_err(|e| MfaError::Crypto(format!("invalid nonce base64: {}", e)))?;
 
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::try_from(nonce_bytes.as_slice())
+        .map_err(|e| MfaError::Crypto(format!("invalid nonce: {}", e)))?;
     cipher
-        .decrypt(nonce, ciphertext.as_ref())
+        .decrypt(&nonce, ciphertext.as_ref())
         .map_err(|e| MfaError::Crypto(format!("decryption failed: {}", e)))
 }
 
