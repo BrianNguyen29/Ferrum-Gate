@@ -105,6 +105,11 @@ struct MigrationReport {
     dry_run: bool,
     applied: bool,
     overall_success: bool,
+    /// Present only when the run aborted before producing per-table results
+    /// (connection/preflight/schema failure). Success reports omit the key so
+    /// the existing JSON shape is preserved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     tables: Vec<TableResult>,
 }
 
@@ -249,6 +254,42 @@ async fn is_target_empty(pg: &PgPool, table: &str) -> Result<bool> {
     let sql = format!("SELECT COUNT(*) FROM {}", table);
     let count: i64 = sqlx::query_scalar(&sql).fetch_one(pg).await?;
     Ok(count == 0)
+}
+
+/// Fail-closed preflight: reject DSNs that target the wrong engine before any
+/// connection attempt. DSNs are redacted before appearing in errors.
+#[cfg(any(feature = "postgres", test))]
+fn preflight_dsn(args: &Args) -> Result<()> {
+    if !args.from.starts_with("sqlite") {
+        bail!(
+            "preflight: --from must be a SQLite DSN (sqlite://... or sqlite::memory:), got {}",
+            redact_dsn_for_log(&args.from)
+        );
+    }
+    if !args.to.starts_with("postgres") {
+        bail!(
+            "preflight: --to must be a PostgreSQL DSN (postgres://...), got {}",
+            redact_dsn_for_log(&args.to)
+        );
+    }
+    Ok(())
+}
+
+/// Fail-closed preflight: `--apply` without `--resume` requires every target
+/// governance table to be empty before any data is written. Run after the
+/// embedded schema migrations so the tables exist to be counted.
+#[cfg(feature = "postgres")]
+async fn preflight_target_empty(pg: &PgPool) -> Result<()> {
+    for tm in table_migrations() {
+        if !is_target_empty(pg, tm.name).await? {
+            bail!(
+                "preflight: target table '{}' is not empty; --apply requires an empty target \
+                 (use --resume to continue an interrupted migration)",
+                tm.name
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Canonicalize a database row into a deterministic string for hashing.
@@ -762,8 +803,22 @@ fn print_json(report: &MigrationReport) {
     println!("{}", serde_json::to_string_pretty(report).unwrap());
 }
 
+/// Fail-closed report emitted when `run_migration` aborts before producing
+/// per-table results (connection/preflight/schema setup failure). The run is
+/// never reported as applied, and the error chain is carried for operators.
+fn error_report(dry_run: bool, error: &anyhow::Error) -> MigrationReport {
+    MigrationReport {
+        dry_run,
+        applied: false,
+        overall_success: false,
+        error: Some(format!("{error:#}")),
+        tables: Vec::new(),
+    }
+}
+
 #[cfg(feature = "postgres")]
 async fn run_migration(args: &Args) -> Result<MigrationReport> {
+    preflight_dsn(args)?;
     let sqlite = connect_sqlite(&args.from).await?;
     let pg = connect_postgres(&args.to).await?;
 
@@ -773,6 +828,9 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
         pg_store.apply_embedded_migrations().await?;
         ensure_checkpoint_table(&pg).await?;
         ensure_resume_idempotency_constraints(&pg).await?;
+        if !args.resume {
+            preflight_target_empty(&pg).await?;
+        }
     }
 
     let migrations = table_migrations();
@@ -915,6 +973,7 @@ async fn run_migration(args: &Args) -> Result<MigrationReport> {
         dry_run: !args.apply,
         applied: args.apply,
         overall_success,
+        error: None,
         tables,
     })
 }
@@ -933,9 +992,23 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        // Logs (including sqlx notices) must never pollute stdout: --json
+        // consumers read the report from stdout, so logs go to stderr.
+        .with_writer(std::io::stderr)
         .init();
 
-    let report = run_migration(&args).await?;
+    let report = match run_migration(&args).await {
+        Ok(report) => report,
+        Err(err) => {
+            if args.json {
+                // Fail closed with a valid JSON envelope: --json consumers
+                // must never receive plain-text errors or an empty stream.
+                print_json(&error_report(!args.apply, &err));
+                std::process::exit(1);
+            }
+            return Err(err);
+        }
+    };
 
     if args.json {
         print_json(&report);
@@ -1142,11 +1215,103 @@ mod tests {
     }
 
     #[test]
+    fn test_error_report_envelope_fails_closed() {
+        let err = anyhow::anyhow!("preflight: --to must be a PostgreSQL DSN");
+        let report = error_report(false, &err);
+        assert!(
+            !report.applied,
+            "aborted run must never report applied=true"
+        );
+        assert!(!report.overall_success);
+        assert!(report.tables.is_empty());
+        assert!(
+            report.error.as_deref().unwrap().contains("preflight"),
+            "error envelope must carry the failure reason"
+        );
+    }
+
+    #[test]
+    fn test_json_error_envelope_is_parseable_with_error_field() {
+        let err = anyhow::anyhow!("failed to connect to PostgreSQL target");
+        let json = serde_json::to_string(&error_report(false, &err)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["applied"], false);
+        assert_eq!(parsed["overall_success"], false);
+        assert!(
+            parsed["error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to connect"),
+            "JSON error field must carry the failure reason: {json}"
+        );
+        assert_eq!(parsed["tables"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_success_json_shape_omits_error_and_accepts_legacy_reports() {
+        let report = MigrationReport {
+            dry_run: false,
+            applied: true,
+            overall_success: true,
+            error: None,
+            tables: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(
+            !json.contains("\"error\""),
+            "success reports must keep the existing JSON shape: {json}"
+        );
+        let legacy: MigrationReport = serde_json::from_str(
+            r#"{"dry_run":false,"applied":true,"overall_success":true,"tables":[]}"#,
+        )
+        .unwrap();
+        assert!(legacy.error.is_none());
+    }
+
+    #[test]
+    fn test_preflight_dsn_rejects_mismatched_engines() {
+        let ok = Args::parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite://dev.db",
+            "--to",
+            "postgres://localhost/db",
+        ]);
+        assert!(preflight_dsn(&ok).is_ok());
+
+        let bad_to = Args::parse_from([
+            "ferrum-migrate",
+            "--from",
+            "sqlite://dev.db",
+            "--to",
+            "sqlite://wrong.db",
+        ]);
+        let err = preflight_dsn(&bad_to).unwrap_err().to_string();
+        assert!(err.contains("--to must be a PostgreSQL DSN"), "{}", err);
+
+        let bad_from = Args::parse_from([
+            "ferrum-migrate",
+            "--from",
+            "postgres://user:secret@host/db",
+            "--to",
+            "postgres://localhost/db",
+        ]);
+        let err = preflight_dsn(&bad_from).unwrap_err().to_string();
+        assert!(err.contains("--from must be a SQLite DSN"), "{}", err);
+        assert!(
+            !err.contains("secret"),
+            "preflight errors must not leak credentials: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_migration_report_serialization() {
         let report = MigrationReport {
             dry_run: true,
             applied: false,
             overall_success: true,
+            error: None,
             tables: vec![TableResult {
                 table: "intents".to_string(),
                 source_count: 3,
@@ -1193,6 +1358,7 @@ mod tests {
             dry_run: true,
             applied: false,
             overall_success: true,
+            error: None,
             tables: vec![],
         };
         // Just verify it doesn't panic
@@ -1205,6 +1371,7 @@ mod tests {
             dry_run: false,
             applied: true,
             overall_success: false,
+            error: None,
             tables: vec![TableResult {
                 table: "intents".to_string(),
                 source_count: 1,
@@ -1227,6 +1394,7 @@ mod tests {
             dry_run: false,
             applied: true,
             overall_success: true,
+            error: None,
             tables: vec![TableResult {
                 table: "proposals".to_string(),
                 source_count: 2,
