@@ -152,5 +152,37 @@ class TestCheckSafety(unittest.TestCase):
             self.assertEqual(warnings, [])
 
 
+class TestCheckDanglingRefs(unittest.TestCase):
+    def test_valid_adr_ref_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# PostgreSQL split per ADR-003.\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertEqual(errors, [])
+
+    def test_dangling_adr_ref_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# MySQL is NOT implemented. See ADR-50.\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertTrue(
+                any("ADR-50" in e and "no docs/adr/050-" in e for e in errors)
+            )
+
+    def test_zero_padded_adr_ref_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# S3 feature gate per ADR-004.\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertEqual(errors, [])
+
+    def test_no_adr_refs_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# no references here\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertEqual(errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()
