@@ -98,6 +98,7 @@ class TestCheckSafety(unittest.TestCase):
                 'lifecycle_reconciliation_enabled = false\n'
                 'approval_timeout_enabled = false\n'
                 'audit_fail_closed = false\n'
+                'ha_reconciler_enabled = false\n'
             )
             errors, _warnings = vtc.check_safety(path)
             for control in vtc.PROD_REQUIRED_CONTROLS:
@@ -115,6 +116,7 @@ class TestCheckSafety(unittest.TestCase):
                 'lifecycle_reconciliation_enabled = true\n'
                 'approval_timeout_enabled = true\n'
                 'audit_fail_closed = true\n'
+                'ha_reconciler_enabled = true\n'
             )
             errors, warnings = vtc.check_safety(path)
             self.assertEqual(errors, [])

@@ -949,12 +949,6 @@ impl ServerConfig {
                     .to_string(),
             );
         }
-        if production_like && !self.approval_timeout_enabled {
-            tracing::warn!(
-                "approval_timeout_enabled is false in a production-like configuration; \
-                 stale pending approvals will not be expired automatically"
-            );
-        }
         if production_like && !self.audit_fail_closed {
             return Err(
                 "audit_fail_closed must be true for production-like non-loopback deployments"

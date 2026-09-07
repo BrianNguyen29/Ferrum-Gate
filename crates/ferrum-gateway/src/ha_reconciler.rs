@@ -1030,4 +1030,70 @@ mod tests {
             "expected ha_reconciler_enabled error, got: {err}"
         );
     }
+
+    #[test]
+    fn server_config_rejects_production_without_lifecycle_reconciliation() {
+        let config = crate::ServerConfig {
+            bind_addr: "0.0.0.0:8080".parse().unwrap(),
+            store_dsn: "sqlite:///var/lib/ferrumgate/ferrumgate.db".to_string(),
+            auth_mode: crate::AuthMode::Bearer,
+            bearer_token: Some("a".repeat(64)),
+            fs_workdir: Some(std::path::PathBuf::from("/var/lib/ferrumgate/workdir")),
+            lifecycle_reconciliation_enabled: false,
+            approval_timeout_enabled: true,
+            audit_fail_closed: true,
+            ha_reconciler_enabled: true,
+            ..Default::default()
+        };
+
+        let err = config.validate().expect_err("expected validation failure");
+        assert!(
+            err.contains("lifecycle_reconciliation_enabled"),
+            "expected lifecycle_reconciliation_enabled error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn server_config_rejects_production_without_approval_timeout() {
+        let config = crate::ServerConfig {
+            bind_addr: "0.0.0.0:8080".parse().unwrap(),
+            store_dsn: "sqlite:///var/lib/ferrumgate/ferrumgate.db".to_string(),
+            auth_mode: crate::AuthMode::Bearer,
+            bearer_token: Some("a".repeat(64)),
+            fs_workdir: Some(std::path::PathBuf::from("/var/lib/ferrumgate/workdir")),
+            lifecycle_reconciliation_enabled: true,
+            approval_timeout_enabled: false,
+            audit_fail_closed: true,
+            ha_reconciler_enabled: true,
+            ..Default::default()
+        };
+
+        let err = config.validate().expect_err("expected validation failure");
+        assert!(
+            err.contains("approval_timeout_enabled"),
+            "expected approval_timeout_enabled error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn server_config_rejects_production_without_audit_fail_closed() {
+        let config = crate::ServerConfig {
+            bind_addr: "0.0.0.0:8080".parse().unwrap(),
+            store_dsn: "sqlite:///var/lib/ferrumgate/ferrumgate.db".to_string(),
+            auth_mode: crate::AuthMode::Bearer,
+            bearer_token: Some("a".repeat(64)),
+            fs_workdir: Some(std::path::PathBuf::from("/var/lib/ferrumgate/workdir")),
+            lifecycle_reconciliation_enabled: true,
+            approval_timeout_enabled: true,
+            audit_fail_closed: false,
+            ha_reconciler_enabled: true,
+            ..Default::default()
+        };
+
+        let err = config.validate().expect_err("expected validation failure");
+        assert!(
+            err.contains("audit_fail_closed"),
+            "expected audit_fail_closed error, got: {err}"
+        );
+    }
 }
