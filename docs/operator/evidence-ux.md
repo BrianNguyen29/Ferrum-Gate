@@ -77,14 +77,15 @@ Environment variables:
 | Variable | Purpose | Fallback |
 |----------|---------|----------|
 | `FERRUM_TUI_SERVER_URL` | Base URL | `FERRUMCTL_SERVER_URL`, then `http://127.0.0.1:8080` |
-| `FERRUM_TUI_BEARER_TOKEN` | Auth token | `FERRUMCTL_BEARER_TOKEN` |
-| `FERRUM_TUI_EVIDENCE_DIR` | Evidence snapshot directory | `.` |
+| `FERRUM_TUI_BEARER_TOKEN` | Bearer token | `FERRUMCTL_BEARER_TOKEN`, then unset |
+| `FERRUM_TUI_WINDOW_DIR` | Directory for `slo-window-state.json` | `.` |
+| `FERRUM_TUI_EVIDENCE_DIR` | Directory for `evidence-snapshot-*.json` | `.` |
 
 ### 4.2 Overview tab
 
 The Overview tab displays:
 
-- **Last audit verify**: valid/invalid/error/unauthorized with entry counts.
+- **Last audit verify**: VALID/INVALID/error/unauthorized with entry counts (`VALID`/`INVALID` wording matches `ferrumctl admin audit verify`).
 - **Latest snapshot**: timestamp and filename of the most recent `evidence-snapshot-*.json`.
 - **Operational errors**: list of current errors (probe errors, API errors, local evidence read errors).
 - **Endpoint status table**: Health, Readiness, Readiness Deep with status badge, latency, and path.
@@ -122,7 +123,12 @@ The top summary bar shows a **Readiness** badge with three possible states:
 | `3` | Metrics tab |
 | `4` | Help tab |
 | `a` | Jump to Approvals |
-| `r` | Refresh now |
+| `j` / `k` | Select next / previous approval row (Approvals tab) |
+| `Enter` | Open the approval detail modal (Approvals tab): full approval/proposal IDs, state, requested_by, created/expires, and the untruncated reason |
+| `n` / `p` | Next / previous approvals page (Approvals tab) |
+| `/` | Filter metrics by name, applied live while typing (Metrics tab) |
+| `r` | Refresh now (immediate fetch; restarts the auto-refresh timer) |
+| `Esc` | Close the approval detail modal / clear the metrics filter |
 | `?` / `h` | Toggle help overlay |
 | `q` | Quit |
 

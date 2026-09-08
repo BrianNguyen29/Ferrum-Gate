@@ -162,7 +162,8 @@ The TUI shows:
 - Auto-refresh every 5 seconds
 
 Keyboard shortcuts:
-- `r` — refresh now
+- `r` — refresh now (immediate fetch; restarts the auto-refresh timer)
+- `j` / `k` — select approval row (Approvals tab; footer shows the selected approval and proposal IDs in full)
 - `?` / `h` — toggle help
 - `q` — quit
 

@@ -31,6 +31,10 @@ pub struct ListApprovalsResponse {
     pub next_cursor: Option<String>,
 }
 
+/// Rows shown per approvals page. One extra row is requested (limit + 1) to
+/// detect whether a further page exists; the extra row is trimmed.
+pub const APPROVALS_PAGE_SIZE: u32 = 50;
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct AuditVerifyResult {
@@ -88,11 +92,24 @@ impl Client {
         Ok(resp.json().await?)
     }
 
-    pub async fn list_approvals(&self) -> Result<ListApprovalsResponse> {
-        let url = format!("{}/v1/approvals?limit=20", self.base_url);
+    /// Fetch one page (0-based) of pending approvals. The server's offset
+    /// path never returns `next_cursor`, so paging uses `offset` and detects
+    /// more pages by over-fetching one row.
+    pub async fn list_approvals_page(&self, page: usize) -> Result<(Vec<ApprovalRequest>, bool)> {
+        let offset = APPROVALS_PAGE_SIZE.saturating_mul(page as u32);
+        let url = format!(
+            "{}/v1/approvals?limit={}&offset={}",
+            self.base_url,
+            APPROVALS_PAGE_SIZE + 1,
+            offset
+        );
         let resp = self.add_auth(self.http.get(&url)).send().await?;
         resp.error_for_status_ref()?;
-        Ok(resp.json().await?)
+        let body: ListApprovalsResponse = resp.json().await?;
+        let has_more = body.items.len() > APPROVALS_PAGE_SIZE as usize;
+        let mut items = body.items;
+        items.truncate(APPROVALS_PAGE_SIZE as usize);
+        Ok((items, has_more))
     }
 
     pub async fn metrics(&self) -> Result<String> {
