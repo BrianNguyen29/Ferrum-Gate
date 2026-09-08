@@ -408,6 +408,44 @@
           "edges": { "mainStatUnit": "", "secondaryStatUnit": "" }
         },
         "gridPos": { "h": 8, "w": 24, "x": 0, "y": 64 }
+      },
+      {
+        "id": 18,
+        "title": "SLO Error-Budget Burn Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate5m / 0.001",
+            "legendFormat": "5m burn rate"
+          },
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate30m / 0.001",
+            "legendFormat": "30m burn rate"
+          },
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate1h / 0.001",
+            "legendFormat": "1h burn rate"
+          },
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate6h / 0.001",
+            "legendFormat": "6h burn rate"
+          }
+        ],
+        "description": "Burn rate of the 30d error budget at the reference 99.9% non-5xx target (budget = 0.1%): 1.0 consumes the budget at exactly the sustainable rate. Alert thresholds: fast burn > 14.4x (FerrumGateSloFastBurn), slow burn > 6x (FerrumGateSloSlowBurn). Requires the ferrumgate_slo recording rules in ferrumgate-alerts.yaml. FerrumGate has no committed SLO target; this is a computed reference, not a claim of SLO attainment.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 }
+      },
+      {
+        "id": 19,
+        "title": "Error Budget Remaining (30d, reference target 99.9%)",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "ferrumgate:slo_error_budget_remaining:ratio",
+            "legendFormat": "budget remaining"
+          }
+        ],
+        "description": "Fraction of the 30d error budget remaining at the reference 99.9% non-5xx target (budget = 0.1%): 1 = untouched, 0 = exhausted, negative = overdrawn (observed 5xx ratio above the target). Requires the ferrumgate_slo recording rules in ferrumgate-alerts.yaml and >= 30d of scrape retention. FerrumGate has no committed SLO target; this is a computed reference, not a claim of SLO attainment.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 }
       }
     ]
   }

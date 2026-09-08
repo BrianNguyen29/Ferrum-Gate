@@ -143,6 +143,17 @@ curl -s http://localhost:8080/v1/metrics | grep 'ferrumgate_governance_errors_to
 
 > These thresholds are reference values. Tune for your deployment.
 
+## Prometheus SLO rules
+
+`configs/monitoring/ferrumgate-alerts.yaml` (group `ferrumgate_slo`) records the
+5xx error ratio and the remaining 30d error budget from the reference values
+above, using a **reference** availability target of 99.9% non-5xx (the strict
+end of the availability range above; error budget 0.1%). Burn-rate alerts fire
+at 14.4x budget consumption (5m + 1h windows) and 6x (30m + 6h windows), and
+when less than 20% of the budget remains. This is a computed reference, not a
+committed SLO — the target stays a product decision (see
+`docs/design/viz-improvements-phased-proposal.md`, P1-3).
+
 ## Related docs
 
 - [`docs/operations/rate-limit-tuning-guide.md`](../operations/rate-limit-tuning-guide.md) — Rate limit tuning guide.

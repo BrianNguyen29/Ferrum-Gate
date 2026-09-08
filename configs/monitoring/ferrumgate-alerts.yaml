@@ -213,6 +213,118 @@ groups:
           dashboardUid: ferrumgate-overview
           panelId: 14
 
+  # SLO / error-budget recording rules and burn-rate alerts.
+  #
+  # REFERENCE TARGET, NOT A COMMITTED SLO: 99.9% non-5xx availability over a
+  # 30d window (error budget = 0.001, i.e. 0.1% of requests). FerrumGate has no
+  # committed SLO target yet (see docs/design/viz-improvements-phased-proposal.md
+  # P1-3); 99.9% is the strict end of the reference availability range in
+  # docs/guides/slo-sla.md (99.0%-99.9%). Operators must confirm the target as a
+  # product decision before treating budget consumption as authoritative. To
+  # retarget, update 0.001 in the recording rules below; alert thresholds are
+  # expressed as budget multipliers (14.4x, 6x, <20% remaining) and do not
+  # change with the target.
+  #
+  # Burn-rate thresholds follow the multi-window multi-burn-rate pattern from
+  # the Google SRE Workbook ("Alerting on SLOs"), with a 720h (30d) budget
+  # window:
+  #   14.4x burn (1h + 5m windows)  -> ~2% of budget consumed per 1h  (page)
+  #   6x burn    (6h + 30m windows) -> ~5% of budget consumed per 6h  (ticket)
+  # The paired long+short windows suppress alerts from brief spikes.
+  #
+  # 429 responses are excluded deliberately: docs/guides/slo-sla.md tracks the
+  # rate-limit budget separately (429 reference < 1%-5%), and throttling is
+  # rate limiting working as intended, not an availability failure.
+  #
+  # The 30d budget window needs >= 30d of scrape retention; with less history
+  # it covers only the retained data and underestimates consumption.
+  - name: ferrumgate_slo
+    interval: 30s
+
+    rules:
+      # 5xx error ratio over trailing windows. `or vector(0)` keeps the ratio
+      # defined as exactly 0 when no 5xx series exists in the window; with no
+      # traffic at all the ratio is empty and alerts stay quiet.
+      - record: ferrumgate:http_5xx_error_ratio:rate5m
+        expr: |
+          (sum(rate(ferrumgate_http_requests_total{status=~"5.."}[5m])) or vector(0))
+          / sum(rate(ferrumgate_http_requests_total[5m]))
+
+      - record: ferrumgate:http_5xx_error_ratio:rate30m
+        expr: |
+          (sum(rate(ferrumgate_http_requests_total{status=~"5.."}[30m])) or vector(0))
+          / sum(rate(ferrumgate_http_requests_total[30m]))
+
+      - record: ferrumgate:http_5xx_error_ratio:rate1h
+        expr: |
+          (sum(rate(ferrumgate_http_requests_total{status=~"5.."}[1h])) or vector(0))
+          / sum(rate(ferrumgate_http_requests_total[1h]))
+
+      - record: ferrumgate:http_5xx_error_ratio:rate6h
+        expr: |
+          (sum(rate(ferrumgate_http_requests_total{status=~"5.."}[6h])) or vector(0))
+          / sum(rate(ferrumgate_http_requests_total[6h]))
+
+      # Remaining error budget for the 30d window: 1 = untouched, 0 = exhausted,
+      # negative = overdrawn (observed 5xx ratio above the reference target).
+      - record: ferrumgate:slo_error_budget_remaining:ratio
+        expr: |
+          1 - (((sum(increase(ferrumgate_http_requests_total{status=~"5.."}[30d])) or vector(0))
+          / sum(increase(ferrumgate_http_requests_total[30d]))) / 0.001)
+
+      # Fast burn: budget on track to be exhausted in days, not weeks
+      # (14.4x => ~2% of the 30d budget consumed per hour).
+      - alert: FerrumGateSloFastBurn
+        expr: |
+          ((ferrumgate:http_5xx_error_ratio:rate5m / 0.001) > 14.4)
+          and
+          ((ferrumgate:http_5xx_error_ratio:rate1h / 0.001) > 14.4)
+        for: 2m
+        labels:
+          severity: critical
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate SLO fast burn (14.4x reference budget)"
+          description: "5xx error ratio is burning the reference 99.9% error budget at {{ $value | printf \"%.1f\" }}x on the 5m and 1h windows (threshold 14.4x, ~2% of the 30d budget per hour). Reference target from docs/guides/slo-sla.md, not a committed SLO."
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-slo-fast-burn"
+          dashboardUid: ferrumgate-overview
+          panelId: 18
+
+      # Slow burn: sustained budget erosion worth investigating
+      # (6x => ~5% of the 30d budget consumed per 6h).
+      - alert: FerrumGateSloSlowBurn
+        expr: |
+          ((ferrumgate:http_5xx_error_ratio:rate30m / 0.001) > 6)
+          and
+          ((ferrumgate:http_5xx_error_ratio:rate6h / 0.001) > 6)
+        for: 15m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate SLO slow burn (6x reference budget)"
+          description: "5xx error ratio is burning the reference 99.9% error budget at {{ $value | printf \"%.1f\" }}x on the 30m and 6h windows (threshold 6x, ~5% of the 30d budget per 6h). Reference target from docs/guides/slo-sla.md, not a committed SLO."
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-slo-slow-burn"
+          dashboardUid: ferrumgate-overview
+          panelId: 18
+
+      # Error budget nearly exhausted for the 30d window (< 20% remaining).
+      - alert: FerrumGateSloBudgetLow
+        expr: ferrumgate:slo_error_budget_remaining:ratio < 0.20
+        for: 30m
+        labels:
+          severity: warning
+          service: ferrumgate
+          team: platform
+        annotations:
+          summary: "FerrumGate reference error budget below 20% remaining"
+          description: "Remaining 30d error budget is {{ $value | humanizePercentage }} at the reference 99.9% non-5xx target (negative means the budget is overdrawn). Reference target from docs/guides/slo-sla.md, not a committed SLO."
+          runbook_url: "../../docs/operations/runbook.md#ferrumgate-slo-budget-low"
+          dashboardUid: ferrumgate-overview
+          panelId: 19
+
   # Instance-level alerts
   - name: ferrumgate_instance
     interval: 30s
