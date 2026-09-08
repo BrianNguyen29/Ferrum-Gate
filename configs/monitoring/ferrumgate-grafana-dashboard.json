@@ -98,100 +98,180 @@
         "id": 1,
         "title": "HTTP Request Rate",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "sum(rate(ferrumgate_http_requests_total[5m]))",
+            "expr": "sum(rate(ferrumgate_http_requests_total{instance=~\"$instance\"}[5m]))",
             "legendFormat": "req/s"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
       },
       {
         "id": 2,
         "title": "HTTP Error Rate",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "sum(rate(ferrumgate_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(ferrumgate_http_requests_total[5m]))",
+            "expr": "sum(rate(ferrumgate_http_requests_total{instance=~\"$instance\", status=~\"5..\"}[5m])) / sum(rate(ferrumgate_http_requests_total{instance=~\"$instance\"}[5m]))",
             "legendFormat": "error ratio"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
       },
       {
         "id": 3,
         "title": "P95 Latency",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds[5m])) by (le))",
+            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds{instance=~\"$instance\"}[5m])) by (le))",
             "legendFormat": "p95"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
       },
       {
         "id": 4,
         "title": "PG Pool Size / Idle",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "ferrumgate_store_pg_pool_size",
+            "expr": "ferrumgate_store_pg_pool_size{instance=~\"$instance\"}",
             "legendFormat": "pool size"
           },
           {
-            "expr": "ferrumgate_store_pg_pool_idle",
+            "expr": "ferrumgate_store_pg_pool_idle{instance=~\"$instance\"}",
             "legendFormat": "pool idle"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
       },
       {
         "id": 5,
         "title": "PG Acquire Timeouts",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "rate(ferrumgate_store_pg_acquire_timeouts_total[5m])",
+            "expr": "rate(ferrumgate_store_pg_acquire_timeouts_total{instance=~\"$instance\"}[5m])",
             "legendFormat": "timeouts/s"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
       },
       {
         "id": 6,
         "title": "Health Check Status",
         "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "up{job=\"ferrumgate\"}",
+            "expr": "up{job=\"ferrumgate\", instance=~\"$instance\"}",
             "legendFormat": "up"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bool",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1 }
+              ]
+            }
+          }
+        },
+        "options": { "graphMode": "area", "colorMode": "background" },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
       },
       {
         "id": 7,
         "title": "Active Connections",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "ferrumgate_store_pg_pool_max - ferrumgate_store_pg_pool_idle",
+            "expr": "ferrumgate_store_pg_pool_max{instance=~\"$instance\"} - ferrumgate_store_pg_pool_idle{instance=~\"$instance\"}",
             "legendFormat": "active conns"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
       },
       {
         "id": 8,
         "title": "PG Pool Saturation %",
         "type": "gauge",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "(1 - (ferrumgate_store_pg_pool_idle / ferrumgate_store_pg_pool_max)) * 100",
+            "expr": "(1 - (ferrumgate_store_pg_pool_idle{instance=~\"$instance\"} / ferrumgate_store_pg_pool_max{instance=~\"$instance\"})) * 100",
             "legendFormat": "saturation %"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
       },
       {
