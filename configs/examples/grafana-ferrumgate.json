@@ -6,6 +6,7 @@
     "tags": ["ferrumgate", "g3.6", "workload", "monitoring"],
     "timezone": "utc",
     "schemaVersion": 36,
+    "version": 1,
     "refresh": "10s",
     "annotations": {
       "list": [

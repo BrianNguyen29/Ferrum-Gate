@@ -19,6 +19,12 @@
 #     absolute URL to your hosted runbook, or copy `docs/operations/runbook.md`
 #     next to the rules file. `scripts/validate_monitoring_metrics.py` warns on
 #     missing runbook URLs and on any leftover example-domain placeholder.
+#   - Alerts whose expression maps to a panel in
+#     `ferrumgate-grafana-dashboard.json` carry `dashboardUid` + `panelId`
+#     annotations so Grafana can link the alert to that panel. Rules without a
+#     matching panel (node_exporter instance alerts, the TEMPLATE replication
+#     rule, and rules whose metrics have no panel in the current dashboard)
+#     intentionally omit these annotations.
 
 groups:
   # FerrumGate service alerts
@@ -39,6 +45,8 @@ groups:
           summary: "FerrumGate instance is down"
           description: "FerrumGate has been unreachable for more than 1 minute."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-down"
+          dashboardUid: ferrumgate-overview
+          panelId: 6
 
       # Service health
       - alert: FerrumGateStoreUnhealthy
@@ -92,6 +100,8 @@ groups:
           summary: "FerrumGate high error rate"
           description: "Error rate is {{ $value | printf \"%.3f\" }} errors/sec (threshold: 0.05)."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-high-error-rate"
+          dashboardUid: ferrumgate-overview
+          panelId: 2
 
       # High latency
       - alert: FerrumGateHighLatency
@@ -108,6 +118,8 @@ groups:
           summary: "FerrumGate high latency"
           description: "99th percentile latency is {{ $value | printf \"%.2f\" }}s for route {{ $labels.route }}."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-high-latency"
+          dashboardUid: ferrumgate-overview
+          panelId: 3
 
       # Capability minting failures
       - alert: FerrumGateCapabilityMintFailures
@@ -125,6 +137,8 @@ groups:
           summary: "FerrumGate capability minting failures"
           description: "Capability minting failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-cap-mint-failures"
+          dashboardUid: ferrumgate-overview
+          panelId: 10
 
       # Policy evaluation failures
       - alert: FerrumGatePolicyEvalFailures
@@ -142,6 +156,8 @@ groups:
           summary: "FerrumGate policy evaluation failures"
           description: "Policy evaluation failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-policy-eval-failures"
+          dashboardUid: ferrumgate-overview
+          panelId: 11
 
       # Execution failures
       - alert: FerrumGateExecutionFailures
@@ -159,6 +175,8 @@ groups:
           summary: "FerrumGate execution failures"
           description: "Execution failure rate is {{ $value | printf \"%.3f\" }} failures/sec."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-execution-failures"
+          dashboardUid: ferrumgate-overview
+          panelId: 12
 
       # Rollback failures
       - alert: FerrumGateRollbackFailures
@@ -176,6 +194,8 @@ groups:
           summary: "FerrumGate rollback failures"
           description: "Rollback failure rate is {{ $value | printf \"%.4f\" }} failures/sec. Compensations may not complete."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-rollback-failures"
+          dashboardUid: ferrumgate-overview
+          panelId: 12
 
       # Provenance chain gaps
       - alert: FerrumGateProvenanceGaps
@@ -190,6 +210,8 @@ groups:
           summary: "FerrumGate provenance chain gaps detected"
           description: "{{ $value }} lifecycle records require operator review because automatic provenance reconciliation could not complete."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-provenance-gaps"
+          dashboardUid: ferrumgate-overview
+          panelId: 14
 
   # Instance-level alerts
   - name: ferrumgate_instance
@@ -265,6 +287,8 @@ groups:
           summary: "FerrumGate PostgreSQL metrics are absent"
           description: "ferrumd is not emitting PostgreSQL pool metrics. Either the store backend is not PostgreSQL, or the PG connection is lost and the service has stopped reporting."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-down"
+          dashboardUid: ferrumgate-overview
+          panelId: 8
 
       # Pool saturation — all connections in use.
       - alert: FerrumGatePostgresPoolSaturation
@@ -283,6 +307,8 @@ groups:
           summary: "FerrumGate PostgreSQL connection pool is saturated"
           description: "PG pool has 0 idle connections out of max. New requests may block or timeout."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-pool-saturation"
+          dashboardUid: ferrumgate-overview
+          panelId: 8
 
       # Slow acquire — connection acquisition timeouts.
       - alert: FerrumGatePostgresSlowAcquire
@@ -297,6 +323,8 @@ groups:
           summary: "FerrumGate PostgreSQL connection acquire timeouts"
           description: "PG pool acquire timeout rate is {{ $value | printf \"%.3f\" }} timeouts/sec. Pool may be undersized or PG may be slow/unreachable."
           runbook_url: "../../docs/operations/runbook.md#ferrumgate-pg-slow-acquire"
+          dashboardUid: ferrumgate-overview
+          panelId: 5
 
       # Replication lag — PLACEHOLDER / DEFERRED.
       # Requires postgres_exporter or equivalent for pg_stat_replication metrics.
@@ -337,6 +365,8 @@ groups:
           summary: "FerrumGate WORM sink export failures detected"
           description: "WORM sink export failure rate is {{ $value | printf \"%.3f\" }} failures/sec on instance {{ $labels.instance }}. The audit bundle is still durable locally; the WORM archive replica is best-effort. This does not prove compliance immutability."
           runbook_url: "../../docs/operations/runbook.md#worm-sink-failure"
+          dashboardUid: ferrumgate-overview
+          panelId: 15
 
       # WORM sink last-success timestamp stale.
       # NOTE: The 900s threshold assumes the default 300s export interval
@@ -354,3 +384,5 @@ groups:
           summary: "FerrumGate WORM sink last successful export is stale"
           description: "WORM sink last successful export is {{ $value | printf \"%.0f\" }} seconds old on instance {{ $labels.instance }} (threshold 900s, assumes default 300s interval). The audit bundle is still durable locally; the WORM archive replica is best-effort. This does not prove compliance immutability."
           runbook_url: "../../docs/operations/runbook.md#worm-sink-failure"
+          dashboardUid: ferrumgate-overview
+          panelId: 16

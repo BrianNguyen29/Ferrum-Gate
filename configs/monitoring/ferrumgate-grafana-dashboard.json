@@ -6,7 +6,35 @@
     "tags": ["ferrumgate", "overview"],
     "timezone": "utc",
     "schemaVersion": 36,
+    "version": 1,
     "refresh": "30s",
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "query": "prometheus",
+          "current": {},
+          "hide": 0,
+          "label": "Prometheus",
+          "multi": false
+        },
+        {
+          "name": "instance",
+          "type": "query",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "query": "label_values(ferrumgate_http_requests_total, instance)",
+          "refresh": 1,
+          "hide": 0,
+          "label": "Instance",
+          "multi": false,
+          "includeAll": true
+        }
+      ]
+    },
     "panels": [
       {
         "id": 1,
@@ -107,6 +135,178 @@
           }
         ],
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+      },
+      {
+        "id": 9,
+        "title": "Intents Compiled",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=\"/v1/intents/compile\"}[5m]))",
+            "legendFormat": "intents/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second for route /v1/intents/compile over the trailing 5 minutes. Independent per-route success rate, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
+      },
+      {
+        "id": 10,
+        "title": "Capabilities Minted",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=\"/v1/capabilities/mint\"}[5m]))",
+            "legendFormat": "minted/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second for route /v1/capabilities/mint over the trailing 5 minutes. Independent per-route success rate, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 }
+      },
+      {
+        "id": 11,
+        "title": "Proposals Evaluated",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=\"/v1/proposals/{proposal_id}/evaluate\"}[5m]))",
+            "legendFormat": "evaluated/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second for route /v1/proposals/{proposal_id}/evaluate over the trailing 5 minutes. Independent per-route success rate, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 }
+      },
+      {
+        "id": 12,
+        "title": "Executions",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=~\"/v1/executions/.*\"}[5m]))",
+            "legendFormat": "executions/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second summed across /v1/executions/* routes over the trailing 5 minutes. Independent per-route success rates, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 }
+      },
+      {
+        "id": 13,
+        "title": "HA Reconciler Counters (5m rate)",
+        "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "rate(ferrumgate_ha_reconciler_canceled_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "canceled/s"
+          },
+          {
+            "expr": "rate(ferrumgate_ha_reconciler_recovery_required_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "recovery required/s"
+          },
+          {
+            "expr": "rate(ferrumgate_ha_reconciler_errors_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "errors/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
+        "description": "Per-second rates over the trailing 5m of HA reconciler counters: stale pre-side-effect executions transitioned to Canceled, stale paired Running+Prepared executions transitioned to RecoveryRequired, and reconciler errors. Reconciliation actions occur only when HA reconciliation is enabled (FERRUMD_HA_RECONCILER_ENABLED).",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 }
+      },
+      {
+        "id": 14,
+        "title": "Lifecycle Outbox Operator Review",
+        "type": "gauge",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ferrumgate_lifecycle_outbox_operator_review{instance=~\"$instance\"}",
+            "legendFormat": "records"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]
+            }
+          }
+        },
+        "description": "Current number of lifecycle outbox records requiring operator review because automatic provenance reconciliation could not complete. Mirrors the FerrumGateProvenanceGaps alert.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 }
+      },
+      {
+        "id": 15,
+        "title": "WORM Sink Export Failures",
+        "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "rate(ferrumgate_audit_worm_sink_failures_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "failures/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
+        "description": "Failed WORM sink export attempts per second over the trailing 5m. Counters are emitted even when the worm-sink feature is disabled and remain 0 while the sink is disabled or idle. WORM archive replica is best-effort. The local audit bundle remains the durable record. This panel does not prove compliance immutability.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 }
+      },
+      {
+        "id": 16,
+        "title": "WORM Sink Last Successful Export (seconds ago)",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "time() - ferrumgate_audit_worm_sink_last_success_timestamp_seconds{instance=~\"$instance\"}",
+            "legendFormat": "seconds ago"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "description": "Seconds since the last successful WORM sink export. The gauge is 0 until the first successful export, so a very large value means no successful export has been recorded yet. Counters are emitted even when the worm-sink feature is disabled. WORM archive replica is best-effort. The local audit bundle remains the durable record. This panel does not prove compliance immutability.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 }
       }
     ]
   }
