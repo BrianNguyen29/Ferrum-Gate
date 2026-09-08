@@ -8,6 +8,43 @@
     "schemaVersion": 36,
     "version": 1,
     "refresh": "30s",
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "name": "Governance errors",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "enable": true,
+          "expr": "sum(increase(ferrumgate_governance_errors_total[2m])) > 0",
+          "iconColor": "red",
+          "titleFormat": "Governance errors"
+        },
+        {
+          "name": "Approval timeouts",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "enable": true,
+          "expr": "sum(increase(ferrumgate_approval_timeouts_total[2m])) > 0",
+          "iconColor": "orange",
+          "titleFormat": "Approval timeouts"
+        },
+        {
+          "name": "Quarantine timeouts",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "enable": true,
+          "expr": "sum(increase(ferrumgate_quarantine_timeouts_total[2m])) > 0",
+          "iconColor": "yellow",
+          "titleFormat": "Quarantine timeouts"
+        }
+      ]
+    },
     "templating": {
       "list": [
         {
@@ -32,6 +69,27 @@
           "label": "Instance",
           "multi": false,
           "includeAll": true
+        },
+        {
+          "name": "lineage_json",
+          "label": "Lineage JSON datasource",
+          "type": "datasource",
+          "query": "yesoreyeram-infinity-datasource",
+          "current": {},
+          "hide": 0,
+          "multi": false,
+          "includeAll": false,
+          "description": "JSON-capable datasource (e.g. the Grafana Infinity plugin) wired by the operator to the documented lineage APIs; see the lineage DAG panel description."
+        },
+        {
+          "name": "lineage_execution_id",
+          "label": "Lineage execution_id",
+          "type": "textbox",
+          "query": "",
+          "current": { "text": "", "value": "", "selected": false },
+          "hide": 0,
+          "multi": false,
+          "description": "Seed execution_id for the lineage DAG panel; passed to GET /v1/provenance/lineage/{execution_id}."
         }
       ]
     },
@@ -307,6 +365,49 @@
         },
         "description": "Seconds since the last successful WORM sink export. The gauge is 0 until the first successful export, so a very large value means no successful export has been recorded yet. Counters are emitted even when the worm-sink feature is disabled. WORM archive replica is best-effort. The local audit bundle remains the durable record. This panel does not prove compliance immutability.",
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 }
+      },
+      {
+        "id": 17,
+        "title": "Provenance Lineage DAG (per execution)",
+        "type": "nodeGraph",
+        "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${lineage_json}" },
+        "description": "TEMPLATE — renders the provenance lineage DAG for one execution from the documented read-only lineage APIs (GET /v1/provenance/lineage/{execution_id} and POST /v1/provenance/lineage; see openapi/ferrumgate-control-api.v1.yaml). FerrumGate emits no tracing or topology metrics, so this panel is not backed by /v1/metrics and stays empty until an operator wires a JSON-capable datasource (e.g. the Grafana Infinity plugin) to a ferrumd gateway with bearer auth. Edge colors map the ProvenanceEdgeType values declared in crates/ferrum-proto/src/provenance.rs (DerivedFrom, AuthorizedBy, ApprovedBy, TaintedBy, UsesManifest, EvaluatedByPolicy, Caused, Compensates, Verifies, References); the mapping is static configuration and is unverified until the datasource is wired.",
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "edge_type" },
+              "properties": [
+                {
+                  "id": "mappings",
+                  "value": [
+                    {
+                      "type": "value",
+                      "match": "value",
+                      "options": {
+                        "DerivedFrom": { "color": "light-blue", "index": 0 },
+                        "AuthorizedBy": { "color": "green", "index": 1 },
+                        "ApprovedBy": { "color": "dark-green", "index": 2 },
+                        "TaintedBy": { "color": "red", "index": 3 },
+                        "UsesManifest": { "color": "light-yellow", "index": 4 },
+                        "EvaluatedByPolicy": { "color": "blue", "index": 5 },
+                        "Caused": { "color": "purple", "index": 6 },
+                        "Compensates": { "color": "orange", "index": 7 },
+                        "Verifies": { "color": "semi-dark-green", "index": 8 },
+                        "References": { "color": "semi-dark-purple", "index": 9 }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "nodes": { "mainStatUnit": "", "secondaryStatUnit": "" },
+          "edges": { "mainStatUnit": "", "secondaryStatUnit": "" }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 64 }
       }
     ]
   }
