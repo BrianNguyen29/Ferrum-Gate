@@ -2,6 +2,10 @@
 
 Lightweight terminal dashboard for FerrumGate operator endpoints. No mutation operations.
 
+![ferrum-tui in dry-run mode: overview, approval detail overlay, and metrics filter](../../assets/tui-demo.gif)
+
+*Demo recorded in `--dry-run` mode (synthetic data, no server or HTTP calls); reproduce with `assets/tui-demo.tape`.*
+
 ## Usage
 
 ```bash
