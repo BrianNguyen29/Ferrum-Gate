@@ -3,6 +3,7 @@ use chrono::Timelike;
 use clap::{Parser, Subcommand, ValueEnum};
 use ed25519_dalek::Signer;
 use sha2::Digest;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
@@ -136,26 +137,97 @@ fn escape_dot_label(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
-fn print_lifecycle_outbox_list(response: &ferrum_proto::LifecycleOutboxListResponse) {
+/// ANSI SGR styling for human-readable text output.
+///
+/// Styling is enabled only when stdout is a terminal, `NO_COLOR` is unset
+/// (<https://no-color.org>), and `--no-color` was not passed. JSON and DOT
+/// output formats never carry styles.
+#[derive(Debug, Clone, Copy)]
+struct Color {
+    enabled: bool,
+}
+
+impl Color {
+    fn new(no_color_flag: bool) -> Self {
+        Self {
+            enabled: !no_color_flag
+                && std::env::var_os("NO_COLOR").is_none()
+                && std::io::stdout().is_terminal(),
+        }
+    }
+
+    /// Wrap `text` in the given SGR parameters when styling is enabled.
+    fn paint(&self, code: &str, text: &str) -> String {
+        if self.enabled && !text.is_empty() {
+            format!("\x1b[{}m{}\x1b[0m", code, text)
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn bold(&self, text: &str) -> String {
+        self.paint("1", text)
+    }
+
+    fn dim(&self, text: &str) -> String {
+        self.paint("2", text)
+    }
+
+    fn green(&self, text: &str) -> String {
+        self.paint("32", text)
+    }
+
+    fn yellow(&self, text: &str) -> String {
+        self.paint("33", text)
+    }
+
+    fn red(&self, text: &str) -> String {
+        self.paint("31", text)
+    }
+
+    /// Color a readiness status value the way the TUI does: green for pass,
+    /// red for fail, yellow for incomplete. Unknown values stay unstyled.
+    fn status_value(&self, value: &str) -> String {
+        match value.trim() {
+            "YES" | "OK" | "VALID" | "COMPLETE" => self.green(value),
+            "NO" | "INVALID" | "FAILED" => self.red(value),
+            "NOT COMPLETE" | "PENDING" => self.yellow(value),
+            _ => value.to_string(),
+        }
+    }
+}
+
+fn print_lifecycle_outbox_list(
+    response: &ferrum_proto::LifecycleOutboxListResponse,
+    color: &Color,
+) {
     let header = format!(
         "{:<36} {:<22} {:<36} {:<20} {:<8} LAST_ERROR",
         "OUTBOX_ID", "STATUS", "EXECUTION_ID", "NEW_STATE", "ATTEMPTS"
     );
-    println!("{}", header);
+    println!("{}", color.bold(&header));
     // ASCII rule (not box-drawing) keeps piped/diffed output byte-safe.
     println!("{}", "-".repeat(header.len()));
     for record in &response.items {
+        // Pad before styling so ANSI codes never shift column widths.
+        let status_text = format!("{:<22}", format!("{:?}", record.status));
+        let status = match record.status {
+            ferrum_proto::LifecycleOutboxStatus::Reconciled
+            | ferrum_proto::LifecycleOutboxStatus::ProvenanceWritten => color.green(&status_text),
+            ferrum_proto::LifecycleOutboxStatus::PendingProvenance => color.yellow(&status_text),
+            ferrum_proto::LifecycleOutboxStatus::NeedsOperatorReview => color.red(&status_text),
+        };
         println!(
-            "{:<36} {:<22} {:<36} {:<20} {:<8} {}",
+            "{:<36} {} {:<36} {:<20} {:<8} {}",
             record.outbox_id,
-            format!("{:?}", record.status),
+            status,
             record.execution_id,
             format!("{:?}", record.new_execution_state),
             record.attempt_count,
             record.last_error.as_deref().unwrap_or("-")
         );
     }
-    println!("Total: {}", response.total);
+    println!("{}", color.bold(&format!("Total: {}", response.total)));
 }
 
 fn print_lifecycle_outbox_record(record: &ferrum_proto::LifecycleOutboxRecord) {
@@ -212,6 +284,11 @@ struct Cli {
     /// Environment: FERRUMCTL_BEARER_TOKEN
     #[arg(long)]
     bearer_token: Option<String>,
+
+    /// Disable ANSI color in text output. Color is only applied when stdout
+    /// is a terminal; the NO_COLOR environment variable also disables it.
+    #[arg(long, global = true)]
+    no_color: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -1224,12 +1301,12 @@ fn find_latest_evidence_snapshot(dir: &std::path::Path) -> Option<PathBuf> {
 
 /// Print a readiness report section label followed by an ASCII rule the width
 /// of the label. ASCII (not box-drawing) keeps piped/diffed output byte-safe.
-fn print_section_label(label: &str) {
-    println!("{}", label);
+fn print_section_label(label: &str, color: &Color) {
+    println!("{}", color.dim(label));
     println!("{}", "-".repeat(label.len()));
 }
 
-fn print_readiness_report(report: &ReadinessReport) {
+fn print_readiness_report(report: &ReadinessReport, color: &Color) {
     println!("FerrumGate Readiness Report");
     println!("===========================");
     println!("report_timestamp: {}", report.report_timestamp);
@@ -1240,46 +1317,52 @@ fn print_readiness_report(report: &ReadinessReport) {
     println!("non_claims_notice:    {}", report.non_claims_notice);
     println!();
     if let Some(ref h) = report.health {
-        print_section_label("health:");
+        print_section_label("health:", color);
         println!("{}", serde_json::to_string_pretty(h).unwrap_or_default());
     }
     if let Some(ref r) = report.readiness {
-        print_section_label("readiness:");
+        print_section_label("readiness:", color);
         println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
     }
     if let Some(ref r) = report.readiness_deep {
-        print_section_label("readiness_deep:");
+        print_section_label("readiness_deep:", color);
         println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
     }
     if let Some(ref f) = report.functional_readiness {
-        print_section_label("functional_readiness:");
+        print_section_label("functional_readiness:", color);
         println!("{}", serde_json::to_string_pretty(f).unwrap_or_default());
     }
     if let Some(ref m) = report.metrics_summary {
-        print_section_label("metrics_summary:");
+        print_section_label("metrics_summary:", color);
         println!("{}", serde_json::to_string_pretty(m).unwrap_or_default());
     }
     if let Some(ref s) = report.slo_window {
-        print_section_label("slo_window:");
+        print_section_label("slo_window:", color);
         println!("{}", serde_json::to_string_pretty(s).unwrap_or_default());
     }
     if let Some(ref e) = report.evidence_snapshot {
-        print_section_label("evidence_snapshot:");
+        print_section_label("evidence_snapshot:", color);
         println!("{}", serde_json::to_string_pretty(e).unwrap_or_default());
     }
     println!();
-    print_section_label("overall:");
+    print_section_label("overall:", color);
     println!("  label:                  {}", report.overall.label);
     println!(
         "  production_ready:       {}",
-        report.overall.production_ready
+        color.status_value(&report.overall.production_ready)
     );
-    println!("  tier_2:                 {}", report.overall.tier_2);
+    println!(
+        "  tier_2:                 {}",
+        color.status_value(&report.overall.tier_2)
+    );
     println!(
         "  ha4_automated_failover: {}",
-        report.overall.ha4_automated_failover
+        color.status_value(&report.overall.ha4_automated_failover)
     );
-    println!("  sustained_slo:          {}", report.overall.sustained_slo);
+    println!(
+        "  sustained_slo:          {}",
+        color.status_value(&report.overall.sustained_slo)
+    );
     if !report.overall.issues.is_empty() {
         println!("  issues:");
         for issue in &report.overall.issues {
@@ -1400,13 +1483,14 @@ async fn run_readiness_report(
     window_dir: Option<PathBuf>,
     json: bool,
     offline: bool,
+    color: &Color,
 ) -> Result<()> {
     let report =
         build_readiness_report(server_url, bearer_token, snapshot, window_dir, offline).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        print_readiness_report(&report);
+        print_readiness_report(&report, color);
     }
     Ok(())
 }
@@ -1981,6 +2065,10 @@ async fn main() -> Result<()> {
         .clone()
         .or_else(|| get_env("FERRUMCTL_BEARER_TOKEN"));
 
+    // ANSI styling is gated on stdout being a TTY, NO_COLOR being unset, and
+    // an explicit --no-color override. Computed once for all text output.
+    let color = Color::new(cli.no_color);
+
     match cli.command {
         Command::Health => {
             println!(r#"{{"status":"ok"}}"#);
@@ -2381,7 +2469,7 @@ async fn main() -> Result<()> {
                                 println!("{}", serde_json::to_string_pretty(&response)?);
                             }
                             OutputFormat::Text | OutputFormat::Dot => {
-                                print_lifecycle_outbox_list(&response);
+                                print_lifecycle_outbox_list(&response, &color);
                             }
                         }
                     }
@@ -2897,7 +2985,7 @@ async fn main() -> Result<()> {
                                     println!("{}", serde_json::to_string_pretty(&manifest)?);
                                 }
                                 _ => {
-                                    println!("Bundle verification: VALID");
+                                    println!("{}", color.green("Bundle verification: VALID"));
                                     println!("Version:       {}", manifest.version);
                                     println!(
                                         "Exported at:   {}",
@@ -2917,9 +3005,15 @@ async fn main() -> Result<()> {
                                 }
                                 _ => {
                                     if response.valid {
-                                        println!("Audit chain verification: VALID");
+                                        println!(
+                                            "{}",
+                                            color.green("Audit chain verification: VALID")
+                                        );
                                     } else {
-                                        println!("Audit chain verification: INVALID");
+                                        println!(
+                                            "{}",
+                                            color.red("Audit chain verification: INVALID")
+                                        );
                                         if let Some(ref err) = response.error {
                                             println!("Error: {}", err);
                                         }
@@ -2940,17 +3034,20 @@ async fn main() -> Result<()> {
                             _ => {
                                 if response.valid {
                                     println!(
-                                        "Merkle root for {}: {} ({} entries)",
-                                        response.window_start.to_rfc3339(),
-                                        if response.root.is_empty() {
-                                            "(empty)"
-                                        } else {
-                                            &response.root
-                                        },
-                                        response.entry_count
+                                        "{}",
+                                        color.green(&format!(
+                                            "Merkle root for {}: {} ({} entries)",
+                                            response.window_start.to_rfc3339(),
+                                            if response.root.is_empty() {
+                                                "(empty)"
+                                            } else {
+                                                &response.root
+                                            },
+                                            response.entry_count
+                                        ))
                                     );
                                 } else {
-                                    println!("Merkle root verification: INVALID");
+                                    println!("{}", color.red("Merkle root verification: INVALID"));
                                     if let Some(ref err) = response.error {
                                         println!("Error: {}", err);
                                     }
@@ -3103,7 +3200,13 @@ async fn main() -> Result<()> {
                             }
                             _ => {
                                 if response.valid {
-                                    println!("Checkpoint verification for {}: VALID", window_start);
+                                    println!(
+                                        "{}",
+                                        color.green(&format!(
+                                            "Checkpoint verification for {}: VALID",
+                                            window_start
+                                        ))
+                                    );
                                     if let Some(ref cp) = response.checkpoint {
                                         println!(
                                             "  signer={} fingerprint={} signed_at={}",
@@ -3114,8 +3217,11 @@ async fn main() -> Result<()> {
                                     }
                                 } else {
                                     println!(
-                                        "Checkpoint verification for {}: INVALID",
-                                        window_start
+                                        "{}",
+                                        color.red(&format!(
+                                            "Checkpoint verification for {}: INVALID",
+                                            window_start
+                                        ))
                                     );
                                     if let Some(ref err) = response.error {
                                         println!("Error: {}", err);
@@ -3196,6 +3302,7 @@ async fn main() -> Result<()> {
                     window_dir,
                     json,
                     offline,
+                    &color,
                 )
                 .await?;
             }
@@ -3556,6 +3663,50 @@ mod tests {
         assert_eq!(escape_dot_label("hello\nworld"), "hello\\nworld");
         assert_eq!(escape_dot_label("hello\"world"), "hello\\\"world");
         assert_eq!(escape_dot_label("hello\\world"), "hello\\\\world");
+    }
+
+    #[test]
+    fn test_color_gated_on_enabled_flag() {
+        let plain = Color { enabled: false };
+        let styled = Color { enabled: true };
+        // Disabled styling is byte-identical to plain text (piped output).
+        assert_eq!(plain.bold("h"), "h");
+        assert_eq!(plain.dim("h"), "h");
+        assert_eq!(plain.green("VALID"), "VALID");
+        assert_eq!(plain.yellow("PENDING"), "PENDING");
+        assert_eq!(plain.red("INVALID"), "INVALID");
+        // Enabled styling wraps text in SGR codes matching the TUI palette.
+        assert_eq!(styled.bold("h"), "\x1b[1mh\x1b[0m");
+        assert_eq!(styled.dim("h"), "\x1b[2mh\x1b[0m");
+        assert_eq!(styled.green("VALID"), "\x1b[32mVALID\x1b[0m");
+        assert_eq!(styled.yellow("PENDING"), "\x1b[33mPENDING\x1b[0m");
+        assert_eq!(styled.red("INVALID"), "\x1b[31mINVALID\x1b[0m");
+    }
+
+    #[test]
+    fn test_status_value_maps_pass_fail_incomplete() {
+        let color = Color { enabled: true };
+        assert_eq!(color.status_value("YES"), "\x1b[32mYES\x1b[0m");
+        assert_eq!(color.status_value("NO"), "\x1b[31mNO\x1b[0m");
+        assert_eq!(
+            color.status_value("NOT COMPLETE"),
+            "\x1b[33mNOT COMPLETE\x1b[0m"
+        );
+        // Unknown values are left unstyled.
+        assert_eq!(
+            color.status_value("Cautious / Point-in-time only"),
+            "Cautious / Point-in-time only"
+        );
+    }
+
+    #[test]
+    fn test_no_color_flag_parses_globally() {
+        let cli = Cli::parse_from(["ferrumctl", "--no-color", "health"]);
+        assert!(cli.no_color);
+        let cli = Cli::parse_from(["ferrumctl", "health", "--no-color"]);
+        assert!(cli.no_color);
+        let cli = Cli::parse_from(["ferrumctl", "health"]);
+        assert!(!cli.no_color);
     }
 
     #[test]
