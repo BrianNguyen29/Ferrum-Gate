@@ -21,7 +21,7 @@ mod client;
 
 use app::{
     App, ApprovalsView, AuditVerifyView, MetricsView, Mode, ProbeResult, ProbeStatus,
-    SloWindowView, Tab,
+    SloWindowView, Tab, Theme, ThemeMode,
 };
 use client::{ApprovalRequest, Client};
 
@@ -47,6 +47,12 @@ struct Args {
     #[arg(long)]
     dry_run: bool,
 
+    /// Color theme: `ansi` (default) or `rgb` (truecolor palette shared with
+    /// the site and SVG assets).
+    /// Env: FERRUM_TUI_THEME
+    #[arg(long)]
+    theme: Option<String>,
+
     /// Directory containing slo-window-state.json.
     /// Env: FERRUM_TUI_WINDOW_DIR
     #[arg(long)]
@@ -62,6 +68,17 @@ fn resolve_env(primary: &str, fallback: &str) -> Option<String> {
     std::env::var(primary)
         .ok()
         .or_else(|| std::env::var(fallback).ok())
+}
+
+/// Resolve the theme with CLI precedence over the environment; ANSI (the
+/// 8/16-color fallback) is the default when neither is set.
+fn resolve_theme_mode(cli: Option<&str>, env: Option<&str>) -> Result<ThemeMode> {
+    match cli.or(env) {
+        Some(raw) => raw
+            .parse::<ThemeMode>()
+            .map_err(|e| anyhow::anyhow!("invalid theme `{raw}`: {e}")),
+        None => Ok(ThemeMode::Ansi),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +139,11 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("FERRUM_TUI_EVIDENCE_DIR").ok())
         .unwrap_or_else(|| ".".to_string());
 
+    let theme_mode = resolve_theme_mode(
+        args.theme.as_deref(),
+        std::env::var("FERRUM_TUI_THEME").ok().as_deref(),
+    )?;
+
     // Setup terminal
     if !io::stdout().is_terminal() {
         anyhow::bail!(
@@ -134,17 +156,10 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(
-        &mut terminal,
-        client,
-        base_url,
-        token_present,
-        args.dry_run,
-        interval_secs,
-        window_dir,
-        evidence_dir,
-    )
-    .await;
+    let mut app = App::new(base_url, token_present, args.dry_run, interval_secs);
+    app.theme = Theme::for_mode(theme_mode);
+
+    let result = run_app(&mut terminal, client, app, window_dir, evidence_dir).await;
 
     // Restore terminal
     disable_raw_mode()?;
@@ -162,16 +177,16 @@ async fn main() -> Result<()> {
 async fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     client: Client,
-    base_url: String,
-    token_present: bool,
-    dry_run: bool,
-    interval_secs: u64,
+    mut app: App,
     window_dir: String,
     evidence_dir: String,
 ) -> Result<()>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
+    let dry_run = app.dry_run;
+    let interval_secs = app.refresh_interval_secs;
+
     let (tx, mut rx) = mpsc::channel::<AppEvent>(32);
 
     // Refresh signal from the `r` key and the approvals `n`/`p` paging keys
@@ -408,8 +423,6 @@ ferrumgate_store_pg_pool_max 10
             }
         }
     });
-
-    let mut app = App::new(base_url, token_present, dry_run, interval_secs);
 
     loop {
         terminal.draw(|f| app::draw(f, &app))?;
@@ -749,5 +762,25 @@ mod tests {
         let (pairs, total) = parse_metrics("");
         assert!(pairs.is_empty());
         assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_resolve_theme_mode_cli_wins_and_defaults_to_ansi() {
+        assert_eq!(resolve_theme_mode(None, None).unwrap(), ThemeMode::Ansi);
+        assert_eq!(
+            resolve_theme_mode(Some("rgb"), None).unwrap(),
+            ThemeMode::Rgb
+        );
+        assert_eq!(
+            resolve_theme_mode(None, Some("rgb")).unwrap(),
+            ThemeMode::Rgb
+        );
+        // The CLI flag overrides the environment.
+        assert_eq!(
+            resolve_theme_mode(Some("ansi"), Some("rgb")).unwrap(),
+            ThemeMode::Ansi
+        );
+        assert!(resolve_theme_mode(Some("bogus"), Some("rgb")).is_err());
+        assert!(resolve_theme_mode(None, Some("bogus")).is_err());
     }
 }

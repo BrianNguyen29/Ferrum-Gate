@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -33,6 +35,96 @@ const LATENCY_HISTORY_CAP: usize = 30;
 /// full bar means the depth reached that default degraded threshold; the raw
 /// depth stays in the label.
 const QUEUE_DEPTH_GAUGE_CAP: f64 = 100.0;
+
+/// Selectable TUI theme. `Ansi` is the default and keeps the terminal's
+/// 16-color palette; `Rgb` opts into the truecolor palette shared with the
+/// site and SVG assets (`assets/README.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    Ansi,
+    Rgb,
+}
+
+impl FromStr for ThemeMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ansi" => Ok(ThemeMode::Ansi),
+            "rgb" => Ok(ThemeMode::Rgb),
+            other => Err(format!("expected `ansi` or `rgb`, got `{other}`")),
+        }
+    }
+}
+
+/// Semantic color slots for the active theme. `Theme::ansi()` reproduces the
+/// named 16-color values the TUI always used; `Theme::rgb()` substitutes the
+/// truecolor tokens. Layout and text are identical in both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Theme {
+    /// Primary accent: brand, section headings, highlighted values.
+    pub accent: Color,
+    /// Success: healthy probes, approved state, audit VALID.
+    pub ok: Color,
+    /// Warning: loading, pending, transient messages.
+    pub warn: Color,
+    /// Error: probe failures, rejected approvals, blockers.
+    pub err: Color,
+    /// Secondary text: hints, base URL, unavailable values.
+    pub muted: Color,
+    /// Tertiary text: timestamps, paths, dismiss hints.
+    pub dim: Color,
+    /// Primary text: body copy and metric names.
+    pub text: Color,
+    /// Block borders.
+    pub border: Color,
+    /// Ink on colored badges; also the modal backdrop.
+    pub badge_fg: Color,
+}
+
+impl Theme {
+    /// Terminal 16-color palette (default; safe on non-truecolor terminals).
+    pub const fn ansi() -> Self {
+        Self {
+            accent: Color::Cyan,
+            ok: Color::Green,
+            warn: Color::Yellow,
+            err: Color::Red,
+            muted: Color::Gray,
+            dim: Color::DarkGray,
+            text: Color::White,
+            border: Color::Blue,
+            badge_fg: Color::Black,
+        }
+    }
+
+    /// Truecolor palette. Canonical tokens from `assets/README.md`: iron blue
+    /// `#7aa2f7` borders, violet `#bb9af7` accents, iron-oxide rust `#d97757`
+    /// errors/recovery, mute `#d8dce6` text, muted `#8b92a8` secondary text,
+    /// and the site `#0f1115` background as badge ink. Green and yellow have
+    /// no canonical token, so the status slots use their terminal-safe hues.
+    pub const fn rgb() -> Self {
+        Self {
+            accent: Color::Rgb(0xbb, 0x9a, 0xf7),
+            ok: Color::Rgb(0x9e, 0xce, 0x6a),
+            warn: Color::Rgb(0xe0, 0xaf, 0x68),
+            err: Color::Rgb(0xd9, 0x77, 0x57),
+            muted: Color::Rgb(0x8b, 0x92, 0xa8),
+            dim: Color::Rgb(0x56, 0x5f, 0x89),
+            text: Color::Rgb(0xd8, 0xdc, 0xe6),
+            border: Color::Rgb(0x7a, 0xa2, 0xf7),
+            badge_fg: Color::Rgb(0x0f, 0x11, 0x15),
+        }
+    }
+
+    /// Resolve the palette for the selected mode.
+    pub const fn for_mode(mode: ThemeMode) -> Self {
+        match mode {
+            ThemeMode::Ansi => Self::ansi(),
+            ThemeMode::Rgb => Self::rgb(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -90,12 +182,12 @@ impl ProbeStatus {
         }
     }
 
-    fn badge_style(&self) -> Style {
+    fn badge_style(&self, theme: &Theme) -> Style {
         let (fg, bg) = match self {
-            ProbeStatus::Loading => (Color::Black, Color::Yellow),
-            ProbeStatus::Ok(_) => (Color::Black, Color::Green),
-            ProbeStatus::Err(_) => (Color::Black, Color::Red),
-            ProbeStatus::DryRun => (Color::Black, Color::Cyan),
+            ProbeStatus::Loading => (theme.badge_fg, theme.warn),
+            ProbeStatus::Ok(_) => (theme.badge_fg, theme.ok),
+            ProbeStatus::Err(_) => (theme.badge_fg, theme.err),
+            ProbeStatus::DryRun => (theme.badge_fg, theme.accent),
         };
         Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
     }
@@ -199,6 +291,8 @@ pub struct App {
     /// PG pool snapshot from the latest metrics scrape (None = unavailable,
     /// e.g. non-PostgreSQL stores).
     pub pool: Option<PoolSnapshot>,
+    /// Active color theme (`--theme` / `FERRUM_TUI_THEME`); ANSI by default.
+    pub theme: Theme,
 }
 
 impl App {
@@ -253,6 +347,7 @@ impl App {
             latency_history: Vec::new(),
             queue_depth: None,
             pool: None,
+            theme: Theme::ansi(),
         }
     }
 
@@ -449,20 +544,21 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let mode_span = if app.dry_run {
         Span::styled(
             " DRY-RUN ",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(theme.badge_fg)
+                .bg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(
             " LIVE ",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Green)
+                .fg(theme.badge_fg)
+                .bg(theme.ok)
                 .add_modifier(Modifier::BOLD),
         )
     };
@@ -471,16 +567,16 @@ fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             " AUTH ",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Green)
+                .fg(theme.badge_fg)
+                .bg(theme.ok)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(
             " NO-AUTH ",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
+                .fg(theme.badge_fg)
+                .bg(theme.warn)
                 .add_modifier(Modifier::BOLD),
         )
     };
@@ -489,20 +585,20 @@ fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             " FerrumGate ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Operator Console", Style::default().fg(Color::White)),
+        Span::styled("Operator Console", Style::default().fg(theme.text)),
         Span::raw("  "),
         mode_span,
         Span::raw("  "),
-        Span::styled(&app.base_url, Style::default().fg(Color::Gray)),
+        Span::styled(&app.base_url, Style::default().fg(theme.muted)),
         Span::raw("  "),
         auth_span,
         Span::raw("  "),
         Span::styled(
             format!("{}s", app.refresh_interval_secs),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim),
         ),
     ]);
 
@@ -511,6 +607,7 @@ fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let healthy = app.healthy_count();
     let total = app.probes.len();
 
@@ -528,11 +625,11 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
     // before; the border and bar turn red when the readiness computation
     // recorded errors.
     let healthy_color = if app.error_count > 0 {
-        Color::Red
+        theme.err
     } else if healthy == total {
-        Color::Green
+        theme.ok
     } else {
-        Color::Yellow
+        theme.warn
     };
     let healthy_ratio = if total > 0 {
         healthy as f64 / total as f64
@@ -561,7 +658,7 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title(" Queue Depth ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
+                .border_style(Style::default().fg(theme.border)),
         )
         .ratio((depth / QUEUE_DEPTH_GAUGE_CAP).clamp(0.0, 1.0))
         .label(if app.queue_depth.is_some() {
@@ -570,9 +667,9 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
             "—".to_string()
         })
         .gauge_style(Style::default().fg(if depth >= QUEUE_DEPTH_GAUGE_CAP {
-            Color::Red
+            theme.err
         } else {
-            Color::Green
+            theme.ok
         }));
     f.render_widget(depth_gauge, chunks[1]);
 
@@ -584,10 +681,10 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title(" Latency (ms) ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
+                .border_style(Style::default().fg(theme.border)),
         )
         .data(app.latency_history.as_slice())
-        .style(Style::default().fg(Color::Cyan));
+        .style(Style::default().fg(theme.accent));
     f.render_widget(latency_sparkline, chunks[2]);
 
     // PG pool card: in-use (size - idle) connections over the configured
@@ -607,19 +704,20 @@ fn draw_summary_cards(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title(" PG Pool ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
+                .border_style(Style::default().fg(theme.border)),
         )
         .ratio(pool_ratio)
         .label(pool_label)
         .gauge_style(Style::default().fg(if pool_ratio >= 1.0 {
-            Color::Red
+            theme.err
         } else {
-            Color::Green
+            theme.ok
         }));
     f.render_widget(pool_gauge, chunks[3]);
 }
 
 fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let titles: Vec<Line> = vec![
         Line::from(" Overview "),
         Line::from(" Approvals "),
@@ -632,11 +730,11 @@ fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue)),
+                .border_style(Style::default().fg(theme.border)),
         )
         .highlight_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
         )
@@ -665,10 +763,11 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let block = Block::default()
         .title(" Readiness Summary ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(theme.border));
 
     let slo_line = match &app.slo_window {
         SloWindowView::Missing => Line::from("SLO window: No active window"),
@@ -686,7 +785,7 @@ fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
         AuditVerifyView::Verified(r) => {
             // Uppercase matches the `ferrumctl admin audit verify` text output.
             let label = if r.valid { "VALID" } else { "INVALID" };
-            let color = if r.valid { Color::Green } else { Color::Red };
+            let color = if r.valid { theme.ok } else { theme.err };
             Line::from(vec![
                 Span::raw("Last audit verify: "),
                 Span::styled(
@@ -701,9 +800,9 @@ fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
         }
         AuditVerifyView::Error(e) => {
             let (label, color) = if e.contains("401") || e.to_lowercase().contains("unauthorized") {
-                ("unauthorized", Color::Yellow)
+                ("unauthorized", theme.warn)
             } else {
-                ("error", Color::Red)
+                ("error", theme.err)
             };
             Line::from(vec![
                 Span::raw("Last audit verify: "),
@@ -731,7 +830,7 @@ fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
         "Non-claims:",
         Style::default()
             .add_modifier(Modifier::BOLD)
-            .fg(Color::Cyan),
+            .fg(theme.accent),
     )])];
     lines.extend(non_claims_lines());
     lines.extend([
@@ -745,19 +844,19 @@ fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
         "Readiness blockers:",
         Style::default()
             .add_modifier(Modifier::BOLD)
-            .fg(Color::Cyan),
+            .fg(theme.accent),
     )]));
 
     if app.blockers.is_empty() {
         lines.push(Line::from(Span::styled(
             "  No operational blockers detected.",
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.ok),
         )));
     } else {
         for b in &app.blockers {
             lines.push(Line::from(Span::styled(
                 format!("  • {}", b),
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme.err),
             )));
         }
     }
@@ -769,12 +868,13 @@ fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_endpoint_status(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     // Row position is not selectable here; the title reports the list size.
     let title = format!(" Endpoint Status ({} probes) ", app.probes.len());
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(theme.border));
 
     let header = Row::new(vec!["Endpoint", "Status", "Latency", "Path"])
         .style(Style::default().add_modifier(Modifier::BOLD))
@@ -785,7 +885,7 @@ fn draw_endpoint_status(f: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|p| {
             let status_text = p.status.label();
-            let status_style = p.status.badge_style();
+            let status_style = p.status.badge_style(theme);
             let latency_text = p
                 .latency_ms
                 .map(|ms| format!("{} ms", ms))
@@ -795,7 +895,7 @@ fn draw_endpoint_status(f: &mut Frame, app: &App, area: Rect) {
                 Cell::from(p.name.clone()),
                 Cell::from(Span::styled(format!(" {} ", status_text), status_style)),
                 Cell::from(latency_text),
-                Cell::from(p.endpoint.clone()).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(p.endpoint.clone()).style(Style::default().fg(theme.dim)),
             ])
             .height(1)
         })
@@ -829,6 +929,7 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 }
 
 fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let title = match &app.approvals {
         ApprovalsView::Loaded(items) => {
             let page_part = if app.approvals_page > 0 {
@@ -870,15 +971,13 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(theme.border));
 
     match &app.approvals {
         ApprovalsView::Loading => {
             let text = Paragraph::new(Span::styled(
                 "Loading approvals…",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
             ))
             .block(block)
             .alignment(Alignment::Center);
@@ -887,7 +986,7 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
         ApprovalsView::Error(err) => {
             let text = Paragraph::new(Span::styled(
                 format!("Error loading approvals: {}", err),
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme.err),
             ))
             .block(block)
             .wrap(Wrap { trim: true });
@@ -897,7 +996,7 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
             if items.is_empty() {
                 let text = Paragraph::new(Span::styled(
                     "No approvals found.",
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(theme.ok),
                 ))
                 .block(block)
                 .alignment(Alignment::Center);
@@ -927,12 +1026,10 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
                     let by_truncated = truncate_with_ellipsis(&by_text, 12);
 
                     let state_style = match a.state.to_lowercase().as_str() {
-                        "pending" => Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                        "approved" => Style::default().fg(Color::Green),
-                        "rejected" | "denied" => Style::default().fg(Color::Red),
-                        _ => Style::default().fg(Color::Gray),
+                        "pending" => Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+                        "approved" => Style::default().fg(theme.ok),
+                        "rejected" | "denied" => Style::default().fg(theme.err),
+                        _ => Style::default().fg(theme.muted),
                     };
 
                     Row::new(vec![
@@ -971,6 +1068,7 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let filtered = app.filtered_metric_rows();
     // 1-based selected row within the filtered rows, shown in the title so
     // the clamped `j`/`k` position is visible.
@@ -1006,15 +1104,13 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(theme.border));
 
     match &app.metrics {
         MetricsView::Loading => {
             let text = Paragraph::new(Span::styled(
                 "Loading metrics…",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
             ))
             .block(block)
             .alignment(Alignment::Center);
@@ -1025,12 +1121,12 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
                 Line::from(""),
                 Line::from(Span::styled(
                     "Metrics endpoint unavailable or no matching metrics found.",
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(theme.muted),
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
                     "The /v1/metrics endpoint returned data but no recognised numeric metrics.",
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.dim),
                 )),
             ])
             .block(block)
@@ -1041,7 +1137,7 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
         MetricsView::Error(err) => {
             let text = Paragraph::new(Span::styled(
                 format!("Error loading metrics: {}", err),
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme.err),
             ))
             .block(block)
             .wrap(Wrap { trim: true });
@@ -1051,7 +1147,7 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
             if pairs.is_empty() {
                 let text = Paragraph::new(Span::styled(
                     "No numeric metrics found.",
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(theme.muted),
                 ))
                 .block(block)
                 .alignment(Alignment::Center);
@@ -1061,7 +1157,7 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
             if filtered.is_empty() {
                 let text = Paragraph::new(Span::styled(
                     format!("No metrics match filter \"{}\".", app.metrics_filter),
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(theme.muted),
                 ))
                 .block(block)
                 .alignment(Alignment::Center);
@@ -1078,8 +1174,8 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
                 .into_iter()
                 .map(|(k, v)| {
                     Row::new(vec![
-                        Cell::from(k.clone()).style(Style::default().fg(Color::White)),
-                        Cell::from(v.clone()).style(Style::default().fg(Color::Cyan)),
+                        Cell::from(k.clone()).style(Style::default().fg(theme.text)),
+                        Cell::from(v.clone()).style(Style::default().fg(theme.accent)),
                     ])
                     .height(1)
                 })
@@ -1100,11 +1196,12 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
+fn draw_help_page(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let block = Block::default()
         .title(" Keyboard Shortcuts & Information ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.warn));
 
     let mut lines = vec![
         Line::from(""),
@@ -1112,7 +1209,7 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
             "Navigation",
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .fg(Color::Cyan),
+                .fg(theme.accent),
         )]),
         Line::from(vec![
             Span::styled("Tab / →", Style::default().add_modifier(Modifier::BOLD)),
@@ -1154,7 +1251,7 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
             "Actions",
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .fg(Color::Cyan),
+                .fg(theme.accent),
         )]),
         Line::from(vec![
             Span::styled("r", Style::default().add_modifier(Modifier::BOLD)),
@@ -1177,7 +1274,7 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
             "Environment",
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .fg(Color::Cyan),
+                .fg(theme.accent),
         )]),
         Line::from("  FERRUM_TUI_SERVER_URL    Base URL fallback"),
         Line::from("  FERRUM_TUI_BEARER_TOKEN  Token fallback"),
@@ -1185,12 +1282,13 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
         Line::from("  FERRUMCTL_BEARER_TOKEN   Alternate token fallback"),
         Line::from("  FERRUM_TUI_WINDOW_DIR    Directory for slo-window-state.json"),
         Line::from("  FERRUM_TUI_EVIDENCE_DIR  Directory for evidence-snapshot-*.json"),
+        Line::from("  FERRUM_TUI_THEME         Color theme: ansi (default) or rgb"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Non-claims",
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .fg(Color::Cyan),
+                .fg(theme.accent),
         )]),
     ];
     lines.extend(non_claims_lines());
@@ -1205,6 +1303,7 @@ fn draw_help_page(f: &mut Frame, _app: &App, area: Rect) {
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     // Full IDs of the selected approval row; the table cells truncate IDs to
     // fit column widths, so the footer is where the operator reads them in
     // full. While a row is selected the IDs take the hint's place so the line
@@ -1241,9 +1340,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::styled(
             format!("  {}  ", app.message),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
         )
     };
 
@@ -1251,13 +1348,13 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         vec![
             Span::styled(
                 format!("approval {} · proposal {}", a.approval_id, a.proposal_id),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.accent),
             ),
             msg_span,
         ]
     } else {
         vec![
-            Span::styled(hint, Style::default().fg(Color::Gray)),
+            Span::styled(hint, Style::default().fg(theme.muted)),
             msg_span,
         ]
     };
@@ -1266,7 +1363,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(theme.border));
     let paragraph = Paragraph::new(text)
         .block(block)
         .alignment(Alignment::Center);
@@ -1277,6 +1374,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 /// reason to fit column widths, so this modal is where the operator reads the
 /// complete values. Reuses the help overlay's Clear + centered_rect pattern.
 fn draw_approval_detail(f: &mut Frame, app: &App) {
+    let theme = &app.theme;
     let Some(a) = app.selected_approval() else {
         return;
     };
@@ -1287,7 +1385,7 @@ fn draw_approval_detail(f: &mut Frame, app: &App) {
         other => other.to_string(),
     };
     let label = Style::default()
-        .fg(Color::Cyan)
+        .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
     let text = Text::from(vec![
         Line::from(vec![
@@ -1320,28 +1418,29 @@ fn draw_approval_detail(f: &mut Frame, app: &App) {
         Line::from(""),
         Line::from(Span::styled(
             "Esc / q close",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim),
         )),
     ]);
 
     let block = Block::default()
         .title(" Approval Detail ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.badge_fg));
     let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
     f.render_widget(Clear, area);
     f.render_widget(paragraph, area);
 }
 
-fn draw_help_overlay(f: &mut Frame, _app: &App) {
+fn draw_help_overlay(f: &mut Frame, app: &App) {
+    let theme = &app.theme;
     let area = centered_rect(60, 55, f.area());
 
     let block = Block::default()
         .title(" Quick Help ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(theme.warn))
+        .style(Style::default().bg(theme.badge_fg));
 
     let mut lines = vec![
         Line::from(""),
@@ -1381,7 +1480,7 @@ fn draw_help_overlay(f: &mut Frame, _app: &App) {
             "Non-claims:",
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .fg(Color::Cyan),
+                .fg(theme.accent),
         )]),
     ];
     lines.extend(non_claims_lines());
@@ -1836,6 +1935,7 @@ mod tests {
         let text: String = buf.content.iter().map(|c| c.symbol()).collect();
         assert!(text.contains("page 3"));
     }
+
     #[test]
     fn test_table_titles_show_selected_row_position() {
         let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
@@ -1907,5 +2007,53 @@ mod tests {
         assert!(text.contains("Enter accept"));
         assert!(text.contains("Esc clear"));
         assert!(!text.contains("r refresh"));
+    }
+
+    #[test]
+    fn test_theme_mode_parse_and_ansi_default() {
+        assert_eq!("rgb".parse::<ThemeMode>().unwrap(), ThemeMode::Rgb);
+        assert_eq!("ANSI".parse::<ThemeMode>().unwrap(), ThemeMode::Ansi);
+        assert!("bogus".parse::<ThemeMode>().is_err());
+        assert_eq!(Theme::for_mode(ThemeMode::Ansi), Theme::ansi());
+        assert_eq!(Theme::for_mode(ThemeMode::Rgb), Theme::rgb());
+
+        // New apps start on ANSI; RGB is opt-in.
+        let app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        assert_eq!(app.theme, Theme::ansi());
+    }
+
+    #[test]
+    fn test_theme_ansi_default_has_no_truecolor_and_rgb_opt_in_does() {
+        let backend = TestBackend::new(120, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        app.probes = vec![ProbeResult {
+            name: "Health".to_string(),
+            endpoint: "/v1/healthz".to_string(),
+            status: ProbeStatus::Ok("ok".to_string()),
+            latency_ms: Some(3),
+        }];
+        app.compute_readiness_state();
+
+        let has_truecolor = |buf: &ratatui::buffer::Buffer| {
+            buf.content
+                .iter()
+                .any(|c| matches!(c.fg, Color::Rgb(..)) || matches!(c.bg, Color::Rgb(..)))
+        };
+
+        // Default (ANSI) render stays on named 16-color values.
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        assert!(!has_truecolor(terminal.backend().buffer()));
+
+        // Opting into RGB switches the same layout to truecolor slots.
+        app.theme = Theme::rgb();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        assert!(has_truecolor(terminal.backend().buffer()));
+    }
+
+    #[test]
+    fn test_rgb_theme_keeps_borders_and_accents_distinct() {
+        assert_ne!(Theme::rgb().border, Theme::rgb().accent);
+        assert_ne!(Theme::ansi().border, Theme::ansi().accent);
     }
 }

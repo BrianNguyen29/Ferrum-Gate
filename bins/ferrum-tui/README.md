@@ -20,6 +20,9 @@ cargo build --release --bin ferrum-tui
 # Dry-run mode (synthetic OKs, no HTTP calls)
 ./target/release/ferrum-tui --dry-run
 
+# Opt into the RGB truecolor theme (ANSI 16-color is the default)
+./target/release/ferrum-tui --theme rgb
+
 # Custom refresh interval (seconds)
 ./target/release/ferrum-tui --interval 10
 ```
@@ -32,6 +35,16 @@ cargo build --release --bin ferrum-tui
 | `FERRUM_TUI_BEARER_TOKEN` | Bearer token | `FERRUMCTL_BEARER_TOKEN`, then unset |
 | `FERRUM_TUI_WINDOW_DIR` | Directory for `slo-window-state.json` | `.` |
 | `FERRUM_TUI_EVIDENCE_DIR` | Directory for `evidence-snapshot-*.json` | `.` |
+| `FERRUM_TUI_THEME` | Color theme: `ansi` (default) or `rgb` | `ansi` |
+
+## Themes
+
+The default ANSI theme uses the terminal's 16-color palette and is safe on
+non-truecolor terminals. `--theme rgb` (or `FERRUM_TUI_THEME=rgb`) opts into
+the truecolor palette shared with the site and SVG assets (`assets/README.md`):
+iron blue borders, violet accents, rust errors, and the mute/muted text tones.
+The `--theme` flag wins over the environment variable. Layout and text are
+identical in both themes.
 
 ## Keyboard shortcuts
 

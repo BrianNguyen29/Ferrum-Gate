@@ -119,7 +119,7 @@ Grafana's `nodeGraph` needs a node/edge data source (traces or a topology API). 
 
 ## What this proposal deliberately does not do
 
-- No re-layout, recolor, or re-theming of the existing dashboard or TUI (layout intent preserved).
+- No re-layout, recolor, or re-theming of the existing dashboard or TUI (layout intent preserved). **Amended 2026-09-11 (decision D1):** the TUI only may opt into an RGB truecolor theme via `--theme rgb` or `FERRUM_TUI_THEME=rgb`; the ANSI 16-color theme remains the default, and the dashboard and site are unchanged.
 - No changes to alert thresholds or rule expressions.
 - No new Rust crates, no new dependencies beyond ratatui widgets already in the dependency tree, and one vendored JS file for the site.
 - No CI changes; the existing `scripts/validate_monitoring_metrics.py` gate should be re-run after P0 edits, and the TUI's `TestBackend` snapshot tests extended for the new widgets at implementation time.

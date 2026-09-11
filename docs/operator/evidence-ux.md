@@ -80,6 +80,7 @@ Environment variables:
 | `FERRUM_TUI_BEARER_TOKEN` | Bearer token | `FERRUMCTL_BEARER_TOKEN`, then unset |
 | `FERRUM_TUI_WINDOW_DIR` | Directory for `slo-window-state.json` | `.` |
 | `FERRUM_TUI_EVIDENCE_DIR` | Directory for `evidence-snapshot-*.json` | `.` |
+| `FERRUM_TUI_THEME` | Color theme: `ansi` (default) or `rgb` (truecolor) | `ansi` |
 
 ### 4.2 Overview tab
 
