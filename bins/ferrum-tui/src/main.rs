@@ -148,6 +148,7 @@ async fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
+    terminal.clear()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,

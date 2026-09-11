@@ -137,10 +137,13 @@ fn escape_dot_label(s: &str) -> String {
 }
 
 fn print_lifecycle_outbox_list(response: &ferrum_proto::LifecycleOutboxListResponse) {
-    println!(
+    let header = format!(
         "{:<36} {:<22} {:<36} {:<20} {:<8} LAST_ERROR",
         "OUTBOX_ID", "STATUS", "EXECUTION_ID", "NEW_STATE", "ATTEMPTS"
     );
+    println!("{}", header);
+    // ASCII rule (not box-drawing) keeps piped/diffed output byte-safe.
+    println!("{}", "-".repeat(header.len()));
     for record in &response.items {
         println!(
             "{:<36} {:<22} {:<36} {:<20} {:<8} {}",
@@ -1219,6 +1222,13 @@ fn find_latest_evidence_snapshot(dir: &std::path::Path) -> Option<PathBuf> {
     candidates.last().cloned()
 }
 
+/// Print a readiness report section label followed by an ASCII rule the width
+/// of the label. ASCII (not box-drawing) keeps piped/diffed output byte-safe.
+fn print_section_label(label: &str) {
+    println!("{}", label);
+    println!("{}", "-".repeat(label.len()));
+}
+
 fn print_readiness_report(report: &ReadinessReport) {
     println!("FerrumGate Readiness Report");
     println!("===========================");
@@ -1230,35 +1240,35 @@ fn print_readiness_report(report: &ReadinessReport) {
     println!("non_claims_notice:    {}", report.non_claims_notice);
     println!();
     if let Some(ref h) = report.health {
-        println!("health:");
+        print_section_label("health:");
         println!("{}", serde_json::to_string_pretty(h).unwrap_or_default());
     }
     if let Some(ref r) = report.readiness {
-        println!("readiness:");
+        print_section_label("readiness:");
         println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
     }
     if let Some(ref r) = report.readiness_deep {
-        println!("readiness_deep:");
+        print_section_label("readiness_deep:");
         println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
     }
     if let Some(ref f) = report.functional_readiness {
-        println!("functional_readiness:");
+        print_section_label("functional_readiness:");
         println!("{}", serde_json::to_string_pretty(f).unwrap_or_default());
     }
     if let Some(ref m) = report.metrics_summary {
-        println!("metrics_summary:");
+        print_section_label("metrics_summary:");
         println!("{}", serde_json::to_string_pretty(m).unwrap_or_default());
     }
     if let Some(ref s) = report.slo_window {
-        println!("slo_window:");
+        print_section_label("slo_window:");
         println!("{}", serde_json::to_string_pretty(s).unwrap_or_default());
     }
     if let Some(ref e) = report.evidence_snapshot {
-        println!("evidence_snapshot:");
+        print_section_label("evidence_snapshot:");
         println!("{}", serde_json::to_string_pretty(e).unwrap_or_default());
     }
     println!();
-    println!("overall:");
+    print_section_label("overall:");
     println!("  label:                  {}", report.overall.label);
     println!(
         "  production_ready:       {}",

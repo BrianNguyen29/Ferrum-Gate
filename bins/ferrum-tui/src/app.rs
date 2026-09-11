@@ -769,8 +769,10 @@ fn draw_readiness_summary(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_endpoint_status(f: &mut Frame, app: &App, area: Rect) {
+    // Row position is not selectable here; the title reports the list size.
+    let title = format!(" Endpoint Status ({} probes) ", app.probes.len());
     let block = Block::default()
-        .title(" Endpoint Status ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Blue));
 
@@ -814,6 +816,18 @@ fn draw_endpoint_status(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(table, area);
 }
 
+/// Truncate `s` to at most `max` characters, replacing the last rendered
+/// character with `…` when the value is cut. The approval detail modal shows
+/// the full values, so the ellipsis only marks the cell as clipped.
+fn truncate_with_ellipsis(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
 fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
     let title = match &app.approvals {
         ApprovalsView::Loaded(items) => {
@@ -822,14 +836,26 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 String::new()
             };
+            // 1-based selected row within the loaded page, shown in the title
+            // so the clamped `j`/`k` position is visible.
+            let row_part = match app.approvals_selected.filter(|i| *i < items.len()) {
+                Some(i) => format!(", row {} of {}", i + 1, items.len()),
+                None => String::new(),
+            };
             if app.dry_run {
                 format!(
-                    " Pending Approvals [DRY-RUN] ({}showing {}) ",
+                    " Pending Approvals [DRY-RUN] ({}showing {}{}) ",
                     page_part,
-                    items.len()
+                    items.len(),
+                    row_part
                 )
             } else {
-                format!(" Pending Approvals ({}showing {}) ", page_part, items.len())
+                format!(
+                    " Pending Approvals ({}showing {}{}) ",
+                    page_part,
+                    items.len(),
+                    row_part
+                )
             }
         }
         _ => {
@@ -850,7 +876,9 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
         ApprovalsView::Loading => {
             let text = Paragraph::new(Span::styled(
                 "Loading approvals…",
-                Style::default().fg(Color::Yellow),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ))
             .block(block)
             .alignment(Alignment::Center);
@@ -896,7 +924,7 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
                     };
-                    let by_truncated: String = by_text.chars().take(12).collect();
+                    let by_truncated = truncate_with_ellipsis(&by_text, 12);
 
                     let state_style = match a.state.to_lowercase().as_str() {
                         "pending" => Style::default()
@@ -908,13 +936,13 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
                     };
 
                     Row::new(vec![
-                        Cell::from(a.approval_id.chars().take(16).collect::<String>()),
-                        Cell::from(a.proposal_id.chars().take(16).collect::<String>()),
+                        Cell::from(truncate_with_ellipsis(&a.approval_id, 16)),
+                        Cell::from(truncate_with_ellipsis(&a.proposal_id, 16)),
                         Cell::from(Span::styled(&a.state, state_style)),
-                        Cell::from(a.reason.chars().take(20).collect::<String>()),
+                        Cell::from(truncate_with_ellipsis(&a.reason, 20)),
                         Cell::from(by_truncated),
-                        Cell::from(a.created_at.chars().take(16).collect::<String>()),
-                        Cell::from(a.expires_at.chars().take(16).collect::<String>()),
+                        Cell::from(truncate_with_ellipsis(&a.created_at, 16)),
+                        Cell::from(truncate_with_ellipsis(&a.expires_at, 16)),
                     ])
                     .height(1)
                 })
@@ -944,20 +972,32 @@ fn draw_approvals(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
     let filtered = app.filtered_metric_rows();
+    // 1-based selected row within the filtered rows, shown in the title so
+    // the clamped `j`/`k` position is visible.
+    let row_part = match app.metrics_selected.filter(|i| *i < filtered.len()) {
+        Some(i) => format!(", row {} of {}", i + 1, filtered.len()),
+        None => String::new(),
+    };
     let title = match &app.metrics {
         MetricsView::Loaded(pairs, total) => {
             if app.metrics_filter.is_empty() {
                 if *total > pairs.len() {
-                    format!(" Metrics Summary (showing {} of {}) ", pairs.len(), total)
+                    format!(
+                        " Metrics Summary (showing {} of {}{}) ",
+                        pairs.len(),
+                        total,
+                        row_part
+                    )
                 } else {
-                    format!(" Metrics Summary ({}) ", pairs.len())
+                    format!(" Metrics Summary ({}{}) ", pairs.len(), row_part)
                 }
             } else {
                 format!(
-                    " Metrics Summary ({} of {} match \"{}\") ",
+                    " Metrics Summary ({} of {} match \"{}\"{}) ",
                     filtered.len(),
                     pairs.len(),
-                    app.metrics_filter
+                    app.metrics_filter,
+                    row_part
                 )
             }
         }
@@ -972,7 +1012,9 @@ fn draw_metrics(f: &mut Frame, app: &App, area: Rect) {
         MetricsView::Loading => {
             let text = Paragraph::new(Span::styled(
                 "Loading metrics…",
-                Style::default().fg(Color::Yellow),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ))
             .block(block)
             .alignment(Alignment::Center);
@@ -1173,13 +1215,25 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         None
     };
 
-    let hint = match app.current_tab {
-        Tab::Overview => "Tab →  |  r refresh  |  ? help  |  q quit",
-        Tab::Approvals => {
-            "Tab →  |  j/k select  |  Enter detail  |  n/p page  |  r refresh  |  ? help  |  q quit"
+    // While the metrics filter is being typed there is no visible cursor or
+    // input line; the footer carries the live input and the accept/clear keys.
+    let hint = if app.mode == Mode::Filter {
+        format!(
+            " filter: {}▏  Enter accept · Esc clear ",
+            app.metrics_filter
+        )
+    } else {
+        match app.current_tab {
+            Tab::Overview => "Tab →  |  r refresh  |  ? help  |  q quit".to_string(),
+            Tab::Approvals => {
+                "Tab →  |  j/k select  |  Enter detail  |  n/p page  |  r refresh  |  ? help  |  q quit"
+                    .to_string()
+            }
+            Tab::Metrics => {
+                "Tab →  |  / filter  |  j/k scroll  |  r refresh  |  ? help  |  q quit".to_string()
+            }
+            Tab::Help => "Tab →  |  q quit".to_string(),
         }
-        Tab::Metrics => "Tab →  |  / filter  |  j/k scroll  |  r refresh  |  ? help  |  q quit",
-        Tab::Help => "Tab →  |  q quit",
     };
 
     let msg_span = if app.message.is_empty() {
@@ -1781,5 +1835,77 @@ mod tests {
         let buf = terminal.backend().buffer();
         let text: String = buf.content.iter().map(|c| c.symbol()).collect();
         assert!(text.contains("page 3"));
+    }
+    #[test]
+    fn test_table_titles_show_selected_row_position() {
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        app.approvals = ApprovalsView::Loaded(vec![
+            sample_approval("a1"),
+            sample_approval("a2"),
+            sample_approval("a3"),
+        ]);
+        app.move_approvals_selection(1);
+        app.move_approvals_selection(1);
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_approvals(f, &app, f.area()))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("row 2 of 3"));
+
+        app.current_tab = Tab::Metrics;
+        app.metrics = MetricsView::Loaded(
+            vec![
+                ("metric_one".to_string(), "1".to_string()),
+                ("metric_two".to_string(), "2".to_string()),
+            ],
+            2,
+        );
+        app.move_metrics_selection(1);
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_metrics(f, &app, f.area())).unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("row 1 of 2"));
+    }
+
+    #[test]
+    fn test_truncate_with_ellipsis_marks_only_cut_values() {
+        assert_eq!(truncate_with_ellipsis("short", 16), "short");
+        assert_eq!(
+            truncate_with_ellipsis("0123456789abcdef", 16),
+            "0123456789abcdef"
+        );
+        assert_eq!(
+            truncate_with_ellipsis("0123456789abcdefg", 16),
+            "0123456789abcde…"
+        );
+        assert_eq!(
+            truncate_with_ellipsis("0123456789abcdefghij", 20),
+            "0123456789abcdefghij"
+        );
+        assert_eq!(
+            truncate_with_ellipsis("0123456789abcdefghijk", 20),
+            "0123456789abcdefghi…"
+        );
+    }
+
+    #[test]
+    fn test_footer_shows_filter_input_in_filter_mode() {
+        let backend = TestBackend::new(120, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new("http://127.0.0.1:8080".to_string(), false, false, 5);
+        app.mode = Mode::Filter;
+        app.metrics_filter = "http".to_string();
+        terminal.draw(|f| draw_footer(f, &app, f.area())).unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("filter: http"));
+        assert!(text.contains("Enter accept"));
+        assert!(text.contains("Esc clear"));
+        assert!(!text.contains("r refresh"));
     }
 }
