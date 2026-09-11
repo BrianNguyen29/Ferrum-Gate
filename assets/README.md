@@ -1,9 +1,14 @@
 # FerrumGate Visual Assets
 
 Visual assets for the [FerrumGate README](../README.md) and supporting docs.
-All files are SVG, hand-written, no binary tooling required, and rendered with
-the project's existing `system-ui` / `ui-monospace` font stack so they look
+Almost all files are SVG, hand-written, no binary tooling required, and rendered
+with the project's existing `system-ui` / `ui-monospace` font stack so they look
 correct on any reader (GitHub web, mobile, RSS, static-site export).
+
+One exception: [`tui-demo.gif`](./tui-demo.gif) is a recorded terminal demo
+(VHS) with its [`tui-demo.tape`](./tui-demo.tape) source committed alongside,
+so the binary asset stays reproducible and reviewable as text. SVGs remain the
+default asset format.
 
 ## Files
 
@@ -12,6 +17,8 @@ correct on any reader (GitHub web, mobile, RSS, static-site export).
 | [`banner.svg`](./banner.svg) | 1280×320 | README hero banner. Wordmark, tagline, three principle chips, and a small gateway schematic. |
 | [`lifecycle-flow.svg`](./lifecycle-flow.svg) | 1100×240 | Compact reference of the four-phase execution lifecycle and the minimum lineage chain. |
 | [`mark.svg`](./mark.svg) | 256×256 | Square monogram / favicon. Hexagonal iron frame, `FG` monogram, single-use capability key. |
+| [`tui-demo.gif`](./tui-demo.gif) | 1160×610 | `ferrum-tui --dry-run` terminal demo: overview, approval detail overlay, metrics filter. |
+| [`tui-demo.tape`](./tui-demo.tape) | — | VHS tape that reproduces `tui-demo.gif`. |
 
 ## Visual language
 
@@ -50,6 +57,28 @@ both light and dark GitHub renderings read correctly without external CSS.
 
 For a static-site `<link rel="icon">`, copy `mark.svg` to `static/favicon.svg`.
 
+### TUI demo in the `ferrum-tui` README
+
+```markdown
+![ferrum-tui in dry-run mode: overview, approval detail overlay, and metrics filter](../../assets/tui-demo.gif)
+```
+
+The demo runs on `--dry-run` synthetic data: no server and no HTTP calls.
+
+### Recording the TUI demo GIF
+
+From the repository root:
+
+```bash
+cargo build --release --bin ferrum-tui
+vhs assets/tui-demo.tape
+```
+
+The tape shows the `--dry-run` flag, the Overview tab, the Approvals detail
+overlay, and a live Metrics filter. It was recorded with VHS v0.11.0; VHS
+v0.12.0 was observed to exit successfully without writing the GIF file, so
+re-record with v0.11.0 until that is resolved.
+
 ## Design notes
 
 - **Industrial schematic, not cyberpunk.** All shapes are stroke-driven
@@ -80,6 +109,8 @@ For a static-site `<link rel="icon">`, copy `mark.svg` to `static/favicon.svg`.
   and the matching `.mmd` diagram in `docs/diagrams/`.
 - The brand color or accent system changes → update the `<style>` block in
   every SVG and `site/public/css/main.css`.
+- The TUI layout or keybindings change → re-record `tui-demo.gif` from
+  `tui-demo.tape` (see above).
 
 See [`docs/diagrams/README.md`](../docs/diagrams/README.md) for the
 text-based Mermaid sources of the architecture and lineage diagrams.

@@ -108,7 +108,11 @@ def runbook_warnings(rules_path: Path) -> list[str]:
     for group in document.get("groups", []) or []:
         group_name = group.get("name", "<unnamed>")
         for rule in group.get("rules", []) or []:
-            alert_name = rule.get("alert", "<unnamed>")
+            alert_name = rule.get("alert")
+            if not alert_name:
+                # Recording rules carry no annotations in Prometheus; the
+                # runbook_url check only applies to alerting rules.
+                continue
             annotations = rule.get("annotations") or {}
             runbook_url = annotations.get("runbook_url")
             if not runbook_url or not str(runbook_url).strip():

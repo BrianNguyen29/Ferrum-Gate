@@ -23,6 +23,69 @@ Example `ferrumd.env.example` stanzas:
 # FERRUMD_HA_RECONCILER_ENABLED=true
 ```
 
+### Fail-Closed Verification Record (2026-09-07)
+
+All four controls default to `false` in `ServerConfig::default()` and are enforced
+fail-closed by `ServerConfig::validate()` whenever the configuration is
+"production-like" (non-loopback bind AND `auth_mode != "disabled"`, defined at
+`crates/ferrum-gateway/src/state.rs:896-897`). `validate()` is invoked on every
+daemon boot at `bins/ferrumd/src/config.rs:1595-1598`; a violation aborts startup
+with exit code 1. Precedence for each control is CLI flag > `FERRUMD_*` env var >
+config file (`bins/ferrumd/src/config.rs:896-906`, `928-936`, `976-984`,
+`1006-1014`).
+
+| Control | Default (`crates/ferrum-gateway/src/state.rs`) | Runtime gate (`state.rs`) |
+|---------|----------------------------------------------|---------------------------|
+| `lifecycle_reconciliation_enabled` | `false` (`:801`, field doc `:541-543`) | `:931-937` |
+| `approval_timeout_enabled` | `false` (`:805`, field doc `:550-552`) | `:938-944` |
+| `ha_reconciler_enabled` | `false` (`:811`, field doc `:570-572`) | `:945-951` |
+| `audit_fail_closed` | `false` (`:815`, field `:588`) | `:958-963` |
+
+Static gate: `scripts/validate_toml_configs.py:21-26` (`PROD_REQUIRED_CONTROLS`,
+all four) fails `configs/ferrumgate.prod.toml` unless each is explicitly `true`
+(`:95-104`), forbids enabling them in the dev config (`:114-118`), and warns on
+nonprod configs (`:119-125`). The reference prod config sets all four
+(`configs/ferrumgate.prod.toml:54`, `:59`, `:64`, `:68`).
+
+Boot matrix captured 2026-09-07 (debug build, `0.0.0.0:18099`, bearer auth,
+file-backed SQLite, absolute `fs_workdir`):
+
+| Config under test | Result |
+|-------------------|--------|
+| None of the four | Boot refused: `configuration error: lifecycle_reconciliation_enabled must be true for production-like non-loopback deployments`, exit 1 |
+| Lifecycle only | Boot refused: `approval_timeout_enabled must be true …`, exit 1 |
+| Lifecycle + approval | Boot refused: `ha_reconciler_enabled must be true …`, exit 1 |
+| Lifecycle + approval + HA | Boot refused: `audit_fail_closed must be true …`, exit 1 |
+| All four via config file | Boot OK; `/v1/healthz` and `/v1/readyz` HTTP 200; reconciler tasks running |
+| All four via env vars only | Boot OK (`healthz` 200) — env-only enablement works |
+| All four `false` via env over all-`true` file | Boot refused — env overrides config file, fail-closed still holds |
+
+Unit coverage: `server_config_rejects_production_without_ha_reconciler`
+(`crates/ferrum-gateway/src/ha_reconciler.rs:1013-1032`); the other three gates
+are exercised by the boot matrix above.
+
+#### Enablement checklist for a prod-like environment
+
+1. Bind non-loopback (e.g. `bind_addr = "0.0.0.0:8080"`) and set
+   `auth_mode = "bearer"` (or `scoped`/`oidc`/`agent`) — this is what flips
+   validation into production-like mode.
+2. Set all four controls to `true` — in the config file
+   (`configs/ferrumgate.prod.toml:54-68` is the reference) and/or via env vars
+   (`configs/examples/ferrumd.env.example:27-33`):
+   `FERRUMD_LIFECYCLE_RECONCILIATION_ENABLED=true`,
+   `FERRUMD_APPROVAL_TIMEOUT_ENABLED=true`,
+   `FERRUMD_AUDIT_FAIL_CLOSED=true`, `FERRUMD_HA_RECONCILER_ENABLED=true`.
+3. Satisfy the remaining production-like prerequisites checked by the same
+   `validate()` pass: non-`sqlite::memory:` persistent `store_dsn`,
+   absolute `fs_workdir`, absolute `git_repo_roots`/`sqlite_db_roots`, and a
+   strong bearer token (`openssl rand -hex 32`).
+4. Static check: `python3 scripts/validate_toml_configs.py` must pass
+   (part of `make validate`).
+5. Boot probe: start `ferrumd --config configs/ferrumgate.prod.toml` and confirm
+   startup completes (a missing control exits 1 with a named
+   `<control> must be true for production-like non-loopback deployments` error),
+   then probe `/v1/healthz` (200).
+
 ## Recovery-Required Downgrade Safety
 
 Once a store has persisted rows in the `RecoveryRequired` state, do not downgrade to a gateway version that does not understand that state. Older binaries may fail to read or reconcile those rows, leaving ambiguous side effects in an unreadable state. Before any downgrade, either:
@@ -31,6 +94,8 @@ Once a store has persisted rows in the `RecoveryRequired` state, do not downgrad
 - Migrate the rows to a state the target version understands.
 
 This constraint applies to both SQLite and PostgreSQL stores. Mixed-version clusters that share a store must also share the recovery state machine.
+
+Operator steps for resolving `RecoveryRequired` rows (list, external verification, transitions, provenance closure) are in [`docs/operations/recovery-required-runbook.md`](./operations/recovery-required-runbook.md).
 
 ## Container Image & Compose (Local Demo Only)
 
@@ -136,6 +201,8 @@ Optimization history:
 ## Scaling Beyond SQLite
 
 PostgreSQL is recommended for deployments requiring materially higher sustained write throughput, cross-process or multi-node deployment, or stronger transactional flexibility (not currently implemented in `ferrum-store`).
+
+PostgreSQL backup retention, PITR, and pool alerting are operator-owned; before taking production traffic on a PostgreSQL backend, complete the PostgreSQL production checklist in [`docs/guides/operator.md`](./guides/operator.md).
 
 ## Performance Regression Gate
 

@@ -85,7 +85,28 @@ Or use `prometheus --config.file` to load directly.
    - **UI import**: `Dashboards → Import → Upload JSON file → select ferrumgate-grafana-dashboard.json`
    - **Provisioning**: Place the file in your Grafana `dashboards` provisioning path (e.g., `/etc/grafana/provisioning/dashboards/`)
 2. Ensure your Prometheus data source is named `prometheus` (or update the `datasource` fields in the JSON if you use a different name).
-3. The dashboard includes panels for HTTP request rate, error rate, P95 latency, PG pool metrics, acquire timeouts, health status, active connections, and pool saturation.
+3. The dashboard includes panels for HTTP request rate, error rate, P95 latency, PG pool metrics, acquire timeouts, health status, active connections, and pool saturation, plus governance timeline annotations and a lineage DAG node-graph panel (see below).
+
+#### Governance timeline annotations
+
+The dashboard `annotations` block adds three Prometheus-backed timeline markers on top of the built-in manual annotations:
+
+| Annotation | Query | Meaning |
+|------------|-------|---------|
+| Governance errors | `sum(increase(ferrumgate_governance_errors_total[2m])) > 0` | Marks windows in which the governance error counter increased. |
+| Approval timeouts | `sum(increase(ferrumgate_approval_timeouts_total[2m])) > 0` | Marks windows in which pending approvals were automatically expired due to timeout. |
+| Quarantine timeouts | `sum(increase(ferrumgate_quarantine_timeouts_total[2m])) > 0` | Marks windows in which quarantine holds were automatically expired due to timeout. |
+
+Annotations are visual markers only — they are not alert rules and do not notify. Each annotation uses the `prometheus` data source selected by the dashboard `datasource` variable; adjust it if your data source uses a different name.
+
+#### Lineage DAG node-graph panel
+
+The `nodeGraph` panel "Provenance Lineage DAG (per execution)" is a **TEMPLATE** panel:
+
+- It renders the lineage DAG from the documented read-only lineage APIs — `GET /v1/provenance/lineage/{execution_id}` and `POST /v1/provenance/lineage` (see `openapi/ferrumgate-control-api.v1.yaml`) — not from `/v1/metrics`. FerrumGate emits no tracing or topology metrics.
+- The panel stays empty until an operator wires a JSON-capable data source (for example, the Grafana Infinity plugin) to a ferrumd gateway with bearer auth. Two dashboard variables support the wiring: `lineage_json` (data source picker) and `lineage_execution_id` (seed execution id).
+- Edge colors map the `ProvenanceEdgeType` values declared in `crates/ferrum-proto/src/provenance.rs` (DerivedFrom, AuthorizedBy, ApprovedBy, TaintedBy, UsesManifest, EvaluatedByPolicy, Caused, Compensates, Verifies, References).
+- The color mapping is static configuration and is unverified until the data source is wired. No production-readiness or compliance claim is implied.
 
 **Important**: The dashboard PromQL uses FerrumGate application metric names (`ferrumgate_http_requests_total`, `ferrumgate_request_duration_seconds`, `ferrumgate_store_health_up`, and PostgreSQL pool metrics). Review and adjust expressions if your Prometheus relabeling or exporter setup changes metric names.
 

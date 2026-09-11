@@ -162,7 +162,8 @@ The TUI shows:
 - Auto-refresh every 5 seconds
 
 Keyboard shortcuts:
-- `r` — refresh now
+- `r` — refresh now (immediate fetch; restarts the auto-refresh timer)
+- `j` / `k` — select approval row (Approvals tab; footer shows the selected approval and proposal IDs in full)
 - `?` / `h` — toggle help
 - `q` — quit
 
@@ -234,26 +235,40 @@ HTTP and SQLite mutation adapters are permanently R2-rejected. Only explicit pol
 ```bash
 ferrumctl admin lifecycle-outbox list --status needs_operator_review --limit 50
 ferrumctl admin lifecycle-outbox get <outbox-id>
-ferrumctl executions get <execution-id>
-ferrumctl rollback-contracts get <contract-id>
+ferrumctl admin executions get <execution-id>
 ```
 
 ### Resolve
 
-After externally verifying the side-effect state, choose the appropriate terminal path:
+`ferrumctl` exposes listing/inspection only; terminal transitions go through the control API. After externally verifying the side-effect state, choose the appropriate terminal path (see the [recovery-required runbook](../operations/recovery-required-runbook.md) for the full decision table):
 
 ```bash
-# If the side effect succeeded and should be kept:
-ferrumctl executions commit <execution-id> --actor-id <operator-id> --reason "verified externally"
-
 # If the side effect can be safely undone by the configured compensation plan:
-ferrumctl executions compensate <execution-id> --actor-id <operator-id> --reason "undone via rollback plan"
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:18080/v1/executions/<execution-id>/compensate
+# 200 -> Compensated (terminal); 202 -> compensation incomplete, the pair stays
+# in RecoveryRequired and keeps requiring operator review.
 
-# If the side effect cannot be recovered and must be marked failed:
-ferrumctl executions fail <execution-id> --actor-id <operator-id> --reason "external recovery impossible"
+# If the side effect succeeded and should be kept (R3 explicit-commit boundary;
+# requires the rollback contract in Verified and a SideEffectVerified event):
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:18080/v1/executions/<execution-id>/commit
+# Returns 409 while the execution is still in RecoveryRequired.
 ```
 
-Each resolution requires a non-empty reason and emits an audit trail with the operator actor.
+There is no public endpoint for marking a recovery pair `Failed` yet: keep the pair in `RecoveryRequired` and escalate.
+
+After the underlying data is correct or the state is externally verified, close the lifecycle outbox record:
+
+```bash
+ferrumctl admin lifecycle-outbox retry <outbox-id> \
+  --actor-id "<operator-id>" --reason "<fix applied>"
+
+ferrumctl admin lifecycle-outbox resolve <outbox-id> \
+  --actor-id "<operator-id>" --reason "<external evidence>"
+```
+
+Both commands emit an audit trail with the operator actor; `resolve` requires a non-empty reason for audit.
 
 ### Downgrade safety
 
@@ -305,6 +320,36 @@ Backups should include both the `.db` and `-wal`/`-shm` files if taken while the
 ### PostgreSQL backup
 
 Use `pg_dump` or your hosting provider's backup mechanism. FerrumGate does not manage PostgreSQL backups internally.
+
+### PostgreSQL production checklist
+
+FerrumGate does not manage PostgreSQL backups, retention, PITR, or alerting. Complete this checklist before taking production traffic on a PostgreSQL backend.
+
+**Backup retention**
+
+- [ ] Define an RPO and a retention window (e.g., keep 24–48 h of `pg_dump` generations plus weekly archives), and document both.
+- [ ] Schedule `pg_dump` using the example units in [`configs/examples/postgres-backup.timer`](../../configs/examples/postgres-backup.timer), [`postgres-backup.service`](../../configs/examples/postgres-backup.service), and [`postgres-backup.cron`](../../configs/examples/postgres-backup.cron) after reviewing paths, users, and credentials.
+- [ ] Copy dumps off-host (object storage or a separate host). A dump on the same disk as the primary is not a backup.
+- [ ] Prune expired generations and alert when the newest backup age exceeds RPO (see the Monitoring table below).
+- [ ] Run a restore drill at least once before production and on a recurring schedule: restore to a drill database with `pg_restore`, verify row counts, and confirm `/v1/readyz/deep` returns 200 (see [`hosted-deployment.md`](./hosted-deployment.md#automated-backup-scheduling) for scheduling examples and the PostgreSQL rollback/validation commands).
+
+**Point-in-time recovery (PITR)**
+
+- [ ] Decide whether `pg_dump`-only backups meet your RPO. A dump restores to the moment it was taken; all writes after the last dump are lost.
+- [ ] For a tighter RPO, enable WAL archiving (operator-owned: `archive_mode = on` plus an `archive_command` that ships WAL to off-host storage) with a periodic `pg_basebackup` baseline, or use your provider's managed PITR feature. FerrumGate ships no archiving tooling.
+- [ ] Test PITR at least once before production: restore the baseline and replay WAL to a target timestamp into a drill database, then confirm `/v1/readyz/deep` returns 200.
+
+**Pool alerting**
+
+- [ ] Deploy the `ferrumgate_postgres` alert group from `configs/monitoring/ferrumgate-alerts.yaml`; see [`configs/monitoring/README.md`](../../configs/monitoring/README.md#postgresql-alert-rules).
+- [ ] Confirm `ferrumgate_store_pg_pool_size`, `ferrumgate_store_pg_pool_idle`, `ferrumgate_store_pg_pool_max`, and `ferrumgate_store_pg_acquire_timeouts_total` are scraped from `/v1/metrics`.
+- [ ] Verify routing for `FerrumGatePostgresPoolSaturation` (0 idle at max) and `FerrumGatePostgresSlowAcquire` (acquire timeouts). `FerrumGatePostgresMetricsAbsent` is a template heuristic — enable only when PostgreSQL is the active backend. `FerrumGatePostgresReplicationLag` is a placeholder that needs `postgres_exporter`.
+- [ ] Tune `pgMaxConnections`/`pgMinIdle` for the instance size; saturation is reported as degraded readiness but does not self-heal (see "PostgreSQL reconnect and recovery" above and [`docs/operations/runbook.md`](../../docs/operations/runbook.md#5-postgresql-recovery)).
+
+**Final verification**
+
+- [ ] `/v1/readyz/deep` returns 200 with bearer auth (store, write_queue, pool all healthy).
+- [ ] Latest backup is within RPO and a restore drill has passed at least once.
 
 ---
 

@@ -7,7 +7,7 @@ bind_addr = "127.0.0.1:8080"
 
 # Store data source name (DSN)
 # NOTE: PostgreSQL local Docker/runtime support is implemented; production/HA/multi-node is NOT.
-# MySQL is NOT implemented. See ADR-50.
+# MySQL is NOT implemented (out of scope; see docs/SCOPE.md).
 # Examples:
 #   sqlite::memory: - in-memory database (default)
 #   sqlite://ferrumgate.dev.db - file-based SQLite

@@ -125,6 +125,7 @@ fn totp_verify_result_to_response(
 /// the `admin:mfa:breakglass` scope (or `*`) and a non-empty `reason`.
 ///
 /// Returns `Ok(())` on success, or an HTTP error `Response` on failure.
+#[allow(clippy::result_large_err)]
 async fn verify_or_breakglass(
     state: &AppState,
     active: &MfaCredentialRecord,

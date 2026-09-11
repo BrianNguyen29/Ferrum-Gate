@@ -26,6 +26,8 @@ FIXTURE_DB="$DRILL_DIR/populated_fixture.db"
 FIXTURE_SUMMARY="$DRILL_DIR/fixture_summary.json"
 REPORT_JSON="$DRILL_DIR/migration_report.json"
 FERRUMD_LOG="$DRILL_DIR/ferrumd_pg_migration.log"
+MIGRATE_LOG="$DRILL_DIR/ferrum_migrate_stderr.log"
+PYTHON_LOG="$DRILL_DIR/report_check_stderr.log"
 
 CORE_TABLES=(
     intents
@@ -207,13 +209,30 @@ echo "Running SQLite -> PostgreSQL migration"
 echo "========================================"
 echo ""
 
+# Capture stderr and guard the exit code: a migrate failure must produce a
+# diagnostic tail, not a silent set -e abort.
+MIGRATE_RC=0
 "$FERRUM_MIGRATE" \
     --from "sqlite://$FIXTURE_DB" \
     --to "$PG_DSN" \
     --apply \
-    --json > "$REPORT_JSON"
+    --json > "$REPORT_JSON" 2> "$MIGRATE_LOG" || MIGRATE_RC=$?
 
-python3 - "$REPORT_JSON" <<'PY'
+if [[ "$MIGRATE_RC" -ne 0 ]]; then
+    fail "ferrum-migrate exited with rc=${MIGRATE_RC} (report: $REPORT_JSON, stderr: $MIGRATE_LOG)"
+    if [[ -s "$MIGRATE_LOG" ]]; then
+        echo "[INFO] Last 20 lines of ferrum-migrate stderr:"
+        tail -n 20 "$MIGRATE_LOG" || true
+    fi
+    if [[ -s "$REPORT_JSON" ]]; then
+        echo "[INFO] Last 20 lines of migration report JSON:"
+        tail -n 20 "$REPORT_JSON" || true
+    fi
+    exit 1
+fi
+
+PYTHON_RC=0
+python3 - "$REPORT_JSON" 2> "$PYTHON_LOG" <<'PY' || PYTHON_RC=$?
 import json
 import sys
 
@@ -241,6 +260,24 @@ for table in tables:
         f"count_match={table['count_match']} hash_match={table['hash_match']}"
     )
 PY
+
+if [[ "$PYTHON_RC" -ne 0 ]]; then
+    fail "migration report check failed (rc=${PYTHON_RC}; report: $REPORT_JSON, stderr: $PYTHON_LOG)"
+    if [[ -s "$PYTHON_LOG" ]]; then
+        echo "[INFO] Last 20 lines of report check stderr:"
+        tail -n 20 "$PYTHON_LOG" || true
+    fi
+    if [[ -s "$MIGRATE_LOG" ]]; then
+        echo "[INFO] Last 20 lines of ferrum-migrate stderr:"
+        tail -n 20 "$MIGRATE_LOG" || true
+    fi
+    if [[ -s "$REPORT_JSON" ]]; then
+        echo "[INFO] Last 20 lines of migration report JSON:"
+        tail -n 20 "$REPORT_JSON" || true
+    fi
+    exit 1
+fi
+
 pass "ferrum-migrate apply completed with 10/10 count+hash matches"
 
 echo ""

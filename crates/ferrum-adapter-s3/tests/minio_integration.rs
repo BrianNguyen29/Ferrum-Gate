@@ -512,6 +512,7 @@ mod worm_minio_tests {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn delete_version(
         client: &Client,
         bucket: &str,

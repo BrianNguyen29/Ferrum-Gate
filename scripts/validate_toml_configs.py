@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate TOML configs: parseable and basic safety checks."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIRS = [ROOT / "configs", ROOT / "configs" / "examples"]
+ADR_DOC_DIR = ROOT / "docs" / "adr"
 
 # Files that should never have insecure defaults
 PROD_LIKE_PATTERNS = ["*.prod.toml", "*nonprod*.toml", "*production*.toml"]
@@ -20,7 +22,11 @@ PROD_REQUIRED_CONTROLS = [
     "lifecycle_reconciliation_enabled",
     "approval_timeout_enabled",
     "audit_fail_closed",
+    "ha_reconciler_enabled",
 ]
+
+# Matches ADR references such as "ADR-50", "ADR-003" in comment lines.
+ADR_REF_RE = re.compile(r"\bADR-(\d+)\b")
 
 
 def find_toml_files() -> list[Path]:
@@ -121,6 +127,35 @@ def check_safety(path: Path) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def check_dangling_refs(path: Path) -> list[str]:
+    """Report ADR references in config comments that have no matching docs/adr file.
+
+    ADR docs are named `NNN-title.md` with a zero-padded 3-digit number, so an
+    `ADR-50` reference resolves to `docs/adr/050-*.md`. Any reference that does
+    not resolve is a dangling docs link and should be fixed or removed.
+    """
+    errors: list[str] = []
+    if not ADR_DOC_DIR.exists():
+        return errors
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        errors.append(f"{_rel(path)}: cannot read file: {exc}")
+        return errors
+
+    adr_files = {f.name[:3] for f in ADR_DOC_DIR.glob("*.md")}
+    for lineno, line in enumerate(lines, start=1):
+        for match in ADR_REF_RE.finditer(line):
+            ref = int(match.group(1))
+            if f"{ref:03d}" not in adr_files:
+                errors.append(
+                    f"{_rel(path)}:{lineno}: dangling ADR reference 'ADR-{ref}' "
+                    f"(no docs/adr/{ref:03d}-*.md exists)"
+                )
+    return errors
+
+
 def main() -> int:
     files = find_toml_files()
     if not files:
@@ -134,6 +169,7 @@ def main() -> int:
         safety_errors, safety_warnings = check_safety(path)
         all_errors.extend(safety_errors)
         all_warnings.extend(safety_warnings)
+        all_errors.extend(check_dangling_refs(path))
 
     if all_warnings:
         print("TOML VALIDATION WARNINGS")

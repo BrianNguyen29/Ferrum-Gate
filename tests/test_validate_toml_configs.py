@@ -98,6 +98,7 @@ class TestCheckSafety(unittest.TestCase):
                 'lifecycle_reconciliation_enabled = false\n'
                 'approval_timeout_enabled = false\n'
                 'audit_fail_closed = false\n'
+                'ha_reconciler_enabled = false\n'
             )
             errors, _warnings = vtc.check_safety(path)
             for control in vtc.PROD_REQUIRED_CONTROLS:
@@ -115,6 +116,7 @@ class TestCheckSafety(unittest.TestCase):
                 'lifecycle_reconciliation_enabled = true\n'
                 'approval_timeout_enabled = true\n'
                 'audit_fail_closed = true\n'
+                'ha_reconciler_enabled = true\n'
             )
             errors, warnings = vtc.check_safety(path)
             self.assertEqual(errors, [])
@@ -148,6 +150,38 @@ class TestCheckSafety(unittest.TestCase):
             errors, warnings = vtc.check_safety(path)
             self.assertEqual(errors, [])
             self.assertEqual(warnings, [])
+
+
+class TestCheckDanglingRefs(unittest.TestCase):
+    def test_valid_adr_ref_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# PostgreSQL split per ADR-003.\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertEqual(errors, [])
+
+    def test_dangling_adr_ref_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# MySQL is NOT implemented. See ADR-50.\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertTrue(
+                any("ADR-50" in e and "no docs/adr/050-" in e for e in errors)
+            )
+
+    def test_zero_padded_adr_ref_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# S3 feature gate per ADR-004.\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertEqual(errors, [])
+
+    def test_no_adr_refs_passes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.toml"
+            path.write_text("# no references here\n[server]\n")
+            errors = vtc.check_dangling_refs(path)
+            self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

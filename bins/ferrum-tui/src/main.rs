@@ -20,7 +20,8 @@ mod app;
 mod client;
 
 use app::{
-    App, ApprovalsView, AuditVerifyView, MetricsView, ProbeResult, ProbeStatus, SloWindowView, Tab,
+    App, ApprovalsView, AuditVerifyView, MetricsView, Mode, ProbeResult, ProbeStatus,
+    SloWindowView, Tab, Theme, ThemeMode,
 };
 use client::{ApprovalRequest, Client};
 
@@ -46,6 +47,12 @@ struct Args {
     #[arg(long)]
     dry_run: bool,
 
+    /// Color theme: `ansi` (default) or `rgb` (truecolor palette shared with
+    /// the site and SVG assets).
+    /// Env: FERRUM_TUI_THEME
+    #[arg(long)]
+    theme: Option<String>,
+
     /// Directory containing slo-window-state.json.
     /// Env: FERRUM_TUI_WINDOW_DIR
     #[arg(long)]
@@ -63,6 +70,17 @@ fn resolve_env(primary: &str, fallback: &str) -> Option<String> {
         .or_else(|| std::env::var(fallback).ok())
 }
 
+/// Resolve the theme with CLI precedence over the environment; ANSI (the
+/// 8/16-color fallback) is the default when neither is set.
+fn resolve_theme_mode(cli: Option<&str>, env: Option<&str>) -> Result<ThemeMode> {
+    match cli.or(env) {
+        Some(raw) => raw
+            .parse::<ThemeMode>()
+            .map_err(|e| anyhow::anyhow!("invalid theme `{raw}`: {e}")),
+        None => Ok(ThemeMode::Ansi),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LocalEvidence {
     slo: Option<SloWindowState>,
@@ -70,13 +88,28 @@ struct LocalEvidence {
     snapshot_timestamp: Option<String>,
 }
 
+/// One page of the approvals list as delivered to the UI. `has_more` is
+/// derived client-side by over-fetching one row.
+struct ApprovalsPage {
+    page: usize,
+    items: Vec<ApprovalRequest>,
+    has_more: bool,
+}
+
 enum AppEvent {
     Key(event::KeyEvent),
     Probes(Vec<ProbeResult>),
-    Approvals(Result<Vec<ApprovalRequest>, String>),
+    Approvals(Result<ApprovalsPage, String>),
     Metrics(Result<String, String>),
     AuditVerify(Result<client::AuditVerifyResult, String>),
     LocalEvidence(Result<LocalEvidence, String>),
+}
+
+/// Signals to the refresh task. `Now` re-fetches the current approvals page;
+/// `Page` switches the approvals page before the next fetch.
+enum RefreshSignal {
+    Now,
+    Page(usize),
 }
 
 #[tokio::main]
@@ -106,6 +139,11 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("FERRUM_TUI_EVIDENCE_DIR").ok())
         .unwrap_or_else(|| ".".to_string());
 
+    let theme_mode = resolve_theme_mode(
+        args.theme.as_deref(),
+        std::env::var("FERRUM_TUI_THEME").ok().as_deref(),
+    )?;
+
     // Setup terminal
     if !io::stdout().is_terminal() {
         anyhow::bail!(
@@ -118,20 +156,14 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(
-        &mut terminal,
-        client,
-        base_url,
-        token_present,
-        args.dry_run,
-        interval_secs,
-        window_dir,
-        evidence_dir,
-    )
-    .await;
+    let mut app = App::new(base_url, token_present, args.dry_run, interval_secs);
+    app.theme = Theme::for_mode(theme_mode);
+
+    let result = run_app(&mut terminal, client, app, window_dir, evidence_dir).await;
 
     // Restore terminal
     disable_raw_mode()?;
+    terminal.clear()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
@@ -145,17 +177,21 @@ async fn main() -> Result<()> {
 async fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     client: Client,
-    base_url: String,
-    token_present: bool,
-    dry_run: bool,
-    interval_secs: u64,
+    mut app: App,
     window_dir: String,
     evidence_dir: String,
 ) -> Result<()>
 where
     B::Error: std::error::Error + Send + Sync + 'static,
 {
+    let dry_run = app.dry_run;
+    let interval_secs = app.refresh_interval_secs;
+
     let (tx, mut rx) = mpsc::channel::<AppEvent>(32);
+
+    // Refresh signal from the `r` key and the approvals `n`/`p` paging keys
+    // to the refresh task.
+    let (force_tx, mut force_rx) = mpsc::channel::<RefreshSignal>(1);
 
     // Spawn refresh task
     let refresh_tx = tx.clone();
@@ -165,6 +201,7 @@ where
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         interval.tick().await; // first tick immediately
+        let mut approvals_page: usize = 0;
 
         loop {
             let results = if dry_run {
@@ -231,29 +268,37 @@ where
             };
 
             let approvals = if dry_run {
-                Ok(vec![
-                    ApprovalRequest {
-                        approval_id: "dry-run-001".to_string(),
-                        proposal_id: "dry-run-prop-001".to_string(),
-                        requested_by: serde_json::json!("dry-run-user"),
-                        reason: "Synthetic approval for dry-run mode".to_string(),
-                        state: "pending".to_string(),
-                        created_at: "2024-01-01T00:00:00Z".to_string(),
-                        expires_at: "2024-01-02T00:00:00Z".to_string(),
-                    },
-                    ApprovalRequest {
-                        approval_id: "dry-run-002".to_string(),
-                        proposal_id: "dry-run-prop-002".to_string(),
-                        requested_by: serde_json::json!({"user": "dry-run-admin", "role": "operator"}),
-                        reason: "Another synthetic approval".to_string(),
-                        state: "approved".to_string(),
-                        created_at: "2024-01-01T12:00:00Z".to_string(),
-                        expires_at: "2024-01-02T12:00:00Z".to_string(),
-                    },
-                ])
+                Ok(ApprovalsPage {
+                    page: 0,
+                    items: vec![
+                        ApprovalRequest {
+                            approval_id: "dry-run-001".to_string(),
+                            proposal_id: "dry-run-prop-001".to_string(),
+                            requested_by: serde_json::json!("dry-run-user"),
+                            reason: "Synthetic approval for dry-run mode".to_string(),
+                            state: "pending".to_string(),
+                            created_at: "2024-01-01T00:00:00Z".to_string(),
+                            expires_at: "2024-01-02T00:00:00Z".to_string(),
+                        },
+                        ApprovalRequest {
+                            approval_id: "dry-run-002".to_string(),
+                            proposal_id: "dry-run-prop-002".to_string(),
+                            requested_by: serde_json::json!({"user": "dry-run-admin", "role": "operator"}),
+                            reason: "Another synthetic approval".to_string(),
+                            state: "approved".to_string(),
+                            created_at: "2024-01-01T12:00:00Z".to_string(),
+                            expires_at: "2024-01-02T12:00:00Z".to_string(),
+                        },
+                    ],
+                    has_more: false,
+                })
             } else {
-                match refresh_client.list_approvals().await {
-                    Ok(resp) => Ok(resp.items),
+                match refresh_client.list_approvals_page(approvals_page).await {
+                    Ok((items, has_more)) => Ok(ApprovalsPage {
+                        page: approvals_page,
+                        items,
+                        has_more,
+                    }),
                     Err(e) => Err(format!("{:#}", e)),
                 }
             };
@@ -266,6 +311,10 @@ store_health 1
 # TYPE http_requests_total counter
 http_requests_total{method="GET",path="/v1/healthz"} 42
 http_requests_total{method="GET",path="/v1/readyz"} 17
+ferrumgate_write_queue_depth 0
+ferrumgate_store_pg_pool_size 2
+ferrumgate_store_pg_pool_idle 2
+ferrumgate_store_pg_pool_max 10
 "#;
                 Ok(synthetic.to_string())
             } else {
@@ -346,7 +395,18 @@ http_requests_total{method="GET",path="/v1/readyz"} 17
                 break;
             }
 
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                signal = force_rx.recv() => {
+                    match signal {
+                        // Page switch: the next fetch uses the requested page.
+                        Some(RefreshSignal::Page(page)) => approvals_page = page,
+                        Some(RefreshSignal::Now) | None => {}
+                    }
+                    // Forced refresh: restart the auto-refresh interval from now.
+                    interval.reset();
+                }
+            }
         }
     });
 
@@ -364,8 +424,6 @@ http_requests_total{method="GET",path="/v1/readyz"} 17
         }
     });
 
-    let mut app = App::new(base_url, token_present, dry_run, interval_secs);
-
     loop {
         terminal.draw(|f| app::draw(f, &app))?;
 
@@ -373,30 +431,100 @@ http_requests_total{method="GET",path="/v1/readyz"} 17
             match event {
                 AppEvent::Key(key) => {
                     if key.kind == KeyEventKind::Press {
-                        match key.code {
-                            KeyCode::Char('q') => {
-                                app.quit = true;
-                            }
-                            KeyCode::Char('r') => {
-                                app.message = "Refreshing…".to_string();
-                            }
-                            KeyCode::Char('a') => {
-                                app.current_tab = Tab::Approvals;
-                            }
-                            KeyCode::Char('?') | KeyCode::Char('h') => {
-                                app.help_visible = !app.help_visible;
-                            }
-                            KeyCode::Tab | KeyCode::Right => {
-                                app.current_tab = app.current_tab.next();
-                            }
-                            KeyCode::BackTab | KeyCode::Left => {
-                                app.current_tab = app.current_tab.prev();
-                            }
-                            KeyCode::Char('1') => app.current_tab = Tab::Overview,
-                            KeyCode::Char('2') => app.current_tab = Tab::Approvals,
-                            KeyCode::Char('3') => app.current_tab = Tab::Metrics,
-                            KeyCode::Char('4') => app.current_tab = Tab::Help,
-                            _ => {}
+                        match app.mode {
+                            Mode::Detail => match key.code {
+                                KeyCode::Esc | KeyCode::Char('q') => {
+                                    app.mode = Mode::Normal;
+                                }
+                                _ => {}
+                            },
+                            Mode::Filter => match key.code {
+                                KeyCode::Esc => {
+                                    app.metrics_filter.clear();
+                                    app.mode = Mode::Normal;
+                                }
+                                KeyCode::Enter => {
+                                    app.mode = Mode::Normal;
+                                }
+                                KeyCode::Backspace => {
+                                    app.metrics_filter.pop();
+                                }
+                                KeyCode::Char(c) => {
+                                    app.metrics_filter.push(c);
+                                }
+                                _ => {}
+                            },
+                            Mode::Normal => match key.code {
+                                KeyCode::Char('q') => {
+                                    app.quit = true;
+                                }
+                                KeyCode::Char('r') => {
+                                    // Trigger an immediate refresh; a full channel
+                                    // means a forced refresh is already pending.
+                                    let _ = force_tx.try_send(RefreshSignal::Now);
+                                    app.message = "Refreshing…".to_string();
+                                }
+                                KeyCode::Char('j') => match app.current_tab {
+                                    Tab::Approvals => app.move_approvals_selection(1),
+                                    Tab::Metrics => app.move_metrics_selection(1),
+                                    _ => {}
+                                },
+                                KeyCode::Char('k') => match app.current_tab {
+                                    Tab::Approvals => app.move_approvals_selection(-1),
+                                    Tab::Metrics => app.move_metrics_selection(-1),
+                                    _ => {}
+                                },
+                                KeyCode::Enter if app.current_tab == Tab::Approvals => {
+                                    if app.selected_approval().is_some() {
+                                        app.mode = Mode::Detail;
+                                    } else {
+                                        app.message =
+                                            "Select an approval row first (j/k).".to_string();
+                                    }
+                                }
+                                KeyCode::Char('n') if app.current_tab == Tab::Approvals => {
+                                    if app.approvals_has_more {
+                                        let _ = force_tx
+                                            .try_send(RefreshSignal::Page(app.approvals_page + 1));
+                                        app.message = "Loading next approvals page…".to_string();
+                                    } else {
+                                        app.message =
+                                            "No further approvals page reported by the server."
+                                                .to_string();
+                                    }
+                                }
+                                KeyCode::Char('p') if app.current_tab == Tab::Approvals => {
+                                    if app.approvals_page > 0 {
+                                        let _ = force_tx
+                                            .try_send(RefreshSignal::Page(app.approvals_page - 1));
+                                        app.message =
+                                            "Loading previous approvals page…".to_string();
+                                    } else {
+                                        app.message =
+                                            "Already on the first approvals page.".to_string();
+                                    }
+                                }
+                                KeyCode::Char('/') if app.current_tab == Tab::Metrics => {
+                                    app.mode = Mode::Filter;
+                                }
+                                KeyCode::Char('a') => {
+                                    app.current_tab = Tab::Approvals;
+                                }
+                                KeyCode::Char('?') | KeyCode::Char('h') => {
+                                    app.help_visible = !app.help_visible;
+                                }
+                                KeyCode::Tab | KeyCode::Right => {
+                                    app.current_tab = app.current_tab.next();
+                                }
+                                KeyCode::BackTab | KeyCode::Left => {
+                                    app.current_tab = app.current_tab.prev();
+                                }
+                                KeyCode::Char('1') => app.current_tab = Tab::Overview,
+                                KeyCode::Char('2') => app.current_tab = Tab::Approvals,
+                                KeyCode::Char('3') => app.current_tab = Tab::Metrics,
+                                KeyCode::Char('4') => app.current_tab = Tab::Help,
+                                _ => {}
+                            },
                         }
                     }
                 }
@@ -404,25 +532,37 @@ http_requests_total{method="GET",path="/v1/readyz"} 17
                     app.probes = probes;
                     app.last_refresh = Some(Local::now().format("%H:%M:%S").to_string());
                     app.compute_readiness_state();
+                    app.record_probe_latency_sample();
                     if app.message == "Refreshing…" {
                         app.message.clear();
                     }
                 }
                 AppEvent::Approvals(result) => {
-                    app.approvals = match result {
-                        Ok(items) => ApprovalsView::Loaded(items),
-                        Err(e) => ApprovalsView::Error(e),
-                    };
+                    match result {
+                        Ok(page) => {
+                            app.approvals = ApprovalsView::Loaded(page.items);
+                            app.approvals_page = page.page;
+                            app.approvals_has_more = page.has_more;
+                        }
+                        Err(e) => {
+                            app.approvals = ApprovalsView::Error(e);
+                            app.approvals_has_more = false;
+                        }
+                    }
                     app.compute_readiness_state();
                 }
                 AppEvent::Metrics(result) => {
+                    match &result {
+                        Ok(text) => app.update_metric_gauges(Some(text)),
+                        Err(_) => app.update_metric_gauges(None),
+                    };
                     app.metrics = match result {
                         Ok(text) => {
-                            let pairs = parse_metrics(&text);
+                            let (pairs, total) = parse_metrics(&text);
                             if pairs.is_empty() {
                                 MetricsView::Skipped
                             } else {
-                                MetricsView::Loaded(pairs)
+                                MetricsView::Loaded(pairs, total)
                             }
                         }
                         Err(e) => MetricsView::Error(e),
@@ -473,7 +613,10 @@ http_requests_total{method="GET",path="/v1/readyz"} 17
     Ok(())
 }
 
-fn parse_metrics(text: &str) -> Vec<(String, String)> {
+/// Parse a curated subset of Prometheus metrics for display.
+/// Returns the display rows and the total number of matching metrics found
+/// (the rows are capped so the UI stays readable).
+fn parse_metrics(text: &str) -> (Vec<(String, String)>, usize) {
     let mut pairs = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
@@ -510,9 +653,10 @@ fn parse_metrics(text: &str) -> Vec<(String, String)> {
             pairs.push((name.to_string(), value.to_string()));
         }
     }
+    let total = pairs.len();
     // Cap to avoid overwhelming the UI
     pairs.truncate(30);
-    pairs
+    (pairs, total)
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -599,5 +743,44 @@ mod tests {
         let json = r#"{"snapshot_timestamp":"2026-05-29T12:00:00Z"}"#;
         let meta: EvidenceSnapshotMeta = serde_json::from_str(json).unwrap();
         assert_eq!(meta.snapshot_timestamp, "2026-05-29T12:00:00Z");
+    }
+
+    #[test]
+    fn test_parse_metrics_caps_rows_and_reports_total() {
+        let mut text = String::new();
+        for i in 0..40 {
+            text.push_str(&format!("http_requests_total{{id=\"{}\"}} {}\n", i, i));
+        }
+        text.push_str("not_a_recognised_metric 1\n");
+        let (pairs, total) = parse_metrics(&text);
+        assert_eq!(pairs.len(), 30); // display cap
+        assert_eq!(total, 40); // full match count reported for the title
+    }
+
+    #[test]
+    fn test_parse_metrics_empty_input() {
+        let (pairs, total) = parse_metrics("");
+        assert!(pairs.is_empty());
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_resolve_theme_mode_cli_wins_and_defaults_to_ansi() {
+        assert_eq!(resolve_theme_mode(None, None).unwrap(), ThemeMode::Ansi);
+        assert_eq!(
+            resolve_theme_mode(Some("rgb"), None).unwrap(),
+            ThemeMode::Rgb
+        );
+        assert_eq!(
+            resolve_theme_mode(None, Some("rgb")).unwrap(),
+            ThemeMode::Rgb
+        );
+        // The CLI flag overrides the environment.
+        assert_eq!(
+            resolve_theme_mode(Some("ansi"), Some("rgb")).unwrap(),
+            ThemeMode::Ansi
+        );
+        assert!(resolve_theme_mode(Some("bogus"), Some("rgb")).is_err());
+        assert!(resolve_theme_mode(None, Some("bogus")).is_err());
     }
 }

@@ -6,107 +6,526 @@
     "tags": ["ferrumgate", "overview"],
     "timezone": "utc",
     "schemaVersion": 36,
+    "version": 1,
     "refresh": "30s",
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "name": "Governance errors",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "enable": true,
+          "expr": "sum(increase(ferrumgate_governance_errors_total[2m])) > 0",
+          "iconColor": "red",
+          "titleFormat": "Governance errors"
+        },
+        {
+          "name": "Approval timeouts",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "enable": true,
+          "expr": "sum(increase(ferrumgate_approval_timeouts_total[2m])) > 0",
+          "iconColor": "orange",
+          "titleFormat": "Approval timeouts"
+        },
+        {
+          "name": "Quarantine timeouts",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "enable": true,
+          "expr": "sum(increase(ferrumgate_quarantine_timeouts_total[2m])) > 0",
+          "iconColor": "yellow",
+          "titleFormat": "Quarantine timeouts"
+        }
+      ]
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "query": "prometheus",
+          "current": {},
+          "hide": 0,
+          "label": "Prometheus",
+          "multi": false
+        },
+        {
+          "name": "instance",
+          "type": "query",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "query": "label_values(ferrumgate_http_requests_total, instance)",
+          "refresh": 1,
+          "hide": 0,
+          "label": "Instance",
+          "multi": false,
+          "includeAll": true
+        },
+        {
+          "name": "lineage_json",
+          "label": "Lineage JSON datasource",
+          "type": "datasource",
+          "query": "yesoreyeram-infinity-datasource",
+          "current": {},
+          "hide": 0,
+          "multi": false,
+          "includeAll": false,
+          "description": "JSON-capable datasource (e.g. the Grafana Infinity plugin) wired by the operator to the documented lineage APIs; see the lineage DAG panel description."
+        },
+        {
+          "name": "lineage_execution_id",
+          "label": "Lineage execution_id",
+          "type": "textbox",
+          "query": "",
+          "current": { "text": "", "value": "", "selected": false },
+          "hide": 0,
+          "multi": false,
+          "description": "Seed execution_id for the lineage DAG panel; passed to GET /v1/provenance/lineage/{execution_id}."
+        }
+      ]
+    },
     "panels": [
       {
         "id": 1,
         "title": "HTTP Request Rate",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "sum(rate(ferrumgate_http_requests_total[5m]))",
+            "expr": "sum(rate(ferrumgate_http_requests_total{instance=~\"$instance\"}[5m]))",
             "legendFormat": "req/s"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
       },
       {
         "id": 2,
         "title": "HTTP Error Rate",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "sum(rate(ferrumgate_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(ferrumgate_http_requests_total[5m]))",
+            "expr": "sum(rate(ferrumgate_http_requests_total{instance=~\"$instance\", status=~\"5..\"}[5m])) / sum(rate(ferrumgate_http_requests_total{instance=~\"$instance\"}[5m]))",
             "legendFormat": "error ratio"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
       },
       {
         "id": 3,
         "title": "P95 Latency",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds[5m])) by (le))",
+            "expr": "histogram_quantile(0.95, sum(rate(ferrumgate_request_duration_seconds{instance=~\"$instance\"}[5m])) by (le))",
             "legendFormat": "p95"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
       },
       {
         "id": 4,
         "title": "PG Pool Size / Idle",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "ferrumgate_store_pg_pool_size",
+            "expr": "ferrumgate_store_pg_pool_size{instance=~\"$instance\"}",
             "legendFormat": "pool size"
           },
           {
-            "expr": "ferrumgate_store_pg_pool_idle",
+            "expr": "ferrumgate_store_pg_pool_idle{instance=~\"$instance\"}",
             "legendFormat": "pool idle"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
       },
       {
         "id": 5,
         "title": "PG Acquire Timeouts",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "rate(ferrumgate_store_pg_acquire_timeouts_total[5m])",
+            "expr": "rate(ferrumgate_store_pg_acquire_timeouts_total{instance=~\"$instance\"}[5m])",
             "legendFormat": "timeouts/s"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
       },
       {
         "id": 6,
         "title": "Health Check Status",
         "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "up{job=\"ferrumgate\"}",
+            "expr": "up{job=\"ferrumgate\", instance=~\"$instance\"}",
             "legendFormat": "up"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bool",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1 }
+              ]
+            }
+          }
+        },
+        "options": { "graphMode": "area", "colorMode": "background" },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
       },
       {
         "id": 7,
         "title": "Active Connections",
         "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "ferrumgate_store_pg_pool_max - ferrumgate_store_pg_pool_idle",
+            "expr": "ferrumgate_store_pg_pool_max{instance=~\"$instance\"} - ferrumgate_store_pg_pool_idle{instance=~\"$instance\"}",
             "legendFormat": "active conns"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
       },
       {
         "id": 8,
         "title": "PG Pool Saturation %",
         "type": "gauge",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "targets": [
           {
-            "expr": "(1 - (ferrumgate_store_pg_pool_idle / ferrumgate_store_pg_pool_max)) * 100",
+            "expr": "(1 - (ferrumgate_store_pg_pool_idle{instance=~\"$instance\"} / ferrumgate_store_pg_pool_max{instance=~\"$instance\"})) * 100",
             "legendFormat": "saturation %"
           }
         ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          }
+        },
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+      },
+      {
+        "id": 9,
+        "title": "Intents Compiled",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=\"/v1/intents/compile\"}[5m]))",
+            "legendFormat": "intents/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second for route /v1/intents/compile over the trailing 5 minutes. Independent per-route success rate, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
+      },
+      {
+        "id": 10,
+        "title": "Capabilities Minted",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=\"/v1/capabilities/mint\"}[5m]))",
+            "legendFormat": "minted/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second for route /v1/capabilities/mint over the trailing 5 minutes. Independent per-route success rate, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 }
+      },
+      {
+        "id": 11,
+        "title": "Proposals Evaluated",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=\"/v1/proposals/{proposal_id}/evaluate\"}[5m]))",
+            "legendFormat": "evaluated/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second for route /v1/proposals/{proposal_id}/evaluate over the trailing 5 minutes. Independent per-route success rate, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 }
+      },
+      {
+        "id": 12,
+        "title": "Executions",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "sum(rate(ferrumgate_governance_success_total{instance=~\"$instance\", route=~\"/v1/executions/.*\"}[5m]))",
+            "legendFormat": "executions/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "description": "Governance Throughput (5m rates): successful requests per second summed across /v1/executions/* routes over the trailing 5 minutes. Independent per-route success rates, not a tracked per-request chain.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 }
+      },
+      {
+        "id": 13,
+        "title": "HA Reconciler Counters (5m rate)",
+        "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "rate(ferrumgate_ha_reconciler_canceled_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "canceled/s"
+          },
+          {
+            "expr": "rate(ferrumgate_ha_reconciler_recovery_required_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "recovery required/s"
+          },
+          {
+            "expr": "rate(ferrumgate_ha_reconciler_errors_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "errors/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
+        "description": "Per-second rates over the trailing 5m of HA reconciler counters: stale pre-side-effect executions transitioned to Canceled, stale paired Running+Prepared executions transitioned to RecoveryRequired, and reconciler errors. Reconciliation actions occur only when HA reconciliation is enabled (FERRUMD_HA_RECONCILER_ENABLED).",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 }
+      },
+      {
+        "id": 14,
+        "title": "Lifecycle Outbox Operator Review",
+        "type": "gauge",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "ferrumgate_lifecycle_outbox_operator_review{instance=~\"$instance\"}",
+            "legendFormat": "records"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]
+            }
+          }
+        },
+        "description": "Current number of lifecycle outbox records requiring operator review because automatic provenance reconciliation could not complete. Mirrors the FerrumGateProvenanceGaps alert.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 }
+      },
+      {
+        "id": 15,
+        "title": "WORM Sink Export Failures",
+        "type": "timeseries",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "rate(ferrumgate_audit_worm_sink_failures_total{instance=~\"$instance\"}[5m])",
+            "legendFormat": "failures/s"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "color": { "mode": "palette-classic" },
+            "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 }
+          }
+        },
+        "description": "Failed WORM sink export attempts per second over the trailing 5m. Counters are emitted even when the worm-sink feature is disabled and remain 0 while the sink is disabled or idle. WORM archive replica is best-effort. The local audit bundle remains the durable record. This panel does not prove compliance immutability.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 }
+      },
+      {
+        "id": 16,
+        "title": "WORM Sink Last Successful Export (seconds ago)",
+        "type": "stat",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "targets": [
+          {
+            "expr": "time() - ferrumgate_audit_worm_sink_last_success_timestamp_seconds{instance=~\"$instance\"}",
+            "legendFormat": "seconds ago"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "description": "Seconds since the last successful WORM sink export. The gauge is 0 until the first successful export, so a very large value means no successful export has been recorded yet. Counters are emitted even when the worm-sink feature is disabled. WORM archive replica is best-effort. The local audit bundle remains the durable record. This panel does not prove compliance immutability.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 }
+      },
+      {
+        "id": 17,
+        "title": "Provenance Lineage DAG (per execution)",
+        "type": "nodeGraph",
+        "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${lineage_json}" },
+        "description": "TEMPLATE — renders the provenance lineage DAG for one execution from the documented read-only lineage APIs (GET /v1/provenance/lineage/{execution_id} and POST /v1/provenance/lineage; see openapi/ferrumgate-control-api.v1.yaml). FerrumGate emits no tracing or topology metrics, so this panel is not backed by /v1/metrics and stays empty until an operator wires a JSON-capable datasource (e.g. the Grafana Infinity plugin) to a ferrumd gateway with bearer auth. Edge colors map the ProvenanceEdgeType values declared in crates/ferrum-proto/src/provenance.rs (DerivedFrom, AuthorizedBy, ApprovedBy, TaintedBy, UsesManifest, EvaluatedByPolicy, Caused, Compensates, Verifies, References); the mapping is static configuration and is unverified until the datasource is wired.",
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "edge_type" },
+              "properties": [
+                {
+                  "id": "mappings",
+                  "value": [
+                    {
+                      "type": "value",
+                      "match": "value",
+                      "options": {
+                        "DerivedFrom": { "color": "light-blue", "index": 0 },
+                        "AuthorizedBy": { "color": "green", "index": 1 },
+                        "ApprovedBy": { "color": "dark-green", "index": 2 },
+                        "TaintedBy": { "color": "red", "index": 3 },
+                        "UsesManifest": { "color": "light-yellow", "index": 4 },
+                        "EvaluatedByPolicy": { "color": "blue", "index": 5 },
+                        "Caused": { "color": "purple", "index": 6 },
+                        "Compensates": { "color": "orange", "index": 7 },
+                        "Verifies": { "color": "semi-dark-green", "index": 8 },
+                        "References": { "color": "semi-dark-purple", "index": 9 }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "nodes": { "mainStatUnit": "", "secondaryStatUnit": "" },
+          "edges": { "mainStatUnit": "", "secondaryStatUnit": "" }
+        },
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 64 }
+      },
+      {
+        "id": 18,
+        "title": "SLO Error-Budget Burn Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate5m / 0.001",
+            "legendFormat": "5m burn rate"
+          },
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate30m / 0.001",
+            "legendFormat": "30m burn rate"
+          },
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate1h / 0.001",
+            "legendFormat": "1h burn rate"
+          },
+          {
+            "expr": "ferrumgate:http_5xx_error_ratio:rate6h / 0.001",
+            "legendFormat": "6h burn rate"
+          }
+        ],
+        "description": "Burn rate of the 30d error budget at the reference 99.9% non-5xx target (budget = 0.1%): 1.0 consumes the budget at exactly the sustainable rate. Alert thresholds: fast burn > 14.4x (FerrumGateSloFastBurn), slow burn > 6x (FerrumGateSloSlowBurn). Requires the ferrumgate_slo recording rules in ferrumgate-alerts.yaml. FerrumGate has no committed SLO target; this is a computed reference, not a claim of SLO attainment.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 }
+      },
+      {
+        "id": 19,
+        "title": "Error Budget Remaining (30d, reference target 99.9%)",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "ferrumgate:slo_error_budget_remaining:ratio",
+            "legendFormat": "budget remaining"
+          }
+        ],
+        "description": "Fraction of the 30d error budget remaining at the reference 99.9% non-5xx target (budget = 0.1%): 1 = untouched, 0 = exhausted, negative = overdrawn (observed 5xx ratio above the target). Requires the ferrumgate_slo recording rules in ferrumgate-alerts.yaml and >= 30d of scrape retention. FerrumGate has no committed SLO target; this is a computed reference, not a claim of SLO attainment.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 }
       }
     ]
   }

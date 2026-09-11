@@ -144,3 +144,12 @@ The following controls are proposed but not yet implemented. See the referenced 
 
 <a id="ferrumgate-high-memory"></a>
 - **FerrumGateHighMemory** — instance memory above 85% for 10m. Check store cache and queue growth; see [§2 Metrics checks](#2-metrics-checks).
+
+<a id="ferrumgate-slo-fast-burn"></a>
+- **FerrumGateSloFastBurn** — 5xx error ratio burning the reference 99.9% error budget above 14.4x on both the 5m and 1h windows (~2% of the 30d budget consumed per hour). See [§2 Metrics checks](#2-metrics-checks); correlate 5xx by route and address the failing routes. The 99.9% target is a reference value from `docs/guides/slo-sla.md`, not a committed SLO.
+
+<a id="ferrumgate-slo-slow-burn"></a>
+- **FerrumGateSloSlowBurn** — 5xx error ratio burning the reference 99.9% error budget above 6x on both the 30m and 6h windows (~5% of the 30d budget consumed per 6h). See [§2 Metrics checks](#2-metrics-checks); investigate trending errors before the budget is exhausted. Reference target, not a committed SLO.
+
+<a id="ferrumgate-slo-budget-low"></a>
+- **FerrumGateSloBudgetLow** — less than 20% of the 30d reference error budget remains (negative means overdrawn). See [§2 Metrics checks](#2-metrics-checks); review error trends and recent change volume. Reference computation, not a committed SLO.
