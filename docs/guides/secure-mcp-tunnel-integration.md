@@ -177,7 +177,7 @@ Expose FerrumGate to the internet:
 tailscale funnel --bg --https 443 localhost:8080
 ```
 
-This creates a public HTTPS endpoint such as `https://node-name.tailnet-name.ts.net`.
+This creates a public HTTPS endpoint such as `https://your-tailnet.ts.net`.
 
 ### 5.4 Tailscale Serve (tailnet-only)
 

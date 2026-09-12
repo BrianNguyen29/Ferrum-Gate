@@ -1,4 +1,4 @@
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/lib.rs
+SF:crates/ferrum-adapter-fs/src/lib.rs
 FNF:107
 FNH:59
 BRF:0
@@ -6,7 +6,7 @@ BRH:0
 LF:606
 LH:358
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/planner.rs
+SF:crates/ferrum-adapter-fs/src/planner.rs
 FNF:9
 FNH:9
 BRF:0
@@ -14,7 +14,7 @@ BRH:0
 LF:66
 LH:66
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/snapshot.rs
+SF:crates/ferrum-adapter-fs/src/snapshot.rs
 FNF:10
 FNH:8
 BRF:0
@@ -22,7 +22,7 @@ BRH:0
 LF:78
 LH:63
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/validation.rs
+SF:crates/ferrum-adapter-fs/src/validation.rs
 FNF:7
 FNH:4
 BRF:0
@@ -30,7 +30,7 @@ BRH:0
 LF:40
 LH:34
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-gcs/src/lib.rs
+SF:crates/ferrum-adapter-gcs/src/lib.rs
 FNF:76
 FNH:67
 BRF:0
@@ -38,7 +38,7 @@ BRH:0
 LF:784
 LH:652
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-gcs/src/planner.rs
+SF:crates/ferrum-adapter-gcs/src/planner.rs
 FNF:13
 FNH:13
 BRF:0
@@ -46,7 +46,7 @@ BRH:0
 LF:113
 LH:113
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-git/src/lib.rs
+SF:crates/ferrum-adapter-git/src/lib.rs
 FNF:116
 FNH:89
 BRF:0
@@ -54,7 +54,7 @@ BRH:0
 LF:441
 LH:286
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-git/src/planner.rs
+SF:crates/ferrum-adapter-git/src/planner.rs
 FNF:13
 FNH:13
 BRF:0
@@ -62,7 +62,7 @@ BRH:0
 LF:112
 LH:112
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-http/src/lib.rs
+SF:crates/ferrum-adapter-http/src/lib.rs
 FNF:94
 FNH:68
 BRF:0
@@ -70,7 +70,7 @@ BRH:0
 LF:975
 LH:671
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-http/src/planner.rs
+SF:crates/ferrum-adapter-http/src/planner.rs
 FNF:9
 FNH:9
 BRF:0
@@ -78,7 +78,7 @@ BRH:0
 LF:65
 LH:65
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-maildraft/src/lib.rs
+SF:crates/ferrum-adapter-maildraft/src/lib.rs
 FNF:152
 FNH:109
 BRF:0
@@ -86,7 +86,7 @@ BRH:0
 LF:831
 LH:707
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-maildraft/src/planner.rs
+SF:crates/ferrum-adapter-maildraft/src/planner.rs
 FNF:11
 FNH:9
 BRF:0
@@ -94,7 +94,7 @@ BRH:0
 LF:67
 LH:65
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-s3/src/lib.rs
+SF:crates/ferrum-adapter-s3/src/lib.rs
 FNF:67
 FNH:59
 BRF:0
@@ -102,7 +102,7 @@ BRH:0
 LF:663
 LH:578
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-s3/src/planner.rs
+SF:crates/ferrum-adapter-s3/src/planner.rs
 FNF:13
 FNH:13
 BRF:0
@@ -110,7 +110,7 @@ BRH:0
 LF:113
 LH:113
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-s3/src/worm.rs
+SF:crates/ferrum-adapter-s3/src/worm.rs
 FNF:26
 FNH:24
 BRF:0
@@ -118,7 +118,7 @@ BRH:0
 LF:217
 LH:200
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-sqlite/src/lib.rs
+SF:crates/ferrum-adapter-sqlite/src/lib.rs
 FNF:137
 FNH:122
 BRF:0
@@ -126,7 +126,7 @@ BRH:0
 LF:1441
 LH:1324
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-sqlite/src/planner.rs
+SF:crates/ferrum-adapter-sqlite/src/planner.rs
 FNF:9
 FNH:9
 BRF:0
@@ -134,7 +134,7 @@ BRH:0
 LF:65
 LH:65
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-audit-bundle/src/lib.rs
+SF:crates/ferrum-audit-bundle/src/lib.rs
 FNF:40
 FNH:34
 BRF:0
@@ -142,7 +142,7 @@ BRH:0
 LF:473
 LH:420
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-cap/src/service.rs
+SF:crates/ferrum-cap/src/service.rs
 FNF:30
 FNH:29
 BRF:0
@@ -150,7 +150,7 @@ BRH:0
 LF:182
 LH:179
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-firewall/src/lib.rs
+SF:crates/ferrum-firewall/src/lib.rs
 FNF:57
 FNH:52
 BRF:0
@@ -158,7 +158,7 @@ BRH:0
 LF:583
 LH:548
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/agents.rs
+SF:crates/ferrum-gateway/src/admin/agents.rs
 FNF:7
 FNH:7
 BRF:0
@@ -166,7 +166,7 @@ BRH:0
 LF:261
 LH:168
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/lifecycle_outbox.rs
+SF:crates/ferrum-gateway/src/admin/lifecycle_outbox.rs
 FNF:10
 FNH:0
 BRF:0
@@ -174,7 +174,7 @@ BRH:0
 LF:166
 LH:0
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/mfa.rs
+SF:crates/ferrum-gateway/src/admin/mfa.rs
 FNF:20
 FNH:20
 BRF:0
@@ -182,7 +182,7 @@ BRH:0
 LF:867
 LH:534
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/tokens.rs
+SF:crates/ferrum-gateway/src/admin/tokens.rs
 FNF:11
 FNH:10
 BRF:0
@@ -190,7 +190,7 @@ BRH:0
 LF:284
 LH:144
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/approval.rs
+SF:crates/ferrum-gateway/src/approval.rs
 FNF:39
 FNH:10
 BRF:0
@@ -198,7 +198,7 @@ BRH:0
 LF:591
 LH:272
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/audit.rs
+SF:crates/ferrum-gateway/src/audit.rs
 FNF:65
 FNH:37
 BRF:0
@@ -206,7 +206,7 @@ BRH:0
 LF:928
 LH:517
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/auth.rs
+SF:crates/ferrum-gateway/src/auth.rs
 FNF:44
 FNH:32
 BRF:0
@@ -214,7 +214,7 @@ BRH:0
 LF:563
 LH:470
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/auth_actor.rs
+SF:crates/ferrum-gateway/src/auth_actor.rs
 FNF:6
 FNH:6
 BRF:0
@@ -222,7 +222,7 @@ BRH:0
 LF:42
 LH:42
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/behavioral.rs
+SF:crates/ferrum-gateway/src/behavioral.rs
 FNF:16
 FNH:16
 BRF:0
@@ -230,7 +230,7 @@ BRH:0
 LF:172
 LH:172
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/bridge.rs
+SF:crates/ferrum-gateway/src/bridge.rs
 FNF:18
 FNH:11
 BRF:0
@@ -238,7 +238,7 @@ BRH:0
 LF:198
 LH:146
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/capabilities.rs
+SF:crates/ferrum-gateway/src/capabilities.rs
 FNF:102
 FNH:95
 BRF:0
@@ -246,7 +246,7 @@ BRH:0
 LF:1258
 LH:1109
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/approval_binding.rs
+SF:crates/ferrum-gateway/src/execution/approval_binding.rs
 FNF:18
 FNH:13
 BRF:0
@@ -254,7 +254,7 @@ BRH:0
 LF:142
 LH:103
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/authorize.rs
+SF:crates/ferrum-gateway/src/execution/authorize.rs
 FNF:3
 FNH:2
 BRF:0
@@ -262,7 +262,7 @@ BRH:0
 LF:192
 LH:24
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/cancel.rs
+SF:crates/ferrum-gateway/src/execution/cancel.rs
 FNF:8
 FNH:3
 BRF:0
@@ -270,7 +270,7 @@ BRH:0
 LF:161
 LH:30
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/commit.rs
+SF:crates/ferrum-gateway/src/execution/commit.rs
 FNF:2
 FNH:0
 BRF:0
@@ -278,7 +278,7 @@ BRH:0
 LF:181
 LH:0
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/compensate.rs
+SF:crates/ferrum-gateway/src/execution/compensate.rs
 FNF:2
 FNH:2
 BRF:0
@@ -286,7 +286,7 @@ BRH:0
 LF:193
 LH:34
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/durable_capability.rs
+SF:crates/ferrum-gateway/src/execution/durable_capability.rs
 FNF:16
 FNH:9
 BRF:0
@@ -294,7 +294,7 @@ BRH:0
 LF:166
 LH:96
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/evaluate_outcome.rs
+SF:crates/ferrum-gateway/src/execution/evaluate_outcome.rs
 FNF:8
 FNH:3
 BRF:0
@@ -302,7 +302,7 @@ BRH:0
 LF:97
 LH:59
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/execute.rs
+SF:crates/ferrum-gateway/src/execution/execute.rs
 FNF:3
 FNH:2
 BRF:0
@@ -310,7 +310,7 @@ BRH:0
 LF:293
 LH:44
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/inference.rs
+SF:crates/ferrum-gateway/src/execution/inference.rs
 FNF:18
 FNH:5
 BRF:0
@@ -318,7 +318,7 @@ BRH:0
 LF:288
 LH:72
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/lifecycle_outbox.rs
+SF:crates/ferrum-gateway/src/execution/lifecycle_outbox.rs
 FNF:15
 FNH:2
 BRF:0
@@ -326,7 +326,7 @@ BRH:0
 LF:113
 LH:8
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/prepare.rs
+SF:crates/ferrum-gateway/src/execution/prepare.rs
 FNF:2
 FNH:2
 BRF:0
@@ -334,7 +334,7 @@ BRH:0
 LF:246
 LH:30
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/resource_scope.rs
+SF:crates/ferrum-gateway/src/execution/resource_scope.rs
 FNF:17
 FNH:7
 BRF:0
@@ -342,7 +342,7 @@ BRH:0
 LF:159
 LH:80
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/validation.rs
+SF:crates/ferrum-gateway/src/execution/validation.rs
 FNF:12
 FNH:7
 BRF:0
@@ -350,7 +350,7 @@ BRH:0
 LF:107
 LH:82
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/verify.rs
+SF:crates/ferrum-gateway/src/execution/verify.rs
 FNF:2
 FNH:2
 BRF:0
@@ -358,7 +358,7 @@ BRH:0
 LF:271
 LH:34
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/ha_reconciler.rs
+SF:crates/ferrum-gateway/src/ha_reconciler.rs
 FNF:23
 FNH:21
 BRF:0
@@ -366,7 +366,7 @@ BRH:0
 LF:488
 LH:453
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/intents.rs
+SF:crates/ferrum-gateway/src/intents.rs
 FNF:10
 FNH:0
 BRF:0
@@ -374,7 +374,7 @@ BRH:0
 LF:147
 LH:0
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/lineage.rs
+SF:crates/ferrum-gateway/src/lineage.rs
 FNF:23
 FNH:5
 BRF:0
@@ -382,7 +382,7 @@ BRH:0
 LF:355
 LH:65
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/metrics.rs
+SF:crates/ferrum-gateway/src/metrics.rs
 FNF:8
 FNH:8
 BRF:0
@@ -390,7 +390,7 @@ BRH:0
 LF:540
 LH:416
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/mfa.rs
+SF:crates/ferrum-gateway/src/mfa.rs
 FNF:72
 FNH:62
 BRF:0
@@ -398,7 +398,7 @@ BRH:0
 LF:513
 LH:473
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/monitoring.rs
+SF:crates/ferrum-gateway/src/monitoring.rs
 FNF:14
 FNH:14
 BRF:0
@@ -406,7 +406,7 @@ BRH:0
 LF:809
 LH:796
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/policy.rs
+SF:crates/ferrum-gateway/src/policy.rs
 FNF:59
 FNH:28
 BRF:0
@@ -414,7 +414,7 @@ BRH:0
 LF:724
 LH:470
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/policy_eval.rs
+SF:crates/ferrum-gateway/src/policy_eval.rs
 FNF:12
 FNH:9
 BRF:0
@@ -422,7 +422,7 @@ BRH:0
 LF:136
 LH:117
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/problem.rs
+SF:crates/ferrum-gateway/src/problem.rs
 FNF:5
 FNH:3
 BRF:0
@@ -430,7 +430,7 @@ BRH:0
 LF:41
 LH:19
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/proposals.rs
+SF:crates/ferrum-gateway/src/proposals.rs
 FNF:28
 FNH:28
 BRF:0
@@ -438,7 +438,7 @@ BRH:0
 LF:664
 LH:639
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/provenance.rs
+SF:crates/ferrum-gateway/src/provenance.rs
 FNF:44
 FNH:38
 BRF:0
@@ -446,7 +446,7 @@ BRH:0
 LF:504
 LH:456
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/quarantine.rs
+SF:crates/ferrum-gateway/src/quarantine.rs
 FNF:30
 FNH:6
 BRF:0
@@ -454,7 +454,7 @@ BRH:0
 LF:456
 LH:170
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/rate_limit.rs
+SF:crates/ferrum-gateway/src/rate_limit.rs
 FNF:8
 FNH:8
 BRF:0
@@ -462,7 +462,7 @@ BRH:0
 LF:65
 LH:63
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/response.rs
+SF:crates/ferrum-gateway/src/response.rs
 FNF:16
 FNH:15
 BRF:0
@@ -470,7 +470,7 @@ BRH:0
 LF:101
 LH:97
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/router.rs
+SF:crates/ferrum-gateway/src/router.rs
 FNF:2
 FNH:2
 BRF:0
@@ -478,7 +478,7 @@ BRH:0
 LF:175
 LH:175
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/server.rs
+SF:crates/ferrum-gateway/src/server.rs
 FNF:560
 FNH:500
 BRF:0
@@ -486,7 +486,7 @@ BRH:0
 LF:10248
 LH:9948
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/state.rs
+SF:crates/ferrum-gateway/src/state.rs
 FNF:40
 FNH:20
 BRF:0
@@ -494,7 +494,7 @@ BRH:0
 LF:699
 LH:205
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/timeout_reconciler.rs
+SF:crates/ferrum-gateway/src/timeout_reconciler.rs
 FNF:8
 FNH:2
 BRF:0
@@ -502,7 +502,7 @@ BRH:0
 LF:166
 LH:47
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-graph/src/lib.rs
+SF:crates/ferrum-graph/src/lib.rs
 FNF:22
 FNH:22
 BRF:0
@@ -510,7 +510,7 @@ BRH:0
 LF:261
 LH:261
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/http_client.rs
+SF:crates/ferrum-integrations-mcp/src/http_client.rs
 FNF:141
 FNH:101
 BRF:0
@@ -518,7 +518,7 @@ BRH:0
 LF:1981
 LH:1811
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/lib.rs
+SF:crates/ferrum-integrations-mcp/src/lib.rs
 FNF:156
 FNH:155
 BRF:0
@@ -526,7 +526,7 @@ BRH:0
 LF:2901
 LH:2772
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/mapping_helpers.rs
+SF:crates/ferrum-integrations-mcp/src/mapping_helpers.rs
 FNF:68
 FNH:65
 BRF:0
@@ -534,7 +534,7 @@ BRH:0
 LF:693
 LH:644
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/rest_mapper.rs
+SF:crates/ferrum-integrations-mcp/src/rest_mapper.rs
 FNF:135
 FNH:64
 BRF:0
@@ -542,7 +542,7 @@ BRH:0
 LF:818
 LH:626
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/stage2_types.rs
+SF:crates/ferrum-integrations-mcp/src/stage2_types.rs
 FNF:22
 FNH:22
 BRF:0
@@ -550,7 +550,7 @@ BRH:0
 LF:255
 LH:252
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-pdp/src/bundle_engine.rs
+SF:crates/ferrum-pdp/src/bundle_engine.rs
 FNF:50
 FNH:48
 BRF:0
@@ -558,7 +558,7 @@ BRH:0
 LF:604
 LH:598
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-pdp/src/engine.rs
+SF:crates/ferrum-pdp/src/engine.rs
 FNF:50
 FNH:50
 BRF:0
@@ -566,7 +566,7 @@ BRH:0
 LF:718
 LH:706
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-pdp/src/matchers.rs
+SF:crates/ferrum-pdp/src/matchers.rs
 FNF:19
 FNH:19
 BRF:0
@@ -574,7 +574,7 @@ BRH:0
 LF:328
 LH:321
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/audit_log.rs
+SF:crates/ferrum-proto/src/audit_log.rs
 FNF:8
 FNH:7
 BRF:0
@@ -582,7 +582,7 @@ BRH:0
 LF:104
 LH:94
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/execution.rs
+SF:crates/ferrum-proto/src/execution.rs
 FNF:14
 FNH:13
 BRF:0
@@ -590,7 +590,7 @@ BRH:0
 LF:188
 LH:180
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/ids.rs
+SF:crates/ferrum-proto/src/ids.rs
 FNF:3
 FNH:2
 BRF:0
@@ -598,7 +598,7 @@ BRH:0
 LF:9
 LH:6
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/intent.rs
+SF:crates/ferrum-proto/src/intent.rs
 FNF:8
 FNH:6
 BRF:0
@@ -606,7 +606,7 @@ BRH:0
 LF:93
 LH:86
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/lifecycle_outbox.rs
+SF:crates/ferrum-proto/src/lifecycle_outbox.rs
 FNF:5
 FNH:5
 BRF:0
@@ -614,7 +614,7 @@ BRH:0
 LF:73
 LH:73
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/mfa.rs
+SF:crates/ferrum-proto/src/mfa.rs
 FNF:5
 FNH:5
 BRF:0
@@ -622,7 +622,7 @@ BRH:0
 LF:53
 LH:50
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/policy_bundle.rs
+SF:crates/ferrum-proto/src/policy_bundle.rs
 FNF:20
 FNH:19
 BRF:0
@@ -630,7 +630,7 @@ BRH:0
 LF:160
 LH:147
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/provenance.rs
+SF:crates/ferrum-proto/src/provenance.rs
 FNF:7
 FNH:6
 BRF:0
@@ -638,7 +638,7 @@ BRH:0
 LF:150
 LH:131
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/token.rs
+SF:crates/ferrum-proto/src/token.rs
 FNF:6
 FNH:4
 BRF:0
@@ -646,7 +646,7 @@ BRH:0
 LF:84
 LH:49
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-rollback/src/adapter.rs
+SF:crates/ferrum-rollback/src/adapter.rs
 FNF:21
 FNH:16
 BRF:0
@@ -654,7 +654,7 @@ BRH:0
 LF:99
 LH:90
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-rollback/src/service.rs
+SF:crates/ferrum-rollback/src/service.rs
 FNF:39
 FNH:27
 BRF:0
@@ -662,7 +662,7 @@ BRH:0
 LF:384
 LH:269
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/error.rs
+SF:crates/ferrum-store/src/error.rs
 FNF:1
 FNH:0
 BRF:0
@@ -670,7 +670,7 @@ BRH:0
 LF:6
 LH:0
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/merkle.rs
+SF:crates/ferrum-store/src/merkle.rs
 FNF:6
 FNH:6
 BRF:0
@@ -678,7 +678,7 @@ BRH:0
 LF:104
 LH:104
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/nonce_cache.rs
+SF:crates/ferrum-store/src/nonce_cache.rs
 FNF:17
 FNH:15
 BRF:0
@@ -686,7 +686,7 @@ BRH:0
 LF:96
 LH:92
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/reconciliation.rs
+SF:crates/ferrum-store/src/reconciliation.rs
 FNF:31
 FNH:23
 BRF:0
@@ -694,7 +694,7 @@ BRH:0
 LF:485
 LH:325
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/repos.rs
+SF:crates/ferrum-store/src/repos.rs
 FNF:4
 FNH:1
 BRF:0
@@ -702,7 +702,7 @@ BRH:0
 LF:21
 LH:3
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/agents.rs
+SF:crates/ferrum-store/src/sqlite/agents.rs
 FNF:15
 FNH:10
 BRF:0
@@ -710,7 +710,7 @@ BRH:0
 LF:46
 LH:41
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/approvals.rs
+SF:crates/ferrum-store/src/sqlite/approvals.rs
 FNF:23
 FNH:11
 BRF:0
@@ -718,7 +718,7 @@ BRH:0
 LF:119
 LH:96
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/audit_checkpoint.rs
+SF:crates/ferrum-store/src/sqlite/audit_checkpoint.rs
 FNF:14
 FNH:14
 BRF:0
@@ -726,7 +726,7 @@ BRH:0
 LF:82
 LH:82
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/audit_log.rs
+SF:crates/ferrum-store/src/sqlite/audit_log.rs
 FNF:34
 FNH:27
 BRF:0
@@ -734,7 +734,7 @@ BRH:0
 LF:220
 LH:201
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/audit_merkle_root.rs
+SF:crates/ferrum-store/src/sqlite/audit_merkle_root.rs
 FNF:17
 FNH:17
 BRF:0
@@ -742,7 +742,7 @@ BRH:0
 LF:129
 LH:129
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/capabilities.rs
+SF:crates/ferrum-store/src/sqlite/capabilities.rs
 FNF:25
 FNH:21
 BRF:0
@@ -750,7 +750,7 @@ BRH:0
 LF:232
 LH:225
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/executions.rs
+SF:crates/ferrum-store/src/sqlite/executions.rs
 FNF:25
 FNH:20
 BRF:0
@@ -758,7 +758,7 @@ BRH:0
 LF:281
 LH:274
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/helpers.rs
+SF:crates/ferrum-store/src/sqlite/helpers.rs
 FNF:12
 FNH:12
 BRF:0
@@ -766,7 +766,7 @@ BRH:0
 LF:55
 LH:54
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/intents.rs
+SF:crates/ferrum-store/src/sqlite/intents.rs
 FNF:25
 FNH:11
 BRF:0
@@ -774,7 +774,7 @@ BRH:0
 LF:108
 LH:77
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/leader_allowlist.rs
+SF:crates/ferrum-store/src/sqlite/leader_allowlist.rs
 FNF:15
 FNH:15
 BRF:0
@@ -782,7 +782,7 @@ BRH:0
 LF:76
 LH:76
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/leader_tip_cache.rs
+SF:crates/ferrum-store/src/sqlite/leader_tip_cache.rs
 FNF:33
 FNH:26
 BRF:0
@@ -790,7 +790,7 @@ BRH:0
 LF:240
 LH:199
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/ledger.rs
+SF:crates/ferrum-store/src/sqlite/ledger.rs
 FNF:14
 FNH:5
 BRF:0
@@ -798,7 +798,7 @@ BRH:0
 LF:46
 LH:20
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/lifecycle_outbox.rs
+SF:crates/ferrum-store/src/sqlite/lifecycle_outbox.rs
 FNF:93
 FNH:87
 BRF:0
@@ -806,7 +806,7 @@ BRH:0
 LF:1324
 LH:1290
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/mfa_credentials.rs
+SF:crates/ferrum-store/src/sqlite/mfa_credentials.rs
 FNF:83
 FNH:66
 BRF:0
@@ -814,7 +814,7 @@ BRH:0
 LF:483
 LH:466
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/migrations.rs
+SF:crates/ferrum-store/src/sqlite/migrations.rs
 FNF:3
 FNH:3
 BRF:0
@@ -822,7 +822,7 @@ BRH:0
 LF:20
 LH:18
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/mod.rs
+SF:crates/ferrum-store/src/sqlite/mod.rs
 FNF:127
 FNH:116
 BRF:0
@@ -830,7 +830,7 @@ BRH:0
 LF:1258
 LH:1217
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/policy_bundles.rs
+SF:crates/ferrum-store/src/sqlite/policy_bundles.rs
 FNF:18
 FNH:17
 BRF:0
@@ -838,7 +838,7 @@ BRH:0
 LF:80
 LH:77
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/proposals.rs
+SF:crates/ferrum-store/src/sqlite/proposals.rs
 FNF:6
 FNH:4
 BRF:0
@@ -846,7 +846,7 @@ BRH:0
 LF:17
 LH:14
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/provenance.rs
+SF:crates/ferrum-store/src/sqlite/provenance.rs
 FNF:34
 FNH:27
 BRF:0
@@ -854,7 +854,7 @@ BRH:0
 LF:135
 LH:127
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/quarantine.rs
+SF:crates/ferrum-store/src/sqlite/quarantine.rs
 FNF:11
 FNH:6
 BRF:0
@@ -862,7 +862,7 @@ BRH:0
 LF:66
 LH:18
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/rollback.rs
+SF:crates/ferrum-store/src/sqlite/rollback.rs
 FNF:27
 FNH:27
 BRF:0
@@ -870,7 +870,7 @@ BRH:0
 LF:313
 LH:313
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/sync_preflight.rs
+SF:crates/ferrum-store/src/sqlite/sync_preflight.rs
 FNF:30
 FNH:14
 BRF:0
@@ -878,7 +878,7 @@ BRH:0
 LF:146
 LH:87
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/tokens.rs
+SF:crates/ferrum-store/src/sqlite/tokens.rs
 FNF:21
 FNH:14
 BRF:0
@@ -886,7 +886,7 @@ BRH:0
 LF:78
 LH:71
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/write_queue.rs
+SF:crates/ferrum-store/src/sqlite/write_queue.rs
 FNF:40
 FNH:33
 BRF:0
@@ -894,7 +894,7 @@ BRH:0
 LF:724
 LH:519
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sync_service.rs
+SF:crates/ferrum-store/src/sync_service.rs
 FNF:19
 FNH:13
 BRF:0
@@ -902,7 +902,7 @@ BRH:0
 LF:216
 LH:187
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/transitions.rs
+SF:crates/ferrum-store/src/transitions.rs
 FNF:49
 FNH:49
 BRF:0
@@ -910,7 +910,7 @@ BRH:0
 LF:378
 LH:375
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/decision.rs
+SF:crates/ferrum-sync/src/decision.rs
 FNF:19
 FNH:19
 BRF:0
@@ -918,7 +918,7 @@ BRH:0
 LF:116
 LH:115
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/error.rs
+SF:crates/ferrum-sync/src/error.rs
 FNF:4
 FNH:2
 BRF:0
@@ -926,7 +926,7 @@ BRH:0
 LF:19
 LH:7
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/external_source.rs
+SF:crates/ferrum-sync/src/external_source.rs
 FNF:17
 FNH:17
 BRF:0
@@ -934,7 +934,7 @@ BRH:0
 LF:119
 LH:119
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/facade.rs
+SF:crates/ferrum-sync/src/facade.rs
 FNF:26
 FNH:23
 BRF:0
@@ -942,7 +942,7 @@ BRH:0
 LF:88
 LH:77
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/mcp_bridge.rs
+SF:crates/ferrum-sync/src/mcp_bridge.rs
 FNF:22
 FNH:19
 BRF:0
@@ -950,7 +950,7 @@ BRH:0
 LF:123
 LH:108
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/preflight.rs
+SF:crates/ferrum-sync/src/preflight.rs
 FNF:29
 FNH:22
 BRF:0
@@ -958,7 +958,7 @@ BRH:0
 LF:217
 LH:167
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/repo.rs
+SF:crates/ferrum-sync/src/repo.rs
 FNF:26
 FNH:22
 BRF:0
@@ -966,7 +966,7 @@ BRH:0
 LF:135
 LH:122
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/transport.rs
+SF:crates/ferrum-sync/src/transport.rs
 FNF:31
 FNH:29
 BRF:0
@@ -974,7 +974,7 @@ BRH:0
 LF:194
 LH:186
 end_of_record
-SF:/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-testkit/src/lib.rs
+SF:crates/ferrum-testkit/src/lib.rs
 FNF:13
 FNH:13
 BRF:0
