@@ -20,3 +20,9 @@ dist/
 /site/public/
 __pycache__/
 *.pyc
+/SESSION.md
+/docs/inspection/
+/ferrumgate_lo_trinh_kiem_tra_chuyen_sau.md
+/baselines/evidence/perf-p0-b8ba047/
+/baselines/evidence/perf-p1-b8ba047/
+/baselines/evidence/perf-p1-b8ba047-c95/

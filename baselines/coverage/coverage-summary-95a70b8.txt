@@ -1,4 +1,4 @@
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrum-migrate/src/main.rs:
+bins/ferrum-migrate/src/main.rs:
     1|       |use anyhow::{Result, bail};
     2|       |
     3|       |#[cfg(feature = "postgres")]
@@ -1859,7 +1859,7 @@
  1843|       |    }
  1844|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrum-stress/src/main.rs:
+bins/ferrum-stress/src/main.rs:
     1|       |use anyhow::{Context, Result, bail};
     2|       |use async_trait::async_trait;
     3|       |use chrono::Utc;
@@ -3904,7 +3904,7 @@
  2042|      0|    std::process::exit(0);
  2043|      0|}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrum-tui/src/app.rs:
+bins/ferrum-tui/src/app.rs:
     1|       |use ratatui::{
     2|       |    Frame,
     3|       |    layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -5007,7 +5007,7 @@
  1091|      1|    }
  1092|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrum-tui/src/client.rs:
+bins/ferrum-tui/src/client.rs:
     1|       |use anyhow::Result;
     2|       |use reqwest::Client as HttpClient;
     3|       |use serde::Deserialize;
@@ -5120,7 +5120,7 @@
   110|      0|    }
   111|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrum-tui/src/main.rs:
+bins/ferrum-tui/src/main.rs:
     1|       |use anyhow::Result;
     2|       |use chrono::Local;
     3|       |use clap::Parser;
@@ -5728,7 +5728,7 @@
   602|      1|    }
   603|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumctl/src/audit_bundle.rs:
+bins/ferrumctl/src/audit_bundle.rs:
     1|       |pub use ferrum_audit_bundle::{AuditBundleManifest, verify_bundle};
     2|       |
     3|       |use ferrum_audit_bundle::{build_bundle_from_ndjson, export_bundle as export_bundle_impl};
@@ -5934,7 +5934,7 @@
   197|      1|    }
   198|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumctl/src/backup.rs:
+bins/ferrumctl/src/backup.rs:
     1|       |use anyhow::{Context, Result, bail};
     2|       |use rusqlite::{Connection, OpenFlags};
     3|       |use std::fs;
@@ -6941,7 +6941,7 @@
   972|      1|    }
   973|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumctl/src/client.rs:
+bins/ferrumctl/src/client.rs:
     1|       |use anyhow::{Result, bail};
     2|       |use ferrum_proto::ActorRef;
     3|       |use reqwest::Client as HttpClient;
@@ -7944,7 +7944,7 @@
  1000|      0|    }
  1001|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumctl/src/main.rs:
+bins/ferrumctl/src/main.rs:
     1|       |use anyhow::{Context, Result, bail};
     2|       |use chrono::Timelike;
     3|       |use clap::{Parser, Subcommand, ValueEnum};
@@ -13354,7 +13354,7 @@
  5373|      1|    }
  5374|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumctl/src/slo_window.rs:
+bins/ferrumctl/src/slo_window.rs:
     1|       |use anyhow::{Context, Result, bail};
     2|       |use std::path::PathBuf;
     3|       |
@@ -13755,7 +13755,7 @@
   383|      1|    }
   384|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumd/src/config.rs:
+bins/ferrumd/src/config.rs:
     1|       |use anyhow::{Context, Result};
     2|       |use clap::Parser;
     3|       |#[cfg(feature = "gcs")]
@@ -15550,7 +15550,7 @@
  1603|       |#[cfg(test)]
  1604|       |mod config_tests;
 
-/home/uong_guyen/work/Ferrum-Gate/bins/ferrumd/src/main.rs:
+bins/ferrumd/src/main.rs:
     1|       |use anyhow::{Context, Result};
     2|       |use clap::Parser;
     3|       |use ferrum_adapter_fs::{FsAdapter, FsBoundsConfig, PlannableFsAdapter};
@@ -16040,7 +16040,7 @@
   485|      1|    }
   486|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/lib.rs:
+crates/ferrum-adapter-fs/src/lib.rs:
     1|       |//! Filesystem adapter for mutation and recovery.
     2|       |//!
     3|       |//! This adapter implements the `RollbackAdapter` trait for filesystem operations,
@@ -18694,7 +18694,7 @@
  2635|       |#[cfg(test)]
  2636|       |mod tests;
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/planner.rs:
+crates/ferrum-adapter-fs/src/planner.rs:
     1|       |//! Plannable adapter for filesystem operations.
     2|       |//!
     3|       |//! Generates execution plans for FileWrite and FileDelete actions with appropriate
@@ -18872,7 +18872,7 @@
   175|      1|    }
   176|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/snapshot.rs:
+crates/ferrum-adapter-fs/src/snapshot.rs:
     1|       |use std::path::{Path, PathBuf};
     2|       |
     3|       |use ferrum_proto::ExecutionId;
@@ -19010,7 +19010,7 @@
   127|      3|    FsAdapterError::Io(err)
   128|      3|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-fs/src/validation.rs:
+crates/ferrum-adapter-fs/src/validation.rs:
     1|       |use ferrum_rollback::AdapterError;
     2|       |use std::path::Path;
     3|       |
@@ -19075,7 +19075,7 @@
    57|       |    }
    58|      9|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-gcs/src/lib.rs:
+crates/ferrum-adapter-gcs/src/lib.rs:
     1|       |//! GCS adapter for mutation and recovery.
     2|       |//!
     3|       |//! This adapter implements the `RollbackAdapter` trait for Google Cloud Storage
@@ -20493,7 +20493,7 @@
  1399|      1|    }
  1400|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-gcs/src/planner.rs:
+crates/ferrum-adapter-gcs/src/planner.rs:
     1|       |//! Plannable adapter for GCS operations.
     2|       |//!
     3|       |//! Generates execution plans for GCS object actions with appropriate
@@ -20733,7 +20733,7 @@
   237|      1|    }
   238|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-git/src/lib.rs:
+crates/ferrum-adapter-git/src/lib.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{ActionType, JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTarget};
     3|       |use ferrum_rollback::{
@@ -23027,7 +23027,7 @@
  2271|       |#[cfg(test)]
  2272|       |mod tests;
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-git/src/planner.rs:
+crates/ferrum-adapter-git/src/planner.rs:
     1|       |//! Plannable adapter for Git operations.
     2|       |//!
     3|       |//! Generates execution plans for GitBranchCreate action with appropriate
@@ -23284,7 +23284,7 @@
   254|      1|    }
   255|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-http/src/lib.rs:
+crates/ferrum-adapter-http/src/lib.rs:
     1|       |//! HTTP adapter for mutation and idempotency-aware compensation.
     2|       |//!
     3|       |//! This adapter implements the `RollbackAdapter` trait for HTTP operations,
@@ -25426,7 +25426,7 @@
  2074|       |#[cfg(test)]
  2075|       |mod tests;
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-http/src/planner.rs:
+crates/ferrum-adapter-http/src/planner.rs:
     1|       |//! Plannable adapter for HTTP operations.
     2|       |//!
     3|       |//! Generates execution plans for HttpMutation actions with appropriate
@@ -25570,7 +25570,7 @@
   141|      1|    }
   142|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-maildraft/src/lib.rs:
+crates/ferrum-adapter-maildraft/src/lib.rs:
     1|       |//! MailDraft adapter for email draft management with rollback support.
     2|       |//!
     3|       |//! This adapter implements the `RollbackAdapter` trait for email draft operations,
@@ -27289,7 +27289,7 @@
  1710|      1|    }
  1711|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-maildraft/src/planner.rs:
+crates/ferrum-adapter-maildraft/src/planner.rs:
     1|       |//! Plannable adapter for MailDraft email operations.
     2|       |//!
     3|       |//! Generates execution plans for MailDraft actions with appropriate
@@ -27429,7 +27429,7 @@
   137|      1|    }
   138|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-s3/src/lib.rs:
+crates/ferrum-adapter-s3/src/lib.rs:
     1|       |//! S3 adapter for mutation and recovery.
     2|       |//!
     3|       |//! This adapter implements the `RollbackAdapter` trait for S3-compatible object operations,
@@ -29256,7 +29256,7 @@
  1814|      1|    }
  1815|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-s3/src/planner.rs:
+crates/ferrum-adapter-s3/src/planner.rs:
     1|       |//! Plannable adapter for S3 operations.
     2|       |//!
     3|       |//! Generates execution plans for S3 object actions with appropriate
@@ -29502,7 +29502,7 @@
   243|      1|    }
   244|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-s3/src/worm.rs:
+crates/ferrum-adapter-s3/src/worm.rs:
     1|       |//! S3 Object Lock WORM upload support.
     2|       |//!
     3|       |//! This module provides a small, bounded helper for uploading audit bundles to an
@@ -30044,7 +30044,7 @@
   531|      1|    }
   532|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-sqlite/src/lib.rs:
+crates/ferrum-adapter-sqlite/src/lib.rs:
     1|       |//! SQLite adapter for mutation and transaction recovery.
     2|       |//!
     3|       |//! This adapter implements the `RollbackAdapter` trait for SQLite databases,
@@ -32188,7 +32188,7 @@
  2122|      1|    }
  2123|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-adapter-sqlite/src/planner.rs:
+crates/ferrum-adapter-sqlite/src/planner.rs:
     1|       |//! Plannable adapter for SQLite database operations.
     2|       |//!
     3|       |//! Generates execution plans for SqlMutation actions with appropriate
@@ -32339,7 +32339,7 @@
   148|      1|    }
   149|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-audit-bundle/src/lib.rs:
+crates/ferrum-audit-bundle/src/lib.rs:
     1|       |//! Portable, tamper-evident audit bundle format.
     2|       |//!
     3|       |//! This crate exposes the canonical bundle builder and verifier used by both
@@ -33021,7 +33021,7 @@
   654|      1|    }
   655|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-cap/src/service.rs:
+crates/ferrum-cap/src/service.rs:
     1|       |use async_trait::async_trait;
     2|       |use chrono::{Duration, Utc};
     3|       |use ferrum_proto::{
@@ -33393,7 +33393,7 @@
   362|      1|    }
   363|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-firewall/src/lib.rs:
+crates/ferrum-firewall/src/lib.rs:
     1|       |use ferrum_proto::{ActionProposal, IntentEnvelope, TrustLabel as ProtoTrustLabel};
     2|       |use std::collections::HashMap;
     3|       |
@@ -34297,7 +34297,7 @@
   883|      1|    }
   884|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/agents.rs:
+crates/ferrum-gateway/src/admin/agents.rs:
     1|       |use axum::{
     2|       |    Json,
     3|       |    extract::{Extension, Path, Query, State},
@@ -34653,7 +34653,7 @@
   350|       |    }
   351|      4|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/lifecycle_outbox.rs:
+crates/ferrum-gateway/src/admin/lifecycle_outbox.rs:
     1|       |use axum::{
     2|       |    Json,
     3|       |    extract::{Path, Query, State},
@@ -34884,7 +34884,7 @@
   228|       |    )
   229|      0|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/mfa.rs:
+crates/ferrum-gateway/src/admin/mfa.rs:
     1|       |use axum::{
     2|       |    Json,
     3|       |    extract::{Extension, Path, State},
@@ -36006,7 +36006,7 @@
  1095|      1|    sanitized_response(&state.runtime.firewall, StatusCode::OK, &summary)
  1096|      2|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/admin/tokens.rs:
+crates/ferrum-gateway/src/admin/tokens.rs:
     1|       |use axum::{
     2|       |    Json,
     3|       |    extract::{Extension, Path, Query, State},
@@ -36385,7 +36385,7 @@
   373|       |    }
   374|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/approval.rs:
+crates/ferrum-gateway/src/approval.rs:
     1|       |//! Approval governance handlers and the pagination helpers that only they use.
     2|       |//!
     3|       |//! Routes:
@@ -37224,7 +37224,7 @@
   811|       |    )
   812|     22|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/audit.rs:
+crates/ferrum-gateway/src/audit.rs:
     1|       |use axum::{
     2|       |    Json,
     3|       |    extract::{Path, Query, State},
@@ -38487,7 +38487,7 @@
  1252|      1|    }
  1253|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/auth.rs:
+crates/ferrum-gateway/src/auth.rs:
     1|       |use std::sync::Arc;
     2|       |use std::time::Duration as StdDuration;
     3|       |
@@ -39379,7 +39379,7 @@
   797|     12|    Ok((actor_id, scopes, role))
   798|     31|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/auth_actor.rs:
+crates/ferrum-gateway/src/auth_actor.rs:
     1|       |use crate::problem::ApiProblem;
     2|       |use crate::state::AuthMode;
     3|       |
@@ -39495,7 +39495,7 @@
   107|      4|    Err(guard_not_found())
   108|    170|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/behavioral.rs:
+crates/ferrum-gateway/src/behavioral.rs:
     1|       |//! Behavioral anomaly profiling for the gateway.
     2|       |//!
     3|       |//! V1 is opt-in, in-memory, advisory-only. It detects repeated high-risk/R3
@@ -39908,7 +39908,7 @@
   401|      1|    }
   402|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/bridge.rs:
+crates/ferrum-gateway/src/bridge.rs:
     1|       |//! Bridge and provenance endpoints.
     2|       |//!
     3|       |//! Routes:
@@ -40169,7 +40169,7 @@
   249|      1|    Ok(Json(sanitized_response))
   250|      3|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/capabilities.rs:
+crates/ferrum-gateway/src/capabilities.rs:
     1|       |//! Capability governance handlers.
     2|       |//!
     3|       |//! Routes:
@@ -41885,7 +41885,7 @@
  1680|      1|    }
  1681|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/approval_binding.rs:
+crates/ferrum-gateway/src/execution/approval_binding.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::http::StatusCode;
@@ -42112,7 +42112,7 @@
   207|       |#[path = "approval_binding_tests.rs"]
   208|       |mod tests;
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/authorize.rs:
+crates/ferrum-gateway/src/execution/authorize.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{Json, extract::Extension, extract::State, http::StatusCode};
@@ -42447,7 +42447,7 @@
   325|       |    )
   326|     48|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/cancel.rs:
+crates/ferrum-gateway/src/execution/cancel.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -42667,7 +42667,7 @@
   208|       |    )
   209|      7|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/commit.rs:
+crates/ferrum-gateway/src/execution/commit.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -42981,7 +42981,7 @@
   308|       |    )
   309|      3|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/compensate.rs:
+crates/ferrum-gateway/src/execution/compensate.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -43312,7 +43312,7 @@
   324|       |    )
   325|     13|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/durable_capability.rs:
+crates/ferrum-gateway/src/execution/durable_capability.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use chrono::Utc;
@@ -43555,7 +43555,7 @@
   229|      1|    }
   230|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/evaluate_outcome.rs:
+crates/ferrum-gateway/src/execution/evaluate_outcome.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -43690,7 +43690,7 @@
   124|       |    )
   125|      9|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/execute.rs:
+crates/ferrum-gateway/src/execution/execute.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -44173,7 +44173,7 @@
   473|       |    )
   474|     22|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/inference.rs:
+crates/ferrum-gateway/src/execution/inference.rs:
     1|       |use axum::http::StatusCode;
     2|       |use ferrum_proto::{
     3|       |    ActionProposal, ActionType, ApiErrorCode, ExecutionId, ResourceSelector, RollbackClass,
@@ -44606,7 +44606,7 @@
   416|     96|    Ok(ExecutionId(parsed))
   417|     96|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/lifecycle_outbox.rs:
+crates/ferrum-gateway/src/execution/lifecycle_outbox.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use ferrum_proto::{
@@ -45551,7 +45551,7 @@
   935|      1|    }
   936|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/prepare.rs:
+crates/ferrum-gateway/src/execution/prepare.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -45944,7 +45944,7 @@
   382|       |    )
   383|     32|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/resource_scope.rs:
+crates/ferrum-gateway/src/execution/resource_scope.rs:
     1|       |use std::ffi::OsString;
     2|       |use std::path::{Component, Path as StdPath, PathBuf};
     3|       |
@@ -46186,7 +46186,7 @@
   232|      0|        && url_path_within_scope(candidate.path(), scope.path())
   233|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/validation.rs:
+crates/ferrum-gateway/src/execution/validation.rs:
     1|       |use ferrum_proto::{ActionProposal, ArgumentConstraint, CapabilityLease};
     2|       |use regex::Regex;
     3|       |
@@ -46320,7 +46320,7 @@
   123|       |    }
   124|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/execution/verify.rs:
+crates/ferrum-gateway/src/execution/verify.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use axum::{
@@ -46752,7 +46752,7 @@
   419|       |    )
   420|     10|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/ha_reconciler.rs:
+crates/ferrum-gateway/src/ha_reconciler.rs:
     1|       |//! HA reconciler for stale in-flight executions.
     2|       |//!
     3|       |//! On crash/restart recovery, this reconciler scans executions that are still
@@ -47363,7 +47363,7 @@
   605|      1|    }
   606|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/intents.rs:
+crates/ferrum-gateway/src/intents.rs:
     1|       |//! Intent governance handlers.
     2|       |//!
     3|       |//! Routes:
@@ -47617,7 +47617,7 @@
   247|       |    )
   248|      0|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/lineage.rs:
+crates/ferrum-gateway/src/lineage.rs:
     1|       |//! Lineage / provenance execution-detail handlers.
     2|       |//!
     3|       |//! Routes:
@@ -48094,7 +48094,7 @@
   450|       |    )
   451|     16|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/metrics.rs:
+crates/ferrum-gateway/src/metrics.rs:
     1|       |use std::sync::atomic::{AtomicU64, Ordering};
     2|       |
     3|       |use crate::behavioral::BehavioralSeverity;
@@ -48895,7 +48895,7 @@
   797|       |    Metrics,
   798|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/mfa.rs:
+crates/ferrum-gateway/src/mfa.rs:
     1|       |//! MFA cryptographic helpers.
     2|       |//!
     3|       |//! TOTP support is implemented (PR #209): the module provides RFC 6238 TOTP
@@ -49770,7 +49770,7 @@
   849|      1|    }
   850|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/monitoring.rs:
+crates/ferrum-gateway/src/monitoring.rs:
     1|       |//! Monitoring endpoints: `/v1/healthz`, `/v1/readyz`, `/v1/readyz/deep`, `/v1/metrics`.
     2|       |//!
     3|       |//! The shallow `/v1/healthz` and `/v1/readyz` routes remain public when gateway auth
@@ -51003,7 +51003,7 @@
  1216|    269|        .layer(TraceLayer::new_for_http())
  1217|    269|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/policy.rs:
+crates/ferrum-gateway/src/policy.rs:
     1|       |//! Policy bundle governance handlers.
     2|       |//!
     3|       |//! Routes:
@@ -51909,7 +51909,7 @@
   867|       |    )
   868|      2|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/policy_eval.rs:
+crates/ferrum-gateway/src/policy_eval.rs:
     1|       |//! Policy bundle evaluation and firewall taint-derivation helpers.
     2|       |//!
     3|       |//! These helpers are pure/shared logic used by both the per-request
@@ -52138,7 +52138,7 @@
   216|      5|    }
   217|      5|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/problem.rs:
+crates/ferrum-gateway/src/problem.rs:
     1|       |//! Problem Details type used by governance HTTP handlers.
     2|       |//!
     3|       |//! `ApiProblem` is the canonical error type returned by every governance
@@ -52224,7 +52224,7 @@
    83|     62|    }
    84|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/proposals.rs:
+crates/ferrum-gateway/src/proposals.rs:
     1|       |//! Action proposal evaluation handler.
     2|       |//!
     3|       |//! Routes:
@@ -53060,7 +53060,7 @@
   827|      1|    }
   828|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/provenance.rs:
+crates/ferrum-gateway/src/provenance.rs:
     1|       |//! Provenance append and lifecycle-chain validation helpers.
     2|       |
     3|       |use ferrum_proto::{
@@ -54139,7 +54139,7 @@
  1041|      1|    }
  1042|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/quarantine.rs:
+crates/ferrum-gateway/src/quarantine.rs:
     1|       |//! Quarantine hold governance handlers.
     2|       |//!
     3|       |//! Routes:
@@ -54738,7 +54738,7 @@
   581|       |    )
   582|      6|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/rate_limit.rs:
+crates/ferrum-gateway/src/rate_limit.rs:
     1|       |use std::net::IpAddr;
     2|       |use std::sync::Arc;
     3|       |
@@ -54904,7 +54904,7 @@
   160|       |    }};
   161|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/response.rs:
+crates/ferrum-gateway/src/response.rs:
     1|       |//! I11 Output Sanitization helpers.
     2|       |//!
     3|       |//! These helpers centralize the response/sanitization logic shared by all
@@ -55047,7 +55047,7 @@
   139|      1|    }
   140|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/router.rs:
+crates/ferrum-gateway/src/router.rs:
     1|       |use axum::Router;
     2|       |use axum::routing::{delete, get, post, put};
     3|       |use std::sync::Arc;
@@ -55304,7 +55304,7 @@
   254|    269|        .layer(TraceLayer::new_for_http())
   255|    269|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/server.rs:
+crates/ferrum-gateway/src/server.rs:
     1|       |use axum::Router;
     2|       |#[cfg(test)]
     3|       |use axum::http::StatusCode;
@@ -67238,7 +67238,7 @@
 11898|      1|    }
 11899|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/state.rs:
+crates/ferrum-gateway/src/state.rs:
     1|       |use ferrum_adapter_http::HttpEgressConfig;
     2|       |use ferrum_cap::CapabilityService;
     3|       |use ferrum_firewall::TaintScoringFirewall;
@@ -68544,7 +68544,7 @@
  1260|       |    pub bind_addr: std::net::SocketAddr,
  1261|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-gateway/src/timeout_reconciler.rs:
+crates/ferrum-gateway/src/timeout_reconciler.rs:
     1|       |use std::sync::Arc;
     2|       |use std::sync::atomic::Ordering;
     3|       |
@@ -69715,7 +69715,7 @@
  1160|      1|    }
  1161|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-graph/src/lib.rs:
+crates/ferrum-graph/src/lib.rs:
     1|       |use std::collections::{HashMap, HashSet, VecDeque};
     2|       |
     3|       |use ferrum_proto::ProvenanceEvent;
@@ -70110,7 +70110,7 @@
   387|      1|    }
   388|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/approvals.rs:
+crates/ferrum-integration-tests/src/gateway_flow/approvals.rs:
     1|       |use ferrum_cap::{CapabilityError, CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -72495,7 +72495,7 @@
  2362|       |// POL-4: Policy bundle activation provenance audit test
  2363|       |// ---------------------------------------------------------------------------
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/bridges.rs:
+crates/ferrum-integration-tests/src/gateway_flow/bridges.rs:
     1|       |use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -72937,7 +72937,7 @@
   439|       |// TTL-1: Gateway rejects capability TTL greater than 300 seconds
   440|       |// ---------------------------------------------------------------------------
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/capabilities.rs:
+crates/ferrum-integration-tests/src/gateway_flow/capabilities.rs:
     1|       |use ferrum_cap::{CapabilityError, CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -73944,7 +73944,7 @@
   993|      1|    );
   994|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/execution.rs:
+crates/ferrum-integration-tests/src/gateway_flow/execution.rs:
     1|       |use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -78794,7 +78794,7 @@
  4834|       |// Compensate state guard tests (WS-Compensate)
  4835|       |// ---------------------------------------------------------------------------
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/outcomes.rs:
+crates/ferrum-integration-tests/src/gateway_flow/outcomes.rs:
     1|       |use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -80044,7 +80044,7 @@
  1245|       |// U4: Bridge registration + ingest + lineage validation integration tests
  1246|       |// ---------------------------------------------------------------------------
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/policy.rs:
+crates/ferrum-integration-tests/src/gateway_flow/policy.rs:
     1|       |use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -81882,7 +81882,7 @@
  1834|       |// Verify endpoint invalid-state 409 tests
  1835|       |// ---------------------------------------------------------------------------
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/rollback.rs:
+crates/ferrum-integration-tests/src/gateway_flow/rollback.rs:
     1|       |use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
     2|       |use ferrum_gateway::GatewayRuntime;
     3|       |use ferrum_gateway::build_router;
@@ -83228,7 +83228,7 @@
  1338|       |// D1.9 Approval Resolve Integration Tests
  1339|       |// ---------------------------------------------------------------------------
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/gateway_flow/support.rs:
+crates/ferrum-integration-tests/src/gateway_flow/support.rs:
     1|       |#![allow(dead_code)]
     2|       |
     3|       |use async_trait::async_trait;
@@ -83497,7 +83497,7 @@
   266|      6|    bundle
   267|      6|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/integration_contracts.rs:
+crates/ferrum-integration-tests/src/integration_contracts.rs:
     1|       |//! Integration tests for contract conformance and related behavior.
     2|       |//!
     3|       |//! This file contains contract-related integration tests that complement
@@ -83567,7 +83567,7 @@
    67|      1|    );
    68|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/integration_fs_roundtrip.rs:
+crates/ferrum-integration-tests/src/integration_fs_roundtrip.rs:
     1|       |//! Integration tests for fs FileWrite round-trip lifecycle with persisted metadata.
     2|       |//!
     3|       |//! This file proves:
@@ -84486,7 +84486,7 @@
   912|      1|    );
   913|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/integration_lineage_chain.rs:
+crates/ferrum-integration-tests/src/integration_lineage_chain.rs:
     1|       |//! Integration tests for provenance lineage query endpoint.
     2|       |//!
     3|       |//! These tests hit the HTTP endpoint and verify the lineage reconstruction
@@ -87469,7 +87469,7 @@
  2937|      1|    assert_eq!(res.status(), StatusCode::NOT_FOUND);
  2938|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integration-tests/src/integration_rate_limit.rs:
+crates/ferrum-integration-tests/src/integration_rate_limit.rs:
     1|       |//! Integration tests for rate limiting behavior.
     2|       |
     3|       |use ferrum_cap::{CapabilityService, InMemoryCapabilityService};
@@ -87888,7 +87888,7 @@
   405|      1|    );
   406|      1|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/bin/ferrum-mcp-server.rs:
+crates/ferrum-integrations-mcp/src/bin/ferrum-mcp-server.rs:
     1|       |//! # ferrum-mcp-server
     2|       |//!
     3|       |//! FerrumGate MCP server binary - Phase C stdio transport + Phase D-0 REST client + Phase 6.1 HTTP transport skeleton.
@@ -90393,7 +90393,7 @@
  2502|       |    }
  2503|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/http_client.rs:
+crates/ferrum-integrations-mcp/src/http_client.rs:
     1|       |//! # HTTP Client for FerrumGate Gateway
     2|       |//!
     3|       |//! Phase D-0 read-only REST client that maps MCP tools to FerrumGate REST API endpoints.
@@ -94415,7 +94415,7 @@
  3960|      1|    }
  3961|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/lib.rs:
+crates/ferrum-integrations-mcp/src/lib.rs:
     1|       |//! # ferrum-integrations-mcp
     2|       |//!
     3|       |//! FerrumGate MCP server integration crate (Phase A-C + Phase D-0 REST client + D1.7 lifecycle dispatch + D1.8 output sanitization).
@@ -100339,7 +100339,7 @@
  5886|      1|    }
  5887|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/mapping_helpers.rs:
+crates/ferrum-integrations-mcp/src/mapping_helpers.rs:
     1|       |//! # D1.3.2b Pure Mapping Helpers
     2|       |//!
     3|       |//! > **D1.3.2b Scope**: Pure (side-effect-free) helper functions for mapping MCP tool calls
@@ -101804,7 +101804,7 @@
  1414|      1|    }
  1415|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/rest_mapper.rs:
+crates/ferrum-integrations-mcp/src/rest_mapper.rs:
     1|       |//! # REST Mapper for MCP Tools
     2|       |//!
     3|       |//! Maps MCP `tools/call` requests to FerrumGate REST API endpoints.
@@ -103008,7 +103008,7 @@
  1112|      1|    }
  1113|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-integrations-mcp/src/stage2_types.rs:
+crates/ferrum-integrations-mcp/src/stage2_types.rs:
     1|       |//! # Stage 2 Governance Pipeline Types (D-1.3.1)
     2|       |//!
     3|       |//! > **UNVERIFIED**: All DTOs in this module are defined from explorer findings and doc 74 design.
@@ -103649,7 +103649,7 @@
   636|      1|    }
   637|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-pdp/src/bundle_engine.rs:
+crates/ferrum-pdp/src/bundle_engine.rs:
     1|       |//! PolicyBundle-based PDP engine (Phase 1).
     2|       |//!
     3|       |//! Implements the `PdpEngine` trait using rule bundles with the semantics
@@ -104458,7 +104458,7 @@
   806|      1|    }
   807|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-pdp/src/engine.rs:
+crates/ferrum-pdp/src/engine.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    ActionProposal, ApprovalMode, Decision, EffectType, EvaluateOutcomeResponse,
@@ -105486,7 +105486,7 @@
  1004|      1|    }
  1005|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-pdp/src/matchers.rs:
+crates/ferrum-pdp/src/matchers.rs:
     1|       |//! Pure policy bundle matcher/rule evaluation helpers.
     2|       |//!
     3|       |//! These helpers are stateless and operate only on the evaluation context
@@ -105926,7 +105926,7 @@
   431|      1|    }
   432|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/audit_log.rs:
+crates/ferrum-proto/src/audit_log.rs:
     1|       |use chrono::{DateTime, Utc};
     2|       |use schemars::JsonSchema;
     3|       |use serde::{Deserialize, Serialize};
@@ -106317,7 +106317,7 @@
   360|      1|    }
   361|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/execution.rs:
+crates/ferrum-proto/src/execution.rs:
     1|       |use crate::rollback::ActionType;
     2|       |use crate::{
     3|       |    CapabilityId, ExecutionId, JsonMap, ProposalId, RiskTier, RollbackClass, RollbackContractId,
@@ -106741,7 +106741,7 @@
   416|      1|    }
   417|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/ids.rs:
+crates/ferrum-proto/src/ids.rs:
     1|       |//! Strongly-typed UUID wrappers for domain identifiers.
     2|       |//!
     3|       |//! # Examples
@@ -106803,7 +106803,7 @@
    59|       |strong_id!(ChannelId);
    60|       |strong_id!(MfaFactorId);
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/intent.rs:
+crates/ferrum-proto/src/intent.rs:
     1|       |use crate::{
     2|       |    ChannelId, EventId, JsonMap, PrincipalId, ResourceMode, RiskTier, RollbackClass, SessionId,
     3|       |    TimeBudget, Timestamp, TrustContextSummary,
@@ -107131,7 +107131,7 @@
   325|      1|    }
   326|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/lifecycle_outbox.rs:
+crates/ferrum-proto/src/lifecycle_outbox.rs:
     1|       |use crate::{
     2|       |    EventId, ExecutionId, ExecutionState, JsonMap, LifecycleOutboxId, ProvenanceEdgeType,
     3|       |    ProvenanceEventKind, RollbackContractId, RollbackState, Timestamp, lineage_parent_spec,
@@ -107288,7 +107288,7 @@
   154|    123|    }
   155|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/mfa.rs:
+crates/ferrum-proto/src/mfa.rs:
     1|       |use crate::{MfaFactorId, Timestamp};
     2|       |use schemars::JsonSchema;
     3|       |use serde::{Deserialize, Serialize};
@@ -107551,7 +107551,7 @@
   258|       |    pub total: usize,
   259|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/policy_bundle.rs:
+crates/ferrum-proto/src/policy_bundle.rs:
     1|       |use chrono::Utc;
     2|       |use schemars::JsonSchema;
     3|       |use serde::{Deserialize, Serialize};
@@ -107935,7 +107935,7 @@
   368|      1|    }
   369|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/provenance.rs:
+crates/ferrum-proto/src/provenance.rs:
     1|       |use crate::{
     2|       |    ActorRef, CapabilityId, EventId, ExecutionId, HashChainRef, JsonMap, ObjectRef, PolicyBundleId,
     3|       |    ProposalId, RollbackContractId, SensitivityLabel, Timestamp, TrustLabel,
@@ -108282,7 +108282,7 @@
   342|      1|    }
   343|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-proto/src/token.rs:
+crates/ferrum-proto/src/token.rs:
     1|       |use chrono::{DateTime, Utc};
     2|       |use schemars::JsonSchema;
     3|       |use serde::{Deserialize, Serialize};
@@ -108534,7 +108534,7 @@
   241|    118|    }
   242|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-rollback/src/adapter.rs:
+crates/ferrum-rollback/src/adapter.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    ActionType, ExecutionPlan, JsonMap, RollbackContract, RollbackPrepareRequest, RollbackTarget,
@@ -108816,7 +108816,7 @@
   278|      1|    }
   279|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-rollback/src/service.rs:
+crates/ferrum-rollback/src/service.rs:
     1|       |use anyhow::Context;
     2|       |use chrono::Utc;
     3|       |use ferrum_proto::{
@@ -109404,7 +109404,7 @@
   569|      1|    }
   570|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/error.rs:
+crates/ferrum-store/src/error.rs:
     1|       |use thiserror::Error;
     2|       |
     3|       |pub type Result<T> = std::result::Result<T, StoreError>;
@@ -109439,7 +109439,7 @@
    32|      0|    }
    33|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/merkle.rs:
+crates/ferrum-store/src/merkle.rs:
     1|       |use sha2::{Digest, Sha256};
     2|       |
     3|       |/// Compute a deterministic Merkle root over a list of hex-encoded content hashes.
@@ -109582,7 +109582,7 @@
   139|      1|    }
   140|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/nonce_cache.rs:
+crates/ferrum-store/src/nonce_cache.rs:
     1|       |//! Nonce cache implementations for agent-auth replay protection.
     2|       |//!
     3|       |//! `InMemoryNonceCache` preserves the original process-local behaviour and is
@@ -109745,7 +109745,7 @@
   158|      1|    }
   159|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/reconciliation.rs:
+crates/ferrum-store/src/reconciliation.rs:
     1|       |use std::{collections::HashSet, sync::Arc};
     2|       |
     3|       |use ferrum_proto::{
@@ -110379,7 +110379,7 @@
   607|      4|    result
   608|      4|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/repos.rs:
+crates/ferrum-store/src/repos.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    ActionProposal, ActorRef, AgentRecord, ApprovalId, ApprovalRequest, ApprovalState, AuditAction,
@@ -111177,7 +111177,7 @@
   792|    122|    }
   793|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/agents.rs:
+crates/ferrum-store/src/sqlite/agents.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::AgentRecord;
     3|       |use sqlx::{Row, SqlitePool};
@@ -111335,7 +111335,7 @@
   143|      6|    }
   144|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/approvals.rs:
+crates/ferrum-store/src/sqlite/approvals.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{ApprovalId, ApprovalRequest, ApprovalState, Timestamp};
     3|       |use sqlx::{Row, SqlitePool};
@@ -111698,7 +111698,7 @@
   342|     18|    Ok(expired)
   343|     18|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/audit_checkpoint.rs:
+crates/ferrum-store/src/sqlite/audit_checkpoint.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::AuditCheckpoint;
     3|       |use sqlx::{Row, SqlitePool};
@@ -111871,7 +111871,7 @@
   169|      1|    }
   170|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/audit_log.rs:
+crates/ferrum-store/src/sqlite/audit_log.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{AuditAction, AuditLogEntry, AuditResourceType};
     3|       |use sha2::{Digest, Sha256};
@@ -112322,7 +112322,7 @@
   429|      1|    }
   430|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/audit_merkle_root.rs:
+crates/ferrum-store/src/sqlite/audit_merkle_root.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::AuditMerkleRoot;
     3|       |use sqlx::{Row, SqlitePool};
@@ -112601,7 +112601,7 @@
   275|      1|    }
   276|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/capabilities.rs:
+crates/ferrum-store/src/sqlite/capabilities.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{CapabilityId, CapabilityLease, CapabilityStatus, IntentId};
     3|       |use sqlx::SqlitePool;
@@ -113038,7 +113038,7 @@
   432|      1|    }
   433|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/executions.rs:
+crates/ferrum-store/src/sqlite/executions.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    CapabilityId, ExecutionId, ExecutionRecord, ExecutionState, IntentId, Timestamp,
@@ -113586,7 +113586,7 @@
   544|      1|    }
   545|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/helpers.rs:
+crates/ferrum-store/src/sqlite/helpers.rs:
     1|       |use serde::{Serialize, de::DeserializeOwned};
     2|       |use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
     3|       |
@@ -113662,7 +113662,7 @@
    63|    100|        .collect()
    64|    100|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/intents.rs:
+crates/ferrum-store/src/sqlite/intents.rs:
     1|       |use async_trait::async_trait;
     2|       |use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     3|       |use ferrum_proto::{IntentEnvelope, IntentId, IntentStatus};
@@ -114060,7 +114060,7 @@
   393|      1|    }
   394|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/leader_allowlist.rs:
+crates/ferrum-store/src/sqlite/leader_allowlist.rs:
     1|       |//! PF4: Local leader allowlist for sync authorization.
     2|       |//!
     3|       |//! This module provides SQLite-backed storage for the PF4 leader authorization
@@ -114188,7 +114188,7 @@
   122|      1|    }
   123|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/leader_tip_cache.rs:
+crates/ferrum-store/src/sqlite/leader_tip_cache.rs:
     1|       |//! Leader tip cache for PF8 (Sync-2 read-only preflight).
     2|       |//!
     3|       |//! This module provides SQLite-backed storage for leader tips retrieved via
@@ -114544,7 +114544,7 @@
   341|      1|    }
   342|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/ledger.rs:
+crates/ferrum-store/src/sqlite/ledger.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::EventId;
     3|       |use sqlx::{Row, SqlitePool};
@@ -114711,7 +114711,7 @@
   164|     10|    }
   165|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/lifecycle_outbox.rs:
+crates/ferrum-store/src/sqlite/lifecycle_outbox.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    CapabilityLease, CapabilityStatus, EventId, ExecutionRecord, JsonMap, LifecycleOutboxId,
@@ -116734,7 +116734,7 @@
  1992|      1|    }
  1993|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/mfa_credentials.rs:
+crates/ferrum-store/src/sqlite/mfa_credentials.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{MfaAgentLockoutRecord, MfaCredentialRecord, MfaFactorStatus, MfaFactorType};
     3|       |use sqlx::{Row, SqlitePool};
@@ -117699,7 +117699,7 @@
   907|      1|    }
   908|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/migrations.rs:
+crates/ferrum-store/src/sqlite/migrations.rs:
     1|       |//! SQLite embedded forward-only migrations.
     2|       |//!
     3|       |//! `MIGRATIONS` is the ordered list of schema changes. The runner applies every
@@ -117930,7 +117930,7 @@
   227|      1|    }
   228|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/mod.rs:
+crates/ferrum-store/src/sqlite/mod.rs:
     1|       |mod agents;
     2|       |mod approvals;
     3|       |mod audit_checkpoint;
@@ -119601,7 +119601,7 @@
  1617|      1|    }
  1618|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/policy_bundles.rs:
+crates/ferrum-store/src/sqlite/policy_bundles.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{PolicyBundle, PolicyBundleVersion};
     3|       |use sqlx::{Row, SqlitePool};
@@ -119892,7 +119892,7 @@
   284|      2|    }
   285|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/proposals.rs:
+crates/ferrum-store/src/sqlite/proposals.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{ActionProposal, IntentId, ProposalId};
     3|       |use sqlx::SqlitePool;
@@ -119976,7 +119976,7 @@
    81|      0|    }
    82|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/provenance.rs:
+crates/ferrum-store/src/sqlite/provenance.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    EventId, ProvenanceEdge, ProvenanceEdgeType, ProvenanceEvent, ProvenanceQueryRequest,
@@ -120396,7 +120396,7 @@
   417|      1|    }
   418|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/quarantine.rs:
+crates/ferrum-store/src/sqlite/quarantine.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{
     3|       |    ActorRef, ProposalId, QuarantineHold, QuarantineHoldId, QuarantineHoldState, Timestamp,
@@ -120646,7 +120646,7 @@
   237|      6|    Ok(expired)
   238|      6|}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/rollback.rs:
+crates/ferrum-store/src/sqlite/rollback.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{ExecutionId, RollbackContract, RollbackContractId, RollbackState};
     3|       |use sqlx::SqlitePool;
@@ -121144,7 +121144,7 @@
   491|      1|    }
   492|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/sync_preflight.rs:
+crates/ferrum-store/src/sqlite/sync_preflight.rs:
     1|       |//! Concrete SQLite-backed implementation of `SyncPreflightRepo`.
     2|       |//!
     3|       |//! This module wires `ferrum-sync`'s `SyncPreflightRepo` trait to the real
@@ -121367,7 +121367,7 @@
   213|      0|    }
   214|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/tokens.rs:
+crates/ferrum-store/src/sqlite/tokens.rs:
     1|       |use async_trait::async_trait;
     2|       |use ferrum_proto::{ScopedToken, TokenRole};
     3|       |use sqlx::{Row, SqlitePool};
@@ -121590,7 +121590,7 @@
   194|     62|    }
   195|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sqlite/write_queue.rs:
+crates/ferrum-store/src/sqlite/write_queue.rs:
     1|       |//! Write queue for serializing SQLite writes through a single writer task.
     2|       |//!
     3|       |//! This eliminates SQLite's single-writer contention by funneling all write
@@ -122725,7 +122725,7 @@
  1123|      1|    }
  1124|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/sync_service.rs:
+crates/ferrum-store/src/sync_service.rs:
     1|       |//! Sync service helper for evaluating sync readiness from local + cached state.
     2|       |//!
     3|       |//! This module provides the read-only `evaluate_sync_readiness_from_cache()` function
@@ -123098,7 +123098,7 @@
   359|      1|    }
   360|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-store/src/transitions.rs:
+crates/ferrum-store/src/transitions.rs:
     1|       |//! State transition validation for store entities.
     2|       |//!
     3|       |//! This module provides pure transition helpers that enforce valid state
@@ -123748,7 +123748,7 @@
   645|      1|    }
   646|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/decision.rs:
+crates/ferrum-sync/src/decision.rs:
     1|       |//! Sync-1 Decision Kernel — pure, read-only decision logic for one-way fast-forward sync.
     2|       |//!
     3|       |//! This module implements the decision table for Sync-1. It is a **pure function**
@@ -124012,7 +124012,7 @@
   258|      1|    }
   259|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/error.rs:
+crates/ferrum-sync/src/error.rs:
     1|       |//! Error types for ferrum-sync, kept internal to this crate.
     2|       |
     3|       |use thiserror::Error;
@@ -124086,7 +124086,7 @@
    71|      1|    }
    72|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/external_source.rs:
+crates/ferrum-sync/src/external_source.rs:
     1|       |//! External event source adapter for polling provenance events.
     2|       |//!
     3|       |//! This module provides a trait boundary for external event sources (e.g., MCP runtimes)
@@ -124313,7 +124313,7 @@
   224|      1|    }
   225|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/facade.rs:
+crates/ferrum-sync/src/facade.rs:
     1|       |//! Read-only probe facade for diagnostic operations.
     2|       |//!
     3|       |//! This facade provides a read-only diagnostic interface that:
@@ -124467,7 +124467,7 @@
   151|      1|    }
   152|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/mcp_bridge.rs:
+crates/ferrum-sync/src/mcp_bridge.rs:
     1|       |//! Runtime bridge trait and MCP bridge implementation.
     2|       |//!
     3|       |//! This module extends the ExternalEventSource trait with bridge-specific
@@ -124719,7 +124719,7 @@
   249|      1|    }
   250|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/preflight.rs:
+crates/ferrum-sync/src/preflight.rs:
     1|       |//! Sync-2 Read-Only Preflight + Diff Classifier.
     2|       |//!
     3|       |//! This module implements the read-only preflight checks (PF1-PF8) and diff
@@ -125135,7 +125135,7 @@
   409|      1|    }
   410|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/repo.rs:
+crates/ferrum-sync/src/repo.rs:
     1|       |//! Sync-owned read-only preflight port (trait + test double).
     2|       |//!
     3|       |//! This module defines the `SyncPreflightRepo` trait and supporting types for
@@ -125490,7 +125490,7 @@
   352|      1|    }
   353|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-sync/src/transport.rs:
+crates/ferrum-sync/src/transport.rs:
     1|       |//! Minimal transport adapter boundary for read-only sync probes.
     2|       |//!
     3|       |//! This module provides a service-internal adapter boundary that wraps a minimal
@@ -125872,7 +125872,7 @@
   378|      1|    }
   379|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-testkit/src/approval_fixture.rs:
+crates/ferrum-testkit/src/approval_fixture.rs:
     1|       |use crate::test_now;
     2|       |
     3|       |/// Builder for a minimal `ApprovalRequest` in tests.
@@ -126042,7 +126042,7 @@
   165|      1|    }
   166|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-testkit/src/gateway.rs:
+crates/ferrum-testkit/src/gateway.rs:
     1|       |use std::sync::Arc;
     2|       |
     3|       |use ferrum_cap::CapabilityService;
@@ -126087,7 +126087,7 @@
    40|      7|    }
    41|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-testkit/src/intent_fixture.rs:
+crates/ferrum-testkit/src/intent_fixture.rs:
     1|       |use crate::test_now;
     2|       |
     3|       |/// Builder for a minimal, valid `IntentEnvelope` in tests.
@@ -126284,7 +126284,7 @@
   194|      1|    }
   195|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-testkit/src/lib.rs:
+crates/ferrum-testkit/src/lib.rs:
     1|       |//! Minimal test fixtures and assertion helpers for FerrumGate workspace tests.
     2|       |//!
     3|       |//! ## Fixtures
@@ -126478,7 +126478,7 @@
   189|      1|    }
   190|       |}
 
-/home/uong_guyen/work/Ferrum-Gate/crates/ferrum-testkit/src/proposal_fixture.rs:
+crates/ferrum-testkit/src/proposal_fixture.rs:
     1|       |use crate::test_now;
     2|       |
     3|       |/// Builder for a minimal, valid `ActionProposal` in tests.
